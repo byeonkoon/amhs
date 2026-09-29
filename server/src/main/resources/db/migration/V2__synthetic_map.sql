@@ -1,0 +1,14 @@
+INSERT platform.site VALUES(1,N'DEMO',N'가상 FAB');
+INSERT topology.map_revision VALUES(1,1,1,'ACTIVE');
+INSERT topology.node VALUES
+(101,1,1,N'OHT-N1',1000,1000),(102,1,1,N'OHT-N2',4000,1000),(103,1,1,N'OHT-N3',7000,1000),
+(201,1,1,N'AGV-N1',1000,4000),(202,1,1,N'AGV-N2',4000,4000),(203,1,1,N'AGV-N3',7000,4000);
+INSERT topology.edge VALUES
+(1,1,1,101,102,3000,1),(2,1,1,102,103,3000,1),(3,1,1,103,102,3000,1),(4,1,1,102,101,3000,1),
+(5,1,1,201,202,3000,1),(6,1,1,202,203,3000,1),(7,1,1,203,202,3000,1),(8,1,1,202,201,3000,1);
+INSERT topology.port VALUES
+(1,1,1,N'OHT-A',N'LOAD',N'SYNTHETIC','OHT',101),(2,1,1,N'OHT-B',N'UNLOAD',N'SYNTHETIC','OHT',103),
+(3,1,1,N'AGV-A',N'LOAD',N'SYNTHETIC','AGV',201),(4,1,1,N'AGV-B',N'UNLOAD',N'SYNTHETIC','AGV',203);
+-- Configuration markers only. No live equipment connection or assignment is enabled.
+INSERT fleet.vehicle_profile VALUES
+(1,1,1,N'OHT-01','OHT',101,1,0),(2,1,1,N'AGV-01','AGV',201,1,0);

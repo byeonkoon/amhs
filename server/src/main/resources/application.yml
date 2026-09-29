@@ -1,0 +1,21 @@
+server:
+  address: 127.0.0.1
+  port: 8080
+spring:
+  application:
+    name: amhs
+  datasource:
+    url: ${AMHS_DB_URL:jdbc:postgresql://127.0.0.1:5432/amhs_dev}
+    username: ${AMHS_DB_USER:amhs}
+    password: ${AMHS_DB_PASSWORD:}
+  flyway:
+    default-schema: public
+    locations: classpath:db/postgresql
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never
