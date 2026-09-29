@@ -46,3 +46,52 @@ export const api = {
   health: () => '/actuator/health',
   transportOrders: (limit = 20) => `/api/v1/sites/${SITE_ID}/transport-orders?limit=${limit}`,
 };
+
+// ---- 설정 (A19 계약) ----
+export type Cfg<T> = { id: number; version: number; settings: T };
+export type VehicleSettings = {
+  revisionId: number; code: string; name: string; vType: 'OHT' | 'AGV';
+  widthMm: number; lengthMm: number; heightMm: number;
+  initialNodeId: number; homeNodeId?: number | null; chargeNodeId?: number | null;
+  enabled: boolean; assignmentEnabled: boolean;
+  controlAuthority: 'CONTROLLER_MANAGED' | 'VENDOR_MANAGED';
+  bcrPolicy: 'DISABLED' | 'REQUIRED';
+  chargingPolicy: 'DISABLED' | 'HOME' | 'NEAREST';
+};
+export type PortSettings = {
+  revisionId: number; code: string; portType: string; makerType: string;
+  accessVehicleType: 'OHT' | 'AGV'; linkedNodeId: number;
+};
+export type ConnectionSettings = { commType: 'TCP' | 'MQTT'; role: string; host: string; port: number; enabled: boolean };
+export type ProtocolSettings = { protoType: 'PC' | 'PLC' | 'VDA5050'; protoVersion: string; adapterKey: string };
+
+export const cfgApi = {
+  vehicles: () => `/api/v1/sites/${SITE_ID}/configuration/vehicles`,
+  ports: () => `/api/v1/sites/${SITE_ID}/configuration/ports`,
+  connections: () => `/api/v1/sites/${SITE_ID}/configuration/connections`,
+  protocols: () => `/api/v1/sites/${SITE_ID}/configuration/protocols`,
+};
+
+/** Write token is kept in memory only: it is never stored and never rendered back. */
+let writeToken: string | null = null;
+export const setWriteToken = (v: string | null) => { writeToken = v && v.trim() ? v.trim() : null; };
+export const hasWriteToken = () => writeToken !== null;
+
+export async function send<T>(url: string, method: 'POST' | 'PUT', body: unknown, reason?: string): Promise<T> {
+  if (!writeToken) throw new ApiError(401, url, '설정 변경 토큰이 없습니다. 먼저 토큰을 입력해 주세요.');
+  const res = await fetch(url, {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${writeToken}`,
+      ...(reason ? { 'X-Amhs-Reason': reason } : {}),
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    let code = '';
+    try { code = ((await res.json()) as { code?: string }).code ?? ''; } catch { /* body may be empty */ }
+    throw new ApiError(res.status, url, code || `요청이 거부되었습니다 (HTTP ${res.status}).`);
+  }
+  return res.json() as Promise<T>;
+}

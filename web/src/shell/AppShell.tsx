@@ -7,7 +7,7 @@ type Entry = { key: MenuKey; label: string; sub: string; ready: boolean };
 const MENU: Entry[] = [
   { key: 'overview', label: 'Overview', sub: 'Status / KPI', ready: false },
   { key: 'fleet', label: 'Fleet', sub: 'OHT / AGV', ready: true },
-  { key: 'equipment', label: 'Equipment', sub: 'Stations / Ports', ready: false },
+  { key: 'equipment', label: 'Equipment', sub: 'Stations / Ports', ready: true },
   { key: 'transport', label: 'Transport', sub: 'Job / Route', ready: true },
   { key: 'inventory', label: 'Inventory', sub: 'Carrier / Stocker', ready: false },
   { key: 'alarms', label: 'Alarms', sub: 'Event / Notification', ready: false },

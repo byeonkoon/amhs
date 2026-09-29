@@ -5,6 +5,7 @@ import { api, get, SITE_ID, type MapData, type TransportOrder, type Vehicle } fr
 import { AppShell, type MenuKey, type ServerState } from './shell/AppShell';
 import { Chip, Empty, Failed, freshnessOf, Loading } from './shell/States';
 import { MapLegend, MapView } from './features/map/MapView';
+import { ConfigurationScreen } from './features/configuration/ConfigurationScreen';
 
 const REVISION_ID = 1;
 
@@ -42,10 +43,12 @@ function App() {
       crumb={['Home', page.crumb, page.title]} title={page.title} subtitle={page.subtitle} server={server}>
       {error ? <div className="card"><Failed error={error} onRetry={retry} /></div>
         : !data ? <div className="card"><Loading what={page.title} /></div>
-          : menu === 'transport'
-            ? <TransportScreen orders={data.orders} map={data.map} loadedAt={loadedAt} onRetry={retry} />
-            : <FleetScreen data={data} selected={selected} onSelect={setSelected}
-                layer={layer} onLayer={setLayer} loadedAt={loadedAt} onRetry={retry} />}
+          : menu === 'equipment'
+            ? <ConfigurationScreen map={data.map} />
+            : menu === 'transport'
+              ? <TransportScreen orders={data.orders} map={data.map} loadedAt={loadedAt} onRetry={retry} />
+              : <FleetScreen data={data} selected={selected} onSelect={setSelected}
+                  layer={layer} onLayer={setLayer} loadedAt={loadedAt} onRetry={retry} />}
     </AppShell>
   );
 }
@@ -53,7 +56,7 @@ function App() {
 const PAGES: Record<MenuKey, { title: string; subtitle: string; crumb: string }> = {
   overview: { title: '개요', subtitle: 'Overview · Status / KPI', crumb: 'Overview' },
   fleet: { title: '지도·차량 현황', subtitle: 'Fleet · Map / Vehicles', crumb: 'Fleet' },
-  equipment: { title: '설비', subtitle: 'Equipment · Stations / Ports', crumb: 'Equipment' },
+  equipment: { title: '설비 파라미터 설정', subtitle: 'Equipment · Vehicle / Port / Connection / Protocol', crumb: 'Equipment' },
   transport: { title: '반송 작업', subtitle: 'Transport · Job / Route', crumb: 'Transport' },
   inventory: { title: '재고', subtitle: 'Inventory · Carrier / Stocker', crumb: 'Inventory' },
   alarms: { title: '알람', subtitle: 'Alarms · Event / Notification', crumb: 'Alarms' },
