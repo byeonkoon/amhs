@@ -1,6 +1,6 @@
 # AMHS Operations
 
-기존 Delphi ACS·OCS·WMS를 분석해 React + TypeScript / Java 21 + Spring Boot 기반 AMHS로 현대화하는 프로젝트입니다. 현재 개발 DB는 **PostgreSQL**입니다. Docker와 Redis는 필요하지 않습니다.
+현업에서 경험한 ACS·OCS·WMS 도메인에 대한 이해를 개인 프로젝트로 구현하는 종합 관제 시스템입니다. React + TypeScript / Java 21 + Spring Boot로 만들고 있으며 개발 DB는 **PostgreSQL**입니다. Docker와 Redis는 추후 검토합니다.
 
 지도·차량 조회, 차량/포트/통신 설정 API, 경로 계산 및 배차 제안 계약이 구현돼 있습니다. 실제 반송 실행·장비 어댑터·역할 권한/감사는 아직 구현하지 않았습니다. 정리된 진행 현황은 [docs/progress.md](docs/progress.md), 작업 기준은 [AGENTS.md](AGENTS.md)를 따릅니다.
 
