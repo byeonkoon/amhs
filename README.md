@@ -2,7 +2,7 @@
 
 기존 Delphi ACS·OCS·WMS를 분석해 React + TypeScript / Java 21 + Spring Boot 기반 AMHS로 현대화하는 프로젝트입니다. 현재 개발 DB는 **PostgreSQL**입니다. Docker와 Redis는 필요하지 않습니다.
 
-지도·차량 조회, 차량/포트/통신 설정 API, 경로 계산 및 배차 제안 계약이 구현돼 있습니다. 실제 반송 실행·장비 어댑터·역할 권한/감사는 아직 구현하지 않았습니다. 최신 상태는 [CURRENT.md](CURRENT.md), 작업 기준은 [AGENTS.md](AGENTS.md)를 따릅니다.
+지도·차량 조회, 차량/포트/통신 설정 API, 경로 계산 및 배차 제안 계약이 구현돼 있습니다. 실제 반송 실행·장비 어댑터·역할 권한/감사는 아직 구현하지 않았습니다. 정리된 진행 현황은 [docs/progress.md](docs/progress.md), 작업 기준은 [AGENTS.md](AGENTS.md)를 따릅니다.
 
 ## 준비 및 실행
 
