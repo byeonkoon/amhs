@@ -104,6 +104,26 @@ class OperationVdaProfileSqlTest {
   setComm("PC");
   assertThat(options.get(1).settings().commType()).isEqualTo("PC");
  }
+ @Test void profileUpdatesPreserveWinnerAndAreBlockedOutsideMaintenance(){
+  var original=profiles.create(1,profile("EDITABLE","v2","1.0.0","pick","drop"));
+  var winner=profile("EDITABLE","v3","3.0.0","lift","lower");
+  var updated=profiles.update(1,original.id(),original.version(),winner);
+  assertThat(updated.version()).isEqualTo(original.version()+1);
+  rejected(()->profiles.update(1,original.id(),original.version(),original.settings()),409,"VERSION_CONFLICT");
+  assertThat(profiles.get(1,original.id()).settings()).isEqualTo(winner);
+  for(String mode:java.util.List.of("RUNNING","RECOVERING")){
+   jdbc.update("UPDATE platform.site_operation SET mode=? WHERE site_id=1",mode);
+   rejected(()->profiles.update(1,original.id(),updated.version(),original.settings()),409,"SITE_NOT_IN_MAINTENANCE");
+   rejected(()->profiles.create(1,profile("BLOCKED","v3","3.0.0","pick","drop")),409,"SITE_NOT_IN_MAINTENANCE");
+   assertThat(profiles.get(1,original.id())).isEqualTo(updated);
+  }
+ }
+ @Test void duplicateProfileCodesAreRejectedThroughApi()throws Exception{
+  profiles.create(1,profile("DUPLICATE","v3","3.0.0","pick","drop"));
+  mvc.perform(post(BASE+"vda-profiles").header("Authorization",TOKEN).contentType("application/json")
+   .content("{\"code\":\"DUPLICATE\",\"interfaceName\":\"vda5050\",\"topicVersion\":\"v2\",\"manufacturer\":\"M\",\"jsonVersion\":\"1.0.0\",\"sourceAction\":\"pick\",\"destAction\":\"drop\"}"))
+   .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("DUPLICATE_CONFIGURATION"));
+ }
  @Test void profileApiListsAndProtectsWrites()throws Exception{
   mvc.perform(get(BASE+"vda-profiles")).andExpect(status().isOk()).andExpect(jsonPath("$[?(@.settings.code=='SAMPLE_V2')].settings.jsonVersion").value("1.0.0"));
   mvc.perform(post(BASE+"vda-profiles").contentType("application/json")

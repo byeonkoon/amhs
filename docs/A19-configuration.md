@@ -1,6 +1,6 @@
 # A19 설정 저장과 검증
 
-2026-09-27: PostgreSQL 전환 후 별도 테스트 인스턴스에서 V1~V3 및 SQL 통합 11개 포함 전체 27개 통과. 실제 개발 서비스 연결·기존 백업 이관·A02 추가 Mapping은 미완료. 이전 SQL Server 823/OS 21 실패는 검증 이력에 보존한다.
+2026-09-30: PostgreSQL 설정 API에 사이트 운영 옵션과 차량 VDA 프로파일을 추가했다. 현재 검증 결과는 docs/verification.md를 따른다. 설정 저장은 통신 활성화나 실장비 시험 완료를 뜻하지 않는다. A02 추가 Mapping은 후속이며 이전 DB 시험 결과는 검증 이력으로 보존한다.
 
 ## 소유권과 API
 
@@ -48,15 +48,22 @@ VDA 버전 초안은 2.0.0, 2.1.0, 3.0.0을 받는다. 실제 wire 어댑터 지
 
 ## 로컬 쓰기 접근
 
-기본 실행은 모든 변경 요청에 403 CONFIGURATION_WRITES_DISABLED를 반환한다.
-로컬 검증용으로 `AMHS_CONFIGURATION_WRITES_ENABLED=true`와 32자 이상 임의의 `AMHS_CONFIGURATION_WRITE_TOKEN`을 지정하고 `Authorization: Bearer <token>`을 전송해야 한다.
-토큰을 소스나 문서에 저장하지 않는다. 이 임시 차단기는 사용자/역할/감사(A16)를 구현한 것이 아니다.
-서버는 loopback에 바인딩하며 A16 전에는 운영용 설정 서버로 배포하지 않는다.
+A16 접근 제어가 적용되어 설정 변경에는 ADMIN 권한이 필요하다. 인증 없이 쓰면 401 PRINCIPAL_REQUIRED, 권한이 부족하면 403 ROLE_ADMIN_REQUIRED를 반환한다. 읽기는 로컬 개발용으로 열려 있다.
+로컬 관리자 검증용으로 `AMHS_CONFIGURATION_WRITES_ENABLED=true`와 32자 이상 임의의 `AMHS_CONFIGURATION_WRITE_TOKEN`을 지정하고 `Authorization: Bearer <token>`을 사용할 수 있다. 이 옵션은 로컬 토큰 인증을 켜며 계정 토큰 인증 전체를 끄는 옵션은 아니다. 조작 결과는 감사 이력에 기록한다. 토큰은 소스나 문서에 저장하지 않는다.
+
+## 운영 옵션·VDA 프로파일 (V7)
+
+- `GET /operation`, `PUT /operation?expectedVersion=N`: 사이트 단위 `{commType, nodeCount}`. commType은 PC/PLC/MQTT, nodeCount는 1~100이며 초기값은 PC/20이다. 이 선택은 어댑터 활성화가 아니다.
+- `vda-profiles`는 위 리소스와 같은 조회·생성·수정 API를 제공한다. 필드는 code, interfaceName, topicVersion, manufacturer, jsonVersion, sourceAction, destAction이다. topicVersion과 jsonVersion은 독립적으로 보존한다.
+- 차량은 `vdaProfileId`로 같은 사이트의 프로파일을 참조한다. PC/PLC에서는 공란이며 MQTT의 사용 중 차량은 프로파일이 필요하다. MQTT로 옵션을 바꾼 직후 기존 차량의 프로파일은 자동 생성하지 않으므로 운전 시작 전 전체 차량의 설정 재검증이 후속 필요하다.
+- MQTT에서 PC/PLC로 바꾸려면 차량에 지정된 VDA 프로파일을 먼저 해제한다. 사용 중 차량은 MQTT에서 프로파일 없이 저장할 수 없으므로 먼저 사용 중지를 설정한다.
+- 프로파일 수정은 MAINTENANCE에서 가능하며 참조 차량들이 변경을 공유한다. expectedVersion 충돌은 409, 중복 code는 409, RUNNING/RECOVERING 쓰기는 409다.
+- 기존 connections/protocols/communications는 계속 저장되지만 새로운 사이트 운영 옵션·VDA 프로파일과의 실제 통신 해석 및 중복 설정 정리는 어댑터 연계 시 확정한다.
 
 ## 재현
 
 - `scripts/server.ps1 -Test`: DB 없이 계약, 모듈 경계, 요청 차단, 그래프 검증 후 패키징.
-- 별도 PostgreSQL DB `amhs_test`를 준비한 뒤 `scripts/server.ps1 -SqlTest`: V1~V3 Flyway와 실제 SQL 테스트. 기존 업무 DB를 테스트 대상으로 사용하지 않는다.
+- 별도 PostgreSQL DB `amhs_test`를 준비한 뒤 `scripts/server.ps1 -SqlTest`: 현재 Flyway migration과 실제 SQL 테스트. 기존 업무 DB를 테스트 대상으로 사용하지 않는다.
 - SQL 테스트는 잘못된 조합·참조·중복·운전 모드 거부, API 저장/수정, 두 동시 수정 중 하나만 성공하는지 검사한다.
 - 테스트 대부분은 롤백하며, 동시성 테스트의 커밋된 임시 포트는 finally에서 제거한다.
-- 설정 편집 UI(A20), 지도 편집/활성화(A04), 역할·감사(A16)는 이번 API 범위에 포함하지 않는다.
+- 설정 편집 UI(A20)와 역할·감사(A16)는 별도 구현이며 현재 API에 연결돼 있다. 지도 편집/활성화(A04)는 후속이다.
