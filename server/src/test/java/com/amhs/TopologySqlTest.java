@@ -41,7 +41,7 @@ class TopologySqlTest {
         var types = new java.util.HashMap<Long,String>();
         draft.nodes().forEach(n -> types.put(n.id(),n.code().substring(0,3)));
         assertThat(draft.edges()).allSatisfy(e -> assertThat(types.get(e.fromNodeId())).isEqualTo(types.get(e.toNodeId())));
-        assertThat(maps.getMap(1,1).nodes()).hasSize(6);
+        assertThat(maps.getMap(1,1).nodes()).hasSize(8);
         assertThat(jdbc.queryForObject("SELECT id FROM topology.map_revision WHERE site_id=1 AND status='ACTIVE'",Long.class)).isEqualTo(1L);
         mvc.perform(get("/api/v1/sites/1/maps/2"))
             .andExpect(status().isOk()).andExpect(jsonPath("$.revisionId").value(2))

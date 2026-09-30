@@ -16,6 +16,8 @@ public interface CommandOutbox {
     /** The device acknowledged receipt. Receipt is not execution completion. */
     DeviceCommand acknowledge(String commandId);
     List<DeviceCommand> byOrder(long siteId, long orderId);
+    /** Commands of this type that the device has not acknowledged yet. */
+    List<DeviceCommand> unresolved(long siteId, long orderId, String commandType);
     /** Commands nobody can settle automatically, oldest first. */
     List<DeviceCommand> inDoubt(long siteId, int limit);
 }

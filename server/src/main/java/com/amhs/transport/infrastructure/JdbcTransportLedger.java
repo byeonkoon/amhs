@@ -118,13 +118,25 @@ class JdbcTransportLedger implements TransportLedger {
   * back rather than leaving one vehicle holding two jobs.
   */
  @Transactional(propagation=Propagation.MANDATORY)
- public long assign(long orderId,long vehicleId){
+ public long assign(long orderId,long vehicleId,List<Long> routeNodeIds){
   try{
-   return jdbc.queryForObject("INSERT INTO transport.assignment(order_id,vehicle_id) VALUES(?,?) RETURNING id",
-    Long.class,orderId,vehicleId);
+   return jdbc.queryForObject("INSERT INTO transport.assignment(order_id,vehicle_id,route_node_ids)"
+    +" VALUES(?,?,?) RETURNING id",Long.class,orderId,vehicleId,routeNodeIds.toArray(Long[]::new));
   }catch(DuplicateKeyException e){
    throw new TransportRejected("ASSIGNMENT_CONFLICT","vehicle or order is already assigned",true);
   }
+ }
+
+ @Transactional(readOnly=true)
+ public List<Long> plannedRoute(long orderId){
+  var rows=jdbc.query("SELECT route_node_ids FROM transport.assignment"
+   +" WHERE order_id=? AND released_at IS NULL ORDER BY id DESC LIMIT 1",
+   (r,n)->{
+    var array=r.getArray(1);
+    if(array==null) return List.<Long>of();
+    return List.of((Long[])array.getArray());
+   },orderId);
+  return rows.isEmpty()?List.of():rows.getFirst();
  }
 
  @Transactional(readOnly=true)
@@ -135,6 +147,12 @@ class JdbcTransportLedger implements TransportLedger {
    (r,n)->new AssignmentView(r.getLong(1),r.getLong(2),r.getLong(3),
     r.getObject(4,OffsetDateTime.class),r.getObject(5,OffsetDateTime.class),r.getString(6)),siteId,orderId);
   return rows.isEmpty()?Optional.empty():Optional.of(rows.getFirst());
+ }
+
+ @Transactional(readOnly=true)
+ public List<Long> assignedOrderIds(long siteId){
+  return jdbc.query("SELECT a.order_id FROM transport.assignment a JOIN transport.order o ON o.id=a.order_id"
+   +" WHERE o.site_id=? AND a.released_at IS NULL ORDER BY a.order_id",(r,n)->r.getLong(1),siteId);
  }
 
  @Transactional(readOnly=true)

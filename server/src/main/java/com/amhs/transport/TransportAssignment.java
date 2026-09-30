@@ -64,15 +64,15 @@ public class TransportAssignment {
   if(!eligible(vehicle))
    throw new TransportRejected("VEHICLE_NO_LONGER_ELIGIBLE","vehicle changed state before it was held",true);
 
-  long assignmentId=ledger.assign(orderId,proposal.vehicleId());
+  var route=fullRoute(proposal);
+  long assignmentId=ledger.assign(orderId,proposal.vehicleId(),route);
   var assigned=ledger.transition(siteId,orderId,OrderStatus.ASSIGNED,
    "assigned to "+vehicle.code(),actorCode,traceId);
 
   // Holding the vehicle is not permission to move it. The command may only carry the run traffic
   // actually granted, so a congested aisle produces a shorter movement rather than a vehicle
   // driving into nodes somebody else is standing on.
-  var grant=traffic.request(siteId,order.revisionId(),proposal.vehicleId(),orderId,
-   fullRoute(proposal));
+  var grant=traffic.request(siteId,order.revisionId(),proposal.vehicleId(),orderId,route);
   if(grant.stalled())
    // The vehicle is held and the order is assigned; it simply cannot start yet. Emitting no
    // command is the point, and the recorded wait says what it is waiting for.

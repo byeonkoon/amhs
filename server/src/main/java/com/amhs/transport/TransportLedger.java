@@ -14,10 +14,14 @@ public interface TransportLedger {
  /** Reads the order under a row lock so the caller can decide and write without a gap. */
  Optional<TransportOrder> lock(long siteId,long orderId);
  /** Records an active assignment. A second active one for the same vehicle or order is rejected. */
- long assign(long orderId,long vehicleId);
+ long assign(long orderId,long vehicleId,java.util.List<Long> routeNodeIds);
+ /** The route this order was assigned against, empty when it has none. */
+ List<Long> plannedRoute(long orderId);
  Optional<AssignmentView> activeAssignment(long siteId,long orderId);
  /** Vehicles currently held by some order at this site. */
  List<Long> assignedVehicleIds(long siteId);
+ /** Orders that currently hold a vehicle at this site. */
+ List<Long> assignedOrderIds(long siteId);
  /** The vehicle of the order's latest assignment, released or not; null when it never had one. */
  Long assignedVehicleOf(long orderId);
  /** Applies a checked transition and appends the matching event in one transaction. */

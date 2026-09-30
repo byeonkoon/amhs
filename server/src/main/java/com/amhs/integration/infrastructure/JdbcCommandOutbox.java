@@ -71,6 +71,17 @@ class JdbcCommandOutbox implements CommandOutbox {
   return byCommandId(commandId);
  }
 
+ /**
+  * Acknowledgement is the only thing that settles a command, so anything short of it still
+  * counts as outstanding, including a send that failed and is waiting to be tried again.
+  */
+ @Transactional(readOnly=true)
+ public List<DeviceCommand> unresolved(long siteId,long orderId,String commandType){
+  return jdbc.query("SELECT "+JOINED+" FROM integration.command_outbox c JOIN transport.order o ON o.id=c.order_id"
+   +" WHERE o.site_id=? AND c.order_id=? AND c.command_type=? AND c.status<>'ACCEPTED' ORDER BY c.id",
+   MAPPER,siteId,orderId,commandType);
+ }
+
  @Transactional(readOnly=true)
  public List<DeviceCommand> byOrder(long siteId,long orderId){
   return jdbc.query("SELECT "+JOINED+" FROM integration.command_outbox c JOIN transport.order o ON o.id=c.order_id"
