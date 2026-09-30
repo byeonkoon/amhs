@@ -3,6 +3,7 @@ import com.amhs.dispatch.DispatchEvaluator;
 import com.amhs.platform.VehicleType;
 import com.amhs.topology.MapSnapshot;
 import com.amhs.routing.RoutePlanner;
+import com.amhs.routing.RouteResult;
 import com.amhs.integration.CommunicationProfile;
 import org.junit.jupiter.api.Test;
 import java.util.*;
@@ -20,8 +21,11 @@ class DispatchContractTest {
  }
  @Test void checksBothPortTypesBeforeDispatch() { assertThat(new DispatchEvaluator().evaluate(map(),1,3,List.of()).reason()).isEqualTo("PORT_TYPE_MISMATCH"); }
  @Test void disconnectedGraphsAndReverseDirectionAreUnreachable() {
-  var r=new RoutePlanner(); assertThat(r.find(map(),1,4)).isEmpty(); assertThat(r.find(map(),2,1)).isEmpty();
-  assertThat(r.find(map(),1,1).orElseThrow().cost()).isZero();
+  var r=new RoutePlanner();
+  assertThat(r.find(map(),1,4).reason()).isEqualTo(RouteResult.Reason.NO_PATH);
+  assertThat(r.find(map(),2,1).reason()).isEqualTo(RouteResult.Reason.NO_PATH);
+  assertThat(r.find(map(),1,1).status()).isEqualTo(RouteResult.Status.SAME_NODE);
+  assertThat(r.find(map(),1,1).costSeconds()).isZero();
  }
  @Test void offlineVehicleIsExcluded() {
   var v=new DispatchEvaluator.Candidate(1,VehicleType.OHT,1,true,true,false,true,true);
@@ -37,5 +41,26 @@ class DispatchContractTest {
  }
  @Test void missingVdaIdentityIsRejected() {
   assertThatThrownBy(()->new CommunicationProfile(CommunicationProfile.CommType.MQTT,CommunicationProfile.ProtoType.VDA5050,"3.0.0","SYNTHETIC",1,1,"",null)).isInstanceOf(IllegalArgumentException.class);
+ }
+
+ @Test void unroutableDeliveryLegIsNotBlamedOnTheFleet() {
+  var r=new DispatchEvaluator().evaluate(map(),2,1,List.of(vehicle(1,VehicleType.OHT,2)));
+  assertThat(r.reason()).isEqualTo("DELIVERY_ROUTE_NO_PATH"); assertThat(r.proposal()).isEmpty();
+ }
+ @Test void sharedApproachFailureIsReportedWithItsReason() {
+  assertThat(new DispatchEvaluator().evaluate(map(),1,2,List.of(vehicle(1,VehicleType.OHT,5))).reason())
+   .isEqualTo("APPROACH_ROUTE_NO_PATH");
+  assertThat(new DispatchEvaluator().evaluate(map(),1,2,List.of(vehicle(1,VehicleType.OHT,99))).reason())
+   .isEqualTo("APPROACH_ROUTE_START_UNKNOWN");
+ }
+ @Test void mixedApproachFailuresStayGeneric() {
+  assertThat(new DispatchEvaluator().evaluate(map(),1,2,List.of(vehicle(1,VehicleType.OHT,5),vehicle(2,VehicleType.OHT,99))).reason())
+   .isEqualTo("NO_REACHABLE_VEHICLE");
+ }
+ @Test void proposalCarriesOrderedSegmentsForBothLegs() {
+  var p=new DispatchEvaluator().evaluate(map(),1,2,List.of(vehicle(7,VehicleType.OHT,1))).proposal().orElseThrow();
+  assertThat(p.toSource().status()).isEqualTo(RouteResult.Status.SAME_NODE);
+  assertThat(p.toDestination().edgeIds()).containsExactly(1L);
+  assertThat(p.cost()).isEqualTo(10);
  }
 }

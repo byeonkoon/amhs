@@ -51,16 +51,16 @@ class TopologySqlTest {
     @Test void fixtureExercisesNormalBlockedDisconnectedAndWrongDirectionPaths() {
         var map=maps.getMap(1,2); var planner=new RoutePlanner();
         for (long first : new long[]{1101,1201}) {
-            var route=planner.find(map,first,first+3).orElseThrow();
+            var route=planner.find(map,first,first+3);
             assertThat(route.nodeIds()).containsExactly(first,first+1,first+2,first+3);
-            assertThat(route.cost()).isEqualTo(9000);
-            assertThat(planner.find(map,first+3,first)).isEmpty();
-            assertThat(planner.find(map,first,first+4)).isEmpty();
-            assertThat(planner.find(map,first,first+5)).isEmpty();
+            assertThat(route.costSeconds()).isEqualTo(9000);
+            assertThat(planner.find(map,first+3,first).reachable()).isFalse();
+            assertThat(planner.find(map,first,first+4).reachable()).isFalse();
+            assertThat(planner.find(map,first,first+5).reachable()).isFalse();
             assertThat(map.edges()).noneMatch(e -> e.fromNodeId()==first+5 || e.toNodeId()==first+5);
         }
-        assertThat(planner.find(map,1101,1201)).isEmpty();
-        assertThat(planner.find(map,1201,1101)).isEmpty();
+        assertThat(planner.find(map,1101,1201).reachable()).isFalse();
+        assertThat(planner.find(map,1201,1101).reachable()).isFalse();
     }
 
     @Test void fleetReadsOnlyRequestedRevisionAndDefaultsToActive() throws Exception {

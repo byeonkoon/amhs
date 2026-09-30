@@ -7,16 +7,12 @@ import static com.amhs.routing.RouteResult.Reason.*;
 
 /** Directed shortest paths on immutable snapshots. A route is NOT entry permission. */
 public final class RoutePlanner {
-    public record Route(List<Long> nodeIds, double cost) {
-        public Route { nodeIds=List.copyOf(nodeIds); }
-    }
     private record Step(MapSnapshot.Edge edge,double cost) {}
     private record Visit(long node,double cost) {}
 
-    /** Compatibility contract for dispatch estimates. */
-    public Optional<Route> find(MapSnapshot map,long start,long goal) {
-        var result=find(new RouteQuery(map,start,goal,EdgeCostPolicy.staticCost()));
-        return result.status()==UNREACHABLE ? Optional.empty() : Optional.of(new Route(result.nodeIds(),result.costSeconds()));
+    /** Static-cost query for callers that do not model traffic. Failure reasons are preserved. */
+    public RouteResult find(MapSnapshot map,long start,long goal) {
+        return find(new RouteQuery(map,start,goal,EdgeCostPolicy.staticCost()));
     }
 
     public RouteResult find(RouteQuery query) {
