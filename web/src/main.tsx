@@ -25,7 +25,7 @@ function App() {
     setError(null); setData(null);
     Promise.all([
       get<MapData>(api.map(REVISION_ID), controller.signal),
-      get<Vehicle[]>(api.vehicles(), controller.signal),
+      get<Vehicle[]>(api.vehicles(REVISION_ID), controller.signal),
       // The transport list is optional here: A06 owns the ledger, this screen only previews it.
       get<TransportOrder[]>(api.transportOrders(), controller.signal).catch(() => [] as TransportOrder[]),
     ])

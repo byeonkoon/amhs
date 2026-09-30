@@ -1,4 +1,5 @@
-param([string]$PostgresBin='C:\Program Files\PostgreSQL\18\bin',[int]$Port=55432)
+param([string]$PostgresBin='C:\Program Files\PostgreSQL\18\bin',[int]$Port=55432,
+ [ValidatePattern('^amhs_test[a-z0-9_]*$')][string]$DatabaseName='amhs_test')
 $ErrorActionPreference='Stop'
 $projectRoot=Split-Path $PSScriptRoot -Parent
 $testRoot=Join-Path $projectRoot '.local/postgres-test'
@@ -33,15 +34,15 @@ try {
  if($start.ExitCode -ne 0){throw "Test PostgreSQL start failed; see $testRoot/start.err"}
  $started=$true
  $env:PGPASSWORD=$credential.GetNetworkCredential().Password
- $exists=& "$PostgresBin/psql.exe" -X -w -h 127.0.0.1 -p $Port -U amhs_test_admin -d postgres -At -c "SELECT 1 FROM pg_database WHERE datname='amhs_test'"
+ $exists=& "$PostgresBin/psql.exe" -X -w -h 127.0.0.1 -p $Port -U amhs_test_admin -d postgres -At -c "SELECT 1 FROM pg_database WHERE datname='$DatabaseName'"
  if($LASTEXITCODE -ne 0){throw 'Test cluster connection failed'}
  if($exists -ne '1'){
-  & "$PostgresBin/createdb.exe" -w -h 127.0.0.1 -p $Port -U amhs_test_admin amhs_test
+  & "$PostgresBin/createdb.exe" -w -h 127.0.0.1 -p $Port -U amhs_test_admin $DatabaseName
   if($LASTEXITCODE -ne 0){throw 'Test database creation failed'}
  }
  $env:AMHS_DB_USER='amhs_test_admin'
  $env:AMHS_DB_PASSWORD=$env:PGPASSWORD
- $env:AMHS_TEST_DB_URL="jdbc:postgresql://127.0.0.1:$Port/amhs_test"
+ $env:AMHS_TEST_DB_URL="jdbc:postgresql://127.0.0.1:$Port/$DatabaseName"
  # Separate PowerShell process prevents server.ps1's exit from bypassing this cleanup.
  & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$PSScriptRoot/server.ps1" -SqlTest
  $testExit=$LASTEXITCODE

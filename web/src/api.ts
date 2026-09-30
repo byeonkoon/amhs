@@ -42,7 +42,7 @@ function describe(status: number): string {
 export const SITE_ID = 1;
 export const api = {
   map: (revisionId: number) => `/api/v1/sites/${SITE_ID}/maps/${revisionId}`,
-  vehicles: () => `/api/v1/sites/${SITE_ID}/vehicles`,
+  vehicles: (revisionId?: number) => `/api/v1/sites/${SITE_ID}/vehicles${revisionId === undefined ? '' : `?revisionId=${revisionId}`}`,
   health: () => '/actuator/health',
   transportOrders: (limit = 20) => `/api/v1/sites/${SITE_ID}/transport-orders?limit=${limit}`,
 };
