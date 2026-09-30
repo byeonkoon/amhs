@@ -57,6 +57,8 @@ export type VehicleSettings = {
   controlAuthority: 'CONTROLLER_MANAGED' | 'VENDOR_MANAGED';
   bcrPolicy: 'DISABLED' | 'REQUIRED';
   chargingPolicy: 'DISABLED' | 'HOME' | 'NEAREST';
+  /** Empty unless the site communication type is MQTT. */
+  vdaProfileId?: number | null;
 };
 export type PortSettings = {
   revisionId: number; code: string; portType: string; makerType: string;
@@ -64,12 +66,21 @@ export type PortSettings = {
 };
 export type ConnectionSettings = { commType: 'TCP' | 'MQTT'; role: string; host: string; port: number; enabled: boolean };
 export type ProtocolSettings = { protoType: 'PC' | 'PLC' | 'VDA5050'; protoVersion: string; adapterKey: string };
+/** Site-wide option: one communication type for every vehicle, and the node limit of one movement authority. */
+export type OperationOptions = { commType: 'PC' | 'PLC' | 'MQTT'; nodeCount: number };
+/** Topic version and JSON version are separate values; actions are sent at the pickup and drop ports. */
+export type VdaProfileSettings = {
+  code: string; interfaceName: string; topicVersion: string; manufacturer: string;
+  jsonVersion: string; sourceAction: string; destAction: string;
+};
 
 export const cfgApi = {
   vehicles: () => `/api/v1/sites/${SITE_ID}/configuration/vehicles`,
   ports: () => `/api/v1/sites/${SITE_ID}/configuration/ports`,
   connections: () => `/api/v1/sites/${SITE_ID}/configuration/connections`,
   protocols: () => `/api/v1/sites/${SITE_ID}/configuration/protocols`,
+  operation: () => `/api/v1/sites/${SITE_ID}/configuration/operation`,
+  vdaProfiles: () => `/api/v1/sites/${SITE_ID}/configuration/vda-profiles`,
 };
 
 /** Write token is kept in memory only: it is never stored and never rendered back. */

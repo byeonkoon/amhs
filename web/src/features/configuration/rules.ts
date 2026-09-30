@@ -1,4 +1,4 @@
-import type { ConnectionSettings, ProtocolSettings, VehicleSettings } from '../../api';
+import type { ConnectionSettings, OperationOptions, ProtocolSettings, VdaProfileSettings, VehicleSettings } from '../../api';
 
 /**
  * Field dependencies, mirrored from the server contract so the form cannot offer a
@@ -26,6 +26,36 @@ export function vehicleIssues(v: VehicleSettings): string[] {
   if (v.vType === 'OHT' && (v.chargingPolicy !== 'DISABLED' || v.chargeNodeId))
     out.push('OHT는 충전을 사용하지 않습니다. 충전 정책은 DISABLED여야 합니다.');
   if (chargeNodeRequired(v) && !v.chargeNodeId) out.push('충전 정책을 사용하면 충전 노드가 필요합니다.');
+  return out;
+}
+
+/**
+ * The site communication type decides the VDA profile field: PC/PLC keep it empty,
+ * MQTT needs one for every vehicle in use.
+ */
+export function vehicleVdaIssues(v: VehicleSettings, commType: OperationOptions['commType'] | null): string[] {
+  if (commType === null) return [];
+  if (commType !== 'MQTT') return v.vdaProfileId ? ['통신 방식이 MQTT가 아니면 VDA 프로파일은 공란이어야 합니다.'] : [];
+  return v.enabled && !v.vdaProfileId ? ['MQTT 사이트에서 사용하는 차량은 VDA 프로파일이 필요합니다.'] : [];
+}
+
+export const COMM_TYPES = ['PC', 'PLC', 'MQTT'] as const;
+export function operationIssues(o: OperationOptions): string[] {
+  return Number.isInteger(o.nodeCount) && o.nodeCount >= 1 && o.nodeCount <= 100 ? [] : ['허가 노드 수는 1~100 사이 정수여야 합니다.'];
+}
+
+const TOPIC_SAFE = /^[^\s/+#]+$/;
+const ACTION = /^[A-Za-z0-9_.-]{1,64}$/;
+export function vdaProfileIssues(p: VdaProfileSettings): string[] {
+  const out: string[] = [];
+  if (!/^[A-Z0-9_-]{1,32}$/.test(p.code)) out.push('코드는 대문자·숫자·_·- 32자 이내입니다.');
+  if (!TOPIC_SAFE.test(p.interfaceName)) out.push('인터페이스에 공백이나 / + # 를 쓸 수 없습니다.');
+  if (!TOPIC_SAFE.test(p.manufacturer)) out.push('제조사에 공백이나 / + # 를 쓸 수 없습니다.');
+  if (!/^v\d{1,3}$/.test(p.topicVersion)) out.push('토픽 버전은 v2, v3 형식입니다.');
+  if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(p.jsonVersion)) out.push('JSON 버전은 1.0.0, 3.0.0 형식입니다.');
+  if (!ACTION.test(p.sourceAction)) out.push('출발지 동작은 영문·숫자·_·.·- 64자 이내입니다(쉼표 불가).');
+  if (!ACTION.test(p.destAction)) out.push('목적지 동작은 영문·숫자·_·.·- 64자 이내입니다(쉼표 불가).');
+  if (p.sourceAction === p.destAction) out.push('출발지 동작과 목적지 동작은 달라야 합니다.');
   return out;
 }
 
@@ -76,6 +106,13 @@ export function explainCode(code: string): string {
     ROLE_ADMIN_REQUIRED: '설정 변경은 관리자 권한이 필요합니다.',
     CONFIGURATION_LOCKED: '유지보수 상태에서만 설정을 변경할 수 있습니다.',
     VERSION_CONFLICT: '다른 곳에서 먼저 수정되었습니다. 최신 값을 다시 불러와 비교해 주세요.',
+    VDA_PROFILE_NOT_APPLICABLE: '통신 방식이 MQTT가 아니면 VDA 프로파일은 공란이어야 합니다.',
+    VDA_PROFILE_REQUIRED: 'MQTT 사이트에서 사용하는 차량은 VDA 프로파일이 필요합니다.',
+    VDA_PROFILE_NOT_FOUND: '선택한 VDA 프로파일이 없습니다.',
+    VDA_PROFILE_ASSIGNED: 'VDA 프로파일이 지정된 차량이 있어 MQTT에서 바꿀 수 없습니다. 차량의 프로파일을 먼저 비워 주세요.',
+    VDA_ACTIONS_MUST_DIFFER: '출발지 동작과 목적지 동작은 달라야 합니다.',
+    INVALID_NODE_COUNT: '허가 노드 수는 1~100 사이여야 합니다.',
+    SITE_NOT_IN_MAINTENANCE: '유지보수 상태에서만 설정을 변경할 수 있습니다.',
   };
   return map[code] ?? code;
 }

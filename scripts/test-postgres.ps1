@@ -27,6 +27,8 @@ try {
  # This isolated cluster uses the installed PostgreSQL binaries, not the user's Windows service.
  $startArgs=@('-D',('"'+$dataPath+'"'),'-l',('"'+$testRoot+'/postgres.log"'),'-o',('"-h 127.0.0.1 -p '+$Port+'"'),'-w','start')
  $start=Start-Process -FilePath "$PostgresBin/pg_ctl.exe" -ArgumentList $startArgs -WindowStyle Hidden -PassThru -RedirectStandardOutput "$testRoot/start.out" -RedirectStandardError "$testRoot/start.err"
+ # Touch the handle before exit; otherwise Windows PowerShell can report a null ExitCode for a successful start.
+ $null=$start.Handle
  $start.WaitForExit()
  if($start.ExitCode -ne 0){throw "Test PostgreSQL start failed; see $testRoot/start.err"}
  $started=$true

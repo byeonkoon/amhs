@@ -2,7 +2,7 @@ package com.amhs.fleet;
 import com.amhs.platform.*;
 public record VehicleSettings(long revisionId,String code,String name,VehicleType vType,int widthMm,int lengthMm,int heightMm,
  long initialNodeId,Long homeNodeId,Long chargeNodeId,boolean enabled,boolean assignmentEnabled,String controlAuthority,
- String bcrPolicy,String chargingPolicy){
+ String bcrPolicy,String chargingPolicy,Long vdaProfileId){
  public void validate(){
   ConfigurationInput.positive(revisionId,"REVISION");ConfigurationInput.positive(initialNodeId,"INITIAL_NODE");
   ConfigurationInput.text(code,64,"CODE");ConfigurationInput.text(name,128,"NAME");
@@ -12,5 +12,6 @@ public record VehicleSettings(long revisionId,String code,String name,VehicleTyp
   ConfigurationException.require(java.util.Set.of("DISABLED","HOME","NEAREST").contains(chargingPolicy==null?"":chargingPolicy),"INVALID_CHARGING_POLICY");
   ConfigurationException.require(vType!=VehicleType.OHT||("DISABLED".equals(chargingPolicy)&&chargeNodeId==null),"OHT_CHARGING_NOT_SUPPORTED");
   ConfigurationException.require("DISABLED".equals(chargingPolicy)||chargeNodeId!=null,"CHARGE_NODE_REQUIRED");
+  ConfigurationException.require(vdaProfileId==null||vdaProfileId>0,"INVALID_VDA_PROFILE");
  }
 }

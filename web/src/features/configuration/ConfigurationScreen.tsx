@@ -1,17 +1,20 @@
 import React from 'react';
 import {
   ApiError, cfgApi, get, hasWriteToken, send, setWriteToken,
-  type Cfg, type ConnectionSettings, type MapData, type PortSettings, type ProtocolSettings, type VehicleSettings,
+  type Cfg, type ConnectionSettings, type MapData, type OperationOptions, type PortSettings, type ProtocolSettings,
+  type VdaProfileSettings, type VehicleSettings,
 } from '../../api';
 import { Chip, Empty, Failed, Loading } from '../../shell/States';
 import {
-  ADAPTER_DISABLED_REASON, BCR_POLICY, CONTROL_AUTHORITY, chargeNodeRequired, chargingPolicyOptions,
-  connectionIssues, explainCode, protocolIssues, PROTO_TYPES, roleOptions, vehicleIssues, versionOptions,
+  ADAPTER_DISABLED_REASON, BCR_POLICY, COMM_TYPES, CONTROL_AUTHORITY, chargeNodeRequired, chargingPolicyOptions,
+  connectionIssues, explainCode, operationIssues, protocolIssues, PROTO_TYPES, roleOptions, vdaProfileIssues,
+  vehicleIssues, vehicleVdaIssues, versionOptions,
 } from './rules';
 
-type Tab = 'vehicles' | 'ports' | 'connections' | 'protocols';
+type Tab = 'operation' | 'vehicles' | 'vda' | 'ports' | 'connections' | 'protocols';
 const TABS: { key: Tab; label: string }[] = [
-  { key: 'vehicles', label: '차량' }, { key: 'ports', label: '포트' },
+  { key: 'operation', label: '운영 옵션' }, { key: 'vehicles', label: '차량' }, { key: 'vda', label: 'VDA 프로파일' },
+  { key: 'ports', label: '포트' },
   { key: 'connections', label: '연결' }, { key: 'protocols', label: '프로토콜' },
 ];
 
@@ -33,7 +36,9 @@ export function ConfigurationScreen({ map }: { map: MapData }) {
           <span className="aux">저장은 관리자 토큰과 유지보수 상태가 필요합니다</span>
         </div>
         <div className="cb">
+          {tab === 'operation' && <OperationTab canWrite={tokenSet} />}
           {tab === 'vehicles' && <VehicleTab map={map} canWrite={tokenSet} />}
+          {tab === 'vda' && <VdaProfileTab canWrite={tokenSet} />}
           {tab === 'ports' && <PortTab map={map} canWrite={tokenSet} />}
           {tab === 'connections' && <ConnectionTab canWrite={tokenSet} />}
           {tab === 'protocols' && <ProtocolTab canWrite={tokenSet} />}
@@ -86,6 +91,20 @@ function useList<T>(url: string) {
   return { items, error, reload: () => setTick(v => v + 1) };
 }
 
+/** Single-record settings such as the operation option. */
+function useOne<T>(url: string) {
+  const [item, setItem] = React.useState<Cfg<T> | null>(null);
+  const [error, setError] = React.useState<unknown>(null);
+  const [tick, setTick] = React.useState(0);
+  React.useEffect(() => {
+    const c = new AbortController();
+    setError(null); setItem(null);
+    get<Cfg<T>>(url, c.signal).then(setItem).catch(e => { if ((e as Error).name !== 'AbortError') setError(e); });
+    return () => c.abort();
+  }, [url, tick]);
+  return { item, error, reload: () => setTick(v => v + 1) };
+}
+
 function SaveBar({ issues, canWrite, busy, message, onSave }: {
   issues: string[]; canWrite: boolean; busy: boolean; message: string | null; onSave: () => void;
 }) {
@@ -108,6 +127,9 @@ function SaveBar({ issues, canWrite, busy, message, onSave }: {
 
 function VehicleTab({ map, canWrite }: { map: MapData; canWrite: boolean }) {
   const { items, error, reload } = useList<VehicleSettings>(cfgApi.vehicles());
+  const { item: option } = useOne<OperationOptions>(cfgApi.operation());
+  const { items: profiles } = useList<VdaProfileSettings>(cfgApi.vdaProfiles());
+  const commType = option?.settings.commType ?? null;
   const [draft, setDraft] = React.useState<Cfg<VehicleSettings> | null>(null);
   const [busy, setBusy] = React.useState(false);
   const [message, setMessage] = React.useState<string | null>(null);
@@ -139,7 +161,8 @@ function VehicleTab({ map, canWrite }: { map: MapData; canWrite: boolean }) {
           <button key={v.id} type="button" className={`vehicle-btn${draft?.id === v.id ? ' sel' : ''}`}
             onClick={() => { setDraft(structuredClone(v)); setMessage(null); }}>
             <b>{v.settings.code}</b>
-            <span>{v.settings.vType} · {v.settings.name} · v{v.version}</span>
+            <span>{v.settings.vType} · {v.settings.name}
+              {v.settings.vdaProfileId ? ` · ${profiles?.find(p => p.id === v.settings.vdaProfileId)?.settings.code ?? 'VDA'}` : ''} · v{v.version}</span>
           </button>
         ))}
       </div>
@@ -158,6 +181,19 @@ function VehicleTab({ map, canWrite }: { map: MapData; canWrite: boolean }) {
                 }}>
                 <option value="OHT">OHT</option><option value="AGV">AGV</option>
               </select>
+            </div>
+            <div style={row}>
+              <label htmlFor="v-vda">VDA 프로파일</label>
+              <div>
+                <select id="v-vda" style={field} value={s.vdaProfileId ?? ''} disabled={commType !== 'MQTT' && !s.vdaProfileId}
+                  onChange={e => set({ vdaProfileId: e.target.value ? Number(e.target.value) : null })}>
+                  <option value="">공란</option>
+                  {(profiles ?? []).map(p => <option key={p.id} value={p.id}>{p.settings.code} ({p.settings.topicVersion} · JSON {p.settings.jsonVersion})</option>)}
+                </select>
+                <span className="hint">{commType === 'MQTT'
+                  ? '사용 중인 차량은 프로파일이 필요합니다. 패킷·동작 값은 VDA 프로파일 탭에서 관리합니다.'
+                  : `통신 방식이 ${commType ?? '확인 중'}이므로 공란으로 둡니다. MQTT는 운영 옵션에서 선택합니다.`}</span>
+              </div>
             </div>
             <div style={row}>
               <label>크기 (mm)</label>
@@ -212,7 +248,7 @@ function VehicleTab({ map, canWrite }: { map: MapData; canWrite: boolean }) {
                 <label><input type="checkbox" checked={s.assignmentEnabled} onChange={e => set({ assignmentEnabled: e.target.checked })} /> 배차 허용</label>
               </div>
             </div>
-            <SaveBar issues={vehicleIssues(s)} canWrite={canWrite} busy={busy} message={message} onSave={save} />
+            <SaveBar issues={[...vehicleIssues(s), ...vehicleVdaIssues(s, commType)]} canWrite={canWrite} busy={busy} message={message} onSave={save} />
           </>
         )}
       </div>
@@ -419,6 +455,112 @@ function ProtocolTab({ canWrite }: { canWrite: boolean }) {
             </div>
             <div style={row}><label htmlFor="pr-key">어댑터 키</label><input id="pr-key" style={field} value={s.adapterKey} onChange={e => set({ adapterKey: e.target.value })} /></div>
             <SaveBar issues={protocolIssues(s)} canWrite={canWrite} busy={busy} message={message} onSave={save} />
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function OperationTab({ canWrite }: { canWrite: boolean }) {
+  const { item, error, reload } = useOne<OperationOptions>(cfgApi.operation());
+  const [draft, setDraft] = React.useState<OperationOptions | null>(null);
+  const [busy, setBusy] = React.useState(false);
+  const [message, setMessage] = React.useState<string | null>(null);
+  React.useEffect(() => { setDraft(item ? { ...item.settings } : null); }, [item]);
+  if (error) return <Failed error={error} onRetry={reload} />;
+  if (!item || !draft) return <Loading what="운영 옵션" />;
+  const save = async () => {
+    setBusy(true); setMessage(null);
+    try {
+      await send(`${cfgApi.operation()}?expectedVersion=${item.version}`, 'PUT', draft, '설정 화면에서 수정');
+      setMessage('저장했습니다.'); reload();
+    } catch (e) {
+      setMessage(explainCode(e instanceof ApiError ? e.message : String(e)));
+    } finally { setBusy(false); }
+  };
+  return (
+    <div style={{ maxWidth: 560 }}>
+      <div style={row}>
+        <label htmlFor="o-comm">통신 방식</label>
+        <div>
+          <select id="o-comm" style={field} value={draft.commType}
+            onChange={e => setDraft({ ...draft, commType: e.target.value as OperationOptions['commType'] })}>
+            {COMM_TYPES.map(o => <option key={o} value={o}>{o}</option>)}
+          </select>
+          <span className="hint">사이트의 모든 차량에 적용됩니다. MQTT이면 차량마다 VDA 프로파일을 지정합니다. MQTT에서 다른 방식으로 바꾸려면 차량의 프로파일을 먼저 비워야 합니다.</span>
+        </div>
+      </div>
+      <div style={row}>
+        <label htmlFor="o-nodes">허가 노드 수</label>
+        <div>
+          <input id="o-nodes" type="number" style={field} value={draft.nodeCount}
+            onChange={e => setDraft({ ...draft, nodeCount: Number(e.target.value) })} />
+          <span className="hint">한 번의 진입 허가에 포함할 수 있는 최대 노드 수입니다(1~100).</span>
+        </div>
+      </div>
+      <SaveBar issues={operationIssues(draft)} canWrite={canWrite} busy={busy} message={message} onSave={save} />
+    </div>
+  );
+}
+
+const VDA_FIELDS: { key: keyof VdaProfileSettings; label: string; hint?: string }[] = [
+  { key: 'code', label: '코드', hint: '차량 파라미터에서 이 프로파일을 고를 때 쓰는 이름입니다.' },
+  { key: 'interfaceName', label: '인터페이스', hint: '토픽 첫 단계 값입니다. 예: vda5050, udp' },
+  { key: 'topicVersion', label: '토픽 버전', hint: '예: v2, v3' },
+  { key: 'manufacturer', label: '제조사' },
+  { key: 'jsonVersion', label: 'JSON 버전', hint: '토픽 버전과 별개입니다. 예: 1.0.0, 3.0.0' },
+  { key: 'sourceAction', label: '출발지 동작', hint: '출발지에서 화물을 가져갈 때 보내는 동작입니다. 예: pick' },
+  { key: 'destAction', label: '목적지 동작', hint: '목적지에 화물을 내려놓을 때 보내는 동작입니다. 예: drop' },
+];
+
+function VdaProfileTab({ canWrite }: { canWrite: boolean }) {
+  const { items, error, reload } = useList<VdaProfileSettings>(cfgApi.vdaProfiles());
+  const [draft, setDraft] = React.useState<Cfg<VdaProfileSettings> | null>(null);
+  const [busy, setBusy] = React.useState(false);
+  const [message, setMessage] = React.useState<string | null>(null);
+  React.useEffect(() => { setDraft(null); setMessage(null); }, [items]);
+  if (error) return <Failed error={error} onRetry={reload} />;
+  if (!items) return <Loading what="VDA 프로파일" />;
+  if (items.length === 0) return <Empty title="등록된 VDA 프로파일이 없습니다" />;
+  const s = draft?.settings;
+  const set = (patch: Partial<VdaProfileSettings>) => setDraft(d => d && ({ ...d, settings: { ...d.settings, ...patch } }));
+  const save = async () => {
+    if (!draft) return;
+    setBusy(true); setMessage(null);
+    try {
+      await send(`${cfgApi.vdaProfiles()}/${draft.id}?expectedVersion=${draft.version}`, 'PUT', draft.settings, '설정 화면에서 수정');
+      setMessage('저장했습니다. 이 프로파일을 쓰는 모든 차량에 적용됩니다.'); reload();
+    } catch (e) {
+      const code = e instanceof ApiError ? e.message : String(e);
+      setMessage(e instanceof ApiError && e.status === 409 ? explainCode('VERSION_CONFLICT') : explainCode(code));
+    } finally { setBusy(false); }
+  };
+  return (
+    <div className="grid" style={{ gridTemplateColumns: '240px minmax(0,1fr)', gap: 14 }}>
+      <div>
+        {items.map(p => (
+          <button key={p.id} type="button" className={`vehicle-btn${draft?.id === p.id ? ' sel' : ''}`}
+            onClick={() => { setDraft(structuredClone(p)); setMessage(null); }}>
+            <b>{p.settings.code}</b>
+            <span>{p.settings.manufacturer} · {p.settings.topicVersion} · JSON {p.settings.jsonVersion} · v{p.version}</span>
+          </button>
+        ))}
+      </div>
+      <div>
+        {!s || !draft ? <p className="hint" style={{ margin: 0 }}>왼쪽에서 VDA 프로파일을 선택하세요.</p> : (
+          <>
+            {VDA_FIELDS.map(f => (
+              <div key={f.key} style={row}>
+                <label htmlFor={`vda-${f.key}`}>{f.label}</label>
+                <div>
+                  <input id={`vda-${f.key}`} style={field} value={s[f.key]}
+                    onChange={e => set({ [f.key]: e.target.value } as Partial<VdaProfileSettings>)} />
+                  {f.hint && <span className="hint">{f.hint}</span>}
+                </div>
+              </div>
+            ))}
+            <SaveBar issues={vdaProfileIssues(s)} canWrite={canWrite} busy={busy} message={message} onSave={save} />
           </>
         )}
       </div>
