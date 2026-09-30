@@ -34,9 +34,13 @@ function TrackTab({ session, revisionId, kind }: { session: Session; revisionId:
 
   React.useEffect(() => {
     const c = new AbortController();
-    get<Cfg<NodeSettings>[]>(opsApi.nodes(revisionId), c.signal).then(setNodes).catch(() => setNodes([]));
+    // An aborted request is this effect being replaced, not an empty answer.
+    const ignoreCancel = <T,>(set: (v: T[]) => void) => (cause: unknown) => {
+      if ((cause as Error)?.name !== 'AbortError') set([]);
+    };
+    get<Cfg<NodeSettings>[]>(opsApi.nodes(revisionId), c.signal).then(setNodes).catch(ignoreCancel(setNodes));
     if (kind === 'segment')
-      get<Cfg<EdgeSettings>[]>(opsApi.segments(revisionId), c.signal).then(setSegments).catch(() => setSegments([]));
+      get<Cfg<EdgeSettings>[]>(opsApi.segments(revisionId), c.signal).then(setSegments).catch(ignoreCancel(setSegments));
     return () => c.abort();
   }, [revisionId, kind, reload]);
 

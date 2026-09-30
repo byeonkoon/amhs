@@ -29,7 +29,9 @@ export function EquipmentScreen({ session, revisionId }: { session: Session; rev
     const c = new AbortController();
     get<Cfg<EquipmentSettings>[]>(opsApi.equipment(), c.signal)
       .then(list => { setUnits(list); setUnitId(id => id ?? list[0]?.id ?? null); })
-      .catch(() => setUnits([]));
+      // An aborted request is this effect being replaced, not an empty answer: writing [] here
+      // would let a cancelled first load overwrite the one that succeeded.
+      .catch(cause => { if (!aborted(cause)) setUnits([]); });
     return () => c.abort();
   }, [reload]);
 
@@ -37,15 +39,16 @@ export function EquipmentScreen({ session, revisionId }: { session: Session; rev
     if (unitId === null) { setRacks([]); setRackId(null); return; }
     const c = new AbortController();
     get<Cfg<RackSettings>[]>(opsApi.racks(unitId), c.signal)
-      .then(list => { setRacks(list); setRackId(list[0]?.id ?? null); })
-      .catch(() => setRacks([]));
+      .then(list => { setRacks(list); setRackId(id => list.some(r => r.id === id) ? id : list[0]?.id ?? null); })
+      .catch(cause => { if (!aborted(cause)) setRacks([]); });
     return () => c.abort();
   }, [unitId, reload]);
 
   React.useEffect(() => {
     if (unitId === null || rackId === null) { setSlots([]); return; }
     const c = new AbortController();
-    get<SlotView[]>(opsApi.slots(unitId, rackId), c.signal).then(setSlots).catch(() => setSlots([]));
+    get<SlotView[]>(opsApi.slots(unitId, rackId), c.signal)
+      .then(setSlots).catch(cause => { if (!aborted(cause)) setSlots([]); });
     return () => c.abort();
   }, [unitId, rackId, reload]);
 
@@ -178,6 +181,8 @@ function SlotGrid({ slots, columns, onToggle }:
 }
 
 const KIND: Record<string, string> = { STOCKER: '스토커', BUFFER: '버퍼', PROCESS: '공정' };
+/** A cancelled request carries no answer, so it must not be recorded as an empty one. */
+export function aborted(cause: unknown): boolean { return (cause as Error)?.name === 'AbortError'; }
 function explain(code: string): string {
   if (code === 'UNUSABLE_REASON_REQUIRED') return '사용 금지로 바꾸려면 사유가 필요합니다.';
   if (code === 'UNUSABLE_SLOT_WOULD_BE_REMOVED') return '줄이려는 범위에 사용 금지 셀이 있습니다. 그 표시가 사라지므로 거부했습니다.';
