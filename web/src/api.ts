@@ -67,7 +67,11 @@ export type PortSettings = {
 export type ConnectionSettings = { commType: 'TCP' | 'MQTT'; role: string; host: string; port: number; enabled: boolean };
 export type ProtocolSettings = { protoType: 'PC' | 'PLC' | 'VDA5050'; protoVersion: string; adapterKey: string };
 /** Site-wide option: one communication type for every vehicle, and the node limit of one movement authority. */
-export type OperationOptions = { commType: 'PC' | 'PLC' | 'MQTT'; nodeCount: number };
+export type OperationOptions = {
+  commType: 'PC' | 'PLC' | 'MQTT'; nodeCount: number;
+  /** MORE extends a running authority: NODE by remaining nodes, DISTANCE by remaining share of the authorized distance. */
+  moreEnabled: boolean; moreType: 'NODE' | 'DISTANCE'; moreRemainingNodes: number; moreRemainingPercent: number;
+};
 /** Topic version and JSON version are separate values; actions are sent at the pickup and drop ports. */
 export type VdaProfileSettings = {
   code: string; interfaceName: string; topicVersion: string; manufacturer: string;

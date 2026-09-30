@@ -40,8 +40,15 @@ export function vehicleVdaIssues(v: VehicleSettings, commType: OperationOptions[
 }
 
 export const COMM_TYPES = ['PC', 'PLC', 'MQTT'] as const;
+export const MORE_TYPES = ['NODE', 'DISTANCE'] as const;
 export function operationIssues(o: OperationOptions): string[] {
-  return Number.isInteger(o.nodeCount) && o.nodeCount >= 1 && o.nodeCount <= 100 ? [] : ['허가 노드 수는 1~100 사이 정수여야 합니다.'];
+  const out: string[] = [];
+  const int = (v: number, lo: number, hi: number) => Number.isInteger(v) && v >= lo && v <= hi;
+  if (!int(o.nodeCount, 1, 100)) out.push('허가 노드 수는 1~100 사이 정수여야 합니다.');
+  if (!int(o.moreRemainingNodes, 1, 99)) out.push('MORE 남은 노드 수는 1~99 사이 정수여야 합니다.');
+  else if (o.moreRemainingNodes >= o.nodeCount) out.push('MORE 남은 노드 수는 허가 노드 수보다 작아야 합니다. 같거나 크면 허가 직후 바로 MORE가 나갑니다.');
+  if (!int(o.moreRemainingPercent, 1, 99)) out.push('MORE 남은 거리 비율은 1~99% 사이 정수여야 합니다.');
+  return out;
 }
 
 const TOPIC_SAFE = /^[^\s/+#]+$/;
@@ -112,6 +119,10 @@ export function explainCode(code: string): string {
     VDA_PROFILE_ASSIGNED: 'VDA 프로파일이 지정된 차량이 있어 MQTT에서 바꿀 수 없습니다. 차량의 프로파일을 먼저 비워 주세요.',
     VDA_ACTIONS_MUST_DIFFER: '출발지 동작과 목적지 동작은 달라야 합니다.',
     INVALID_NODE_COUNT: '허가 노드 수는 1~100 사이여야 합니다.',
+    INVALID_MORE_TYPE: 'MORE 판정 방식은 NODE 또는 DISTANCE입니다.',
+    INVALID_MORE_REMAINING_NODES: 'MORE 남은 노드 수는 1~99 사이여야 합니다.',
+    MORE_NODES_NOT_BELOW_NODE_COUNT: 'MORE 남은 노드 수는 허가 노드 수보다 작아야 합니다.',
+    INVALID_MORE_REMAINING_PERCENT: 'MORE 남은 거리 비율은 1~99% 사이여야 합니다.',
     SITE_NOT_IN_MAINTENANCE: '유지보수 상태에서만 설정을 변경할 수 있습니다.',
   };
   return map[code] ?? code;

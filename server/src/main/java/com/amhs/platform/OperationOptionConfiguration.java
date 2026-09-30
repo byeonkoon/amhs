@@ -8,8 +8,8 @@ public class OperationOptionConfiguration {
  public OperationOptionConfiguration(JdbcTemplate jdbc,ConfigurationLock guard){this.jdbc=jdbc;this.guard=guard;}
  /** The record id is the site id: there is exactly one option row per site. */
  public ConfigurationRecord<OperationOptions> get(long site){
-  var rows=jdbc.query("SELECT comm_type,node_count,version FROM platform.site_operation WHERE site_id=?",
-   (r,n)->new ConfigurationRecord<>(site,r.getLong(3),new OperationOptions(r.getString(1),r.getInt(2))),site);
+  var rows=jdbc.query("SELECT comm_type,node_count,more_enabled,more_type,more_remaining_nodes,more_remaining_percent,version FROM platform.site_operation WHERE site_id=?",
+   (r,n)->new ConfigurationRecord<>(site,r.getLong(7),new OperationOptions(r.getString(1),r.getInt(2),r.getBoolean(3),r.getString(4),r.getInt(5),r.getInt(6))),site);
   if(rows.isEmpty())throw new ConfigurationException(404,"SITE_NOT_CONFIGURED");return rows.getFirst();
  }
  /**
@@ -22,7 +22,7 @@ public class OperationOptionConfiguration {
   s.validate();
   if(!s.usesVda()&&jdbc.queryForObject("SELECT COUNT(*) FROM fleet.vehicle_profile WHERE site_id=? AND vda_profile_id IS NOT NULL",Integer.class,site)>0)
    throw new ConfigurationException(409,"VDA_PROFILE_ASSIGNED");
-  guard.changed(jdbc.update("UPDATE platform.site_operation SET comm_type=?,node_count=?,version=version+1 WHERE site_id=? AND version=?",s.commType(),s.nodeCount(),site,expectedVersion));
+  guard.changed(jdbc.update("UPDATE platform.site_operation SET comm_type=?,node_count=?,more_enabled=?,more_type=?,more_remaining_nodes=?,more_remaining_percent=?,version=version+1 WHERE site_id=? AND version=?",s.commType(),s.nodeCount(),s.moreEnabled(),s.moreType(),s.moreRemainingNodes(),s.moreRemainingPercent(),site,expectedVersion));
   return get(site);
  }
 }

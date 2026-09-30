@@ -33,8 +33,13 @@ class OperationVdaProfileSqlTest {
  private VdaProfileSettings profile(String code,String topic,String json,String source,String dest){
   return new VdaProfileSettings(code,"vda5050",topic,"TEST-MAKER",json,source,dest);
  }
+ private static final String OPTION_JSON="{\"commType\":\"%s\",\"nodeCount\":20,\"moreEnabled\":true,\"moreType\":\"NODE\",\"moreRemainingNodes\":3,\"moreRemainingPercent\":25}";
+ private static OperationOptions opt(String commType,int nodeCount){return new OperationOptions(commType,nodeCount,true,"NODE",3,25);}
+ private static OperationOptions with(OperationOptions o,String commType){
+  return new OperationOptions(commType,o.nodeCount(),o.moreEnabled(),o.moreType(),o.moreRemainingNodes(),o.moreRemainingPercent());
+ }
  private void setComm(String commType){
-  options.update(1,options.get(1).version(),new OperationOptions(commType,options.get(1).settings().nodeCount()));
+  options.update(1,options.get(1).version(),with(options.get(1).settings(),commType));
  }
  private long sampleV3(){return profiles.list(1).stream().filter(p->p.settings().code().equals("SAMPLE_V3")).findFirst().orElseThrow().id();}
  private void rejected(Runnable call,int status,String code){
@@ -43,24 +48,38 @@ class OperationVdaProfileSqlTest {
 
  @Test void operationOptionDefaultsToPcWithTwentyNodes()throws Exception{
   mvc.perform(get(BASE+"operation")).andExpect(status().isOk())
-   .andExpect(jsonPath("$.settings.commType").value("PC")).andExpect(jsonPath("$.settings.nodeCount").value(20));
+   .andExpect(jsonPath("$.settings.commType").value("PC")).andExpect(jsonPath("$.settings.nodeCount").value(20))
+   .andExpect(jsonPath("$.settings.moreEnabled").value(true)).andExpect(jsonPath("$.settings.moreType").value("NODE"))
+   .andExpect(jsonPath("$.settings.moreRemainingNodes").value(3)).andExpect(jsonPath("$.settings.moreRemainingPercent").value(25));
  }
  @Test void operationOptionIsValidatedVersionedAndProtected()throws Exception{
   long v=options.get(1).version();
-  rejected(()->options.update(1,v,new OperationOptions("TCP",20)),422,"INVALID_COMM_TYPE");
-  rejected(()->options.update(1,v,new OperationOptions("PC",0)),422,"INVALID_NODE_COUNT");
-  rejected(()->options.update(1,v,new OperationOptions("PC",101)),422,"INVALID_NODE_COUNT");
-  var changed=options.update(1,v,new OperationOptions("PLC",35));
-  assertThat(changed.settings()).isEqualTo(new OperationOptions("PLC",35));
-  rejected(()->options.update(1,v,new OperationOptions("PC",20)),409,"VERSION_CONFLICT");
-  mvc.perform(put(BASE+"operation?expectedVersion="+changed.version()).contentType("application/json").content("{\"commType\":\"PC\",\"nodeCount\":20}"))
+  rejected(()->options.update(1,v,opt("TCP",20)),422,"INVALID_COMM_TYPE");
+  rejected(()->options.update(1,v,opt("PC",0)),422,"INVALID_NODE_COUNT");
+  rejected(()->options.update(1,v,opt("PC",101)),422,"INVALID_NODE_COUNT");
+  var changed=options.update(1,v,opt("PLC",35));
+  assertThat(changed.settings()).isEqualTo(opt("PLC",35));
+  rejected(()->options.update(1,v,opt("PC",20)),409,"VERSION_CONFLICT");
+  mvc.perform(put(BASE+"operation?expectedVersion="+changed.version()).contentType("application/json").content(OPTION_JSON.formatted("PC")))
    .andExpect(status().isUnauthorized());
-  mvc.perform(put(BASE+"operation?expectedVersion="+changed.version()).header("Authorization",TOKEN).contentType("application/json").content("{\"commType\":\"MQTT\",\"nodeCount\":20}"))
+  mvc.perform(put(BASE+"operation?expectedVersion="+changed.version()).header("Authorization",TOKEN).contentType("application/json").content(OPTION_JSON.formatted("MQTT")))
    .andExpect(status().isOk()).andExpect(jsonPath("$.settings.commType").value("MQTT"));
+ }
+ @Test void moreOptionIsValidatedAndStored(){
+  long v=options.get(1).version();
+  rejected(()->options.update(1,v,new OperationOptions("PC",20,true,"TIME",3,25)),422,"INVALID_MORE_TYPE");
+  rejected(()->options.update(1,v,new OperationOptions("PC",20,true,"NODE",0,25)),422,"INVALID_MORE_REMAINING_NODES");
+  rejected(()->options.update(1,v,new OperationOptions("PC",5,true,"NODE",5,25)),422,"MORE_NODES_NOT_BELOW_NODE_COUNT");
+  rejected(()->options.update(1,v,new OperationOptions("PC",20,true,"DISTANCE",3,0)),422,"INVALID_MORE_REMAINING_PERCENT");
+  rejected(()->options.update(1,v,new OperationOptions("PC",20,true,"DISTANCE",3,100)),422,"INVALID_MORE_REMAINING_PERCENT");
+  var distance=new OperationOptions("PC",20,true,"DISTANCE",3,30);
+  assertThat(options.update(1,v,distance).settings()).isEqualTo(distance);
+  var off=new OperationOptions("PC",20,false,"NODE",4,30);
+  assertThat(options.update(1,v+1,off).settings()).isEqualTo(off);
  }
  @Test void runningSiteRejectsOptionChanges(){
   jdbc.update("UPDATE platform.site_operation SET mode='RUNNING' WHERE site_id=1");
-  rejected(()->options.update(1,options.get(1).version(),new OperationOptions("MQTT",20)),409,"SITE_NOT_IN_MAINTENANCE");
+  rejected(()->options.update(1,options.get(1).version(),opt("MQTT",20)),409,"SITE_NOT_IN_MAINTENANCE");
  }
  @Test void topicVersionAndJsonVersionAreIndependent(){
   var seeded=profiles.list(1);

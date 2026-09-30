@@ -6,7 +6,7 @@ import {
 } from '../../api';
 import { Chip, Empty, Failed, Loading } from '../../shell/States';
 import {
-  ADAPTER_DISABLED_REASON, BCR_POLICY, COMM_TYPES, CONTROL_AUTHORITY, chargeNodeRequired, chargingPolicyOptions,
+  ADAPTER_DISABLED_REASON, BCR_POLICY, COMM_TYPES, MORE_TYPES, CONTROL_AUTHORITY, chargeNodeRequired, chargingPolicyOptions,
   connectionIssues, explainCode, operationIssues, protocolIssues, PROTO_TYPES, roleOptions, vdaProfileIssues,
   vehicleIssues, vehicleVdaIssues, versionOptions,
 } from './rules';
@@ -499,6 +499,41 @@ function OperationTab({ canWrite }: { canWrite: boolean }) {
           <span className="hint">한 번의 진입 허가에 포함할 수 있는 최대 노드 수입니다(1~100).</span>
         </div>
       </div>
+      <div style={row}>
+        <label>MORE 사용</label>
+        <label style={{ fontSize: 12 }}>
+          <input type="checkbox" checked={draft.moreEnabled} onChange={e => setDraft({ ...draft, moreEnabled: e.target.checked })} /> 주행 중 진입 허가 연장(MORE)
+        </label>
+      </div>
+      <div style={row}>
+        <label htmlFor="o-more-type">MORE 판정 방식</label>
+        <div>
+          <select id="o-more-type" style={field} value={draft.moreType} disabled={!draft.moreEnabled}
+            onChange={e => setDraft({ ...draft, moreType: e.target.value as OperationOptions['moreType'] })}>
+            {MORE_TYPES.map(o => <option key={o} value={o}>{o === 'NODE' ? 'NODE — 남은 노드 수' : 'DISTANCE — 남은 거리 비율'}</option>)}
+          </select>
+          <span className="hint">NODE는 허가 구간에 남은 노드 수로, DISTANCE는 처음 허가한 거리 대비 남은 거리 비율로 MORE를 보냅니다.</span>
+        </div>
+      </div>
+      {draft.moreType === 'NODE' ? (
+        <div style={row}>
+          <label htmlFor="o-more-nodes">MORE 남은 노드 수</label>
+          <div>
+            <input id="o-more-nodes" type="number" style={field} value={draft.moreRemainingNodes} disabled={!draft.moreEnabled}
+              onChange={e => setDraft({ ...draft, moreRemainingNodes: Number(e.target.value) })} />
+            <span className="hint">남은 허가 노드가 이 수 이하가 되면 MORE를 보냅니다. 허가 노드 수보다 작아야 합니다.</span>
+          </div>
+        </div>
+      ) : (
+        <div style={row}>
+          <label htmlFor="o-more-pct">MORE 남은 거리 비율 (%)</label>
+          <div>
+            <input id="o-more-pct" type="number" style={field} value={draft.moreRemainingPercent} disabled={!draft.moreEnabled}
+              onChange={e => setDraft({ ...draft, moreRemainingPercent: Number(e.target.value) })} />
+            <span className="hint">남은 거리가 처음 허가 거리의 이 비율 이하가 되면 MORE를 보냅니다(1~99).</span>
+          </div>
+        </div>
+      )}
       <SaveBar issues={operationIssues(draft)} canWrite={canWrite} busy={busy} message={message} onSave={save} />
     </div>
   );
