@@ -62,6 +62,17 @@ A16 접근 제어가 적용되어 설정 변경에는 ADMIN 권한이 필요하�
 
 ## 재현
 
+### 저장된 통신 설정 대조
+
+`GET /api/v1/sites/{siteId}/configuration/communication-check`는 사용 중 차량의 사이트 통신 방식·VDA 프로파일·기존 통신 바인딩을 읽기 전용으로 비교한다. 여러 조회는 같은 DB 스냅샷에서 수행한다. 응답의 `scope`는 `ENABLED_VEHICLE_COMMUNICATION`, `vehiclesChecked`는 대상 대수이며, `issues`는 `{vehicleId, code}` 목록이다.
+
+- `VDA_PROFILE_REQUIRED`, `VDA_PROFILE_NOT_APPLICABLE`: 사이트 옵션과 차량 프로파일 지정의 불일치.
+- `COMMUNICATION_REQUIRED`, `COMMUNICATION_AMBIGUOUS`: 통신 바인딩 누락 또는 단일 바인딩을 결정할 수 없음.
+- `SITE_COMMUNICATION_MISMATCH`: 사이트 PC/PLC/MQTT와 바인딩의 연결·프로토콜 조합 불일치.
+- `VDA_IDENTITY_MISMATCH`, `VDA_JSON_VERSION_MISMATCH`: 프로파일과 바인딩의 제조사/interface 또는 JSON 버전 불일치. 토픽 버전과 JSON 버전을 서로 비교하지 않는다.
+
+`consistent=true`는 위 비교에서 불일치가 없다는 뜻이며 운전 허가는 아니다. 어댑터 미구현으로 `activationSupported`는 항상 false다. 비활성 차량은 제외한다. 이 API는 설정을 자동 보정하거나 장비에 접속하지 않으며, 어느 설정을 실제 송신에 우선할지도 결정하지 않는다. 전체 운전 준비 검증·통신 어댑터 해석·UI 연결은 후속이다.
+
 - `scripts/server.ps1 -Test`: DB 없이 계약, 모듈 경계, 요청 차단, 그래프 검증 후 패키징.
 - 별도 PostgreSQL DB `amhs_test`를 준비한 뒤 `scripts/server.ps1 -SqlTest`: 현재 Flyway migration과 실제 SQL 테스트. 기존 업무 DB를 테스트 대상으로 사용하지 않는다.
 - SQL 테스트는 잘못된 조합·참조·중복·운전 모드 거부, API 저장/수정, 두 동시 수정 중 하나만 성공하는지 검사한다.
