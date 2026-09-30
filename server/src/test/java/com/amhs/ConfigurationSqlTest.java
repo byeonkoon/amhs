@@ -33,7 +33,7 @@ class ConfigurationSqlTest {
  private VehicleSettings vehicle(String code){
   return new VehicleSettings(1,code,code,VehicleType.OHT,1100,1500,900,101L,102L,null,true,false,"CONTROLLER_MANAGED","REQUIRED","DISABLED",null);
  }
- private PortSettings port(String code){return new PortSettings(1,code,"LOAD","SYNTHETIC",VehicleType.OHT,101);}
+ private PortSettings port(String code){return new PortSettings(1,code,"LOAD",VehicleType.OHT,101);}
  private long[] vda(String code){
   long v=vehicles.create(1,vehicle(code)).id();
   long c=connections.create(1,new ConnectionSettings("MQTT","BROKER","127.0.0.1",1883,false)).id();
@@ -76,14 +76,14 @@ class ConfigurationSqlTest {
   }
  }
  @Test void nodesAreScopedAndWrongVehicleNetworkIsRejected(){
-  rejected(()->ports.create(1,new PortSettings(1,"OUTSIDE","L","S",VehicleType.OHT,999)),422,"NODE_OUTSIDE_REVISION");
-  rejected(()->ports.create(1,new PortSettings(1,"WRONG","L","S",VehicleType.AGV,101)),422,"VEHICLE_TYPE_NETWORK_MISMATCH");
+  rejected(()->ports.create(1,new PortSettings(1,"OUTSIDE","L",VehicleType.OHT,999)),422,"NODE_OUTSIDE_REVISION");
+  rejected(()->ports.create(1,new PortSettings(1,"WRONG","L",VehicleType.AGV,101)),422,"VEHICLE_TYPE_NETWORK_MISMATCH");
   var v=vehicle("WRONG-V");
   rejected(()->vehicles.create(1,new VehicleSettings(1,v.code(),v.name(),VehicleType.OHT,1,1,1,201,null,null,true,false,"CONTROLLER_MANAGED","DISABLED","DISABLED",null)),422,"VEHICLE_TYPE_NETWORK_MISMATCH");
  }
  @Test void fleetPreventsPortRetypingEvenWithoutOtherPorts(){
   jdbc.update("DELETE FROM topology.port WHERE site_id=1 AND access_vehicle_type='OHT'");
-  rejected(()->ports.create(1,new PortSettings(1,"BAD","L","S",VehicleType.AGV,101)),422,"PORT_CONFLICTS_WITH_VEHICLE_NETWORK");
+  rejected(()->ports.create(1,new PortSettings(1,"BAD","L",VehicleType.AGV,101)),422,"PORT_CONFLICTS_WITH_VEHICLE_NETWORK");
  }
  @Test void vdaIdentityAndProtocolCombinationAreValidated(){
   var ids=vda("VDA");

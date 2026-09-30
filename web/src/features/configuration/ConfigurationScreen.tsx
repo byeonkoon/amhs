@@ -293,8 +293,7 @@ function PortTab({ map, canWrite }: { map: MapData; canWrite: boolean }) {
         {!s || !draft ? <p className="hint" style={{ margin: 0 }}>왼쪽에서 포트를 선택하세요.</p> : (
           <>
             <div style={row}><label htmlFor="p-code">코드</label><input id="p-code" style={field} value={s.code} onChange={e => set({ code: e.target.value })} /></div>
-            <div style={row}><label htmlFor="p-type">포트 종류</label><input id="p-type" style={field} value={s.portType} onChange={e => set({ portType: e.target.value })} /></div>
-            <div style={row}><label htmlFor="p-maker">제조 구분</label><input id="p-maker" style={field} value={s.makerType} onChange={e => set({ makerType: e.target.value })} /></div>
+            <div style={row}><label htmlFor="p-type">포트 종류</label><input id="p-type" style={field} value={s.portType} onChange={e => set({ portType: e.target.value })} /></div>
             <div style={row}>
               <label htmlFor="p-access">접근 차종</label>
               <div>

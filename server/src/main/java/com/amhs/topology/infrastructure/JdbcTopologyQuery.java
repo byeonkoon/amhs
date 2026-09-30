@@ -18,8 +18,8 @@ class JdbcTopologyQuery implements TopologyQuery {
             (r,n)->new MapSnapshot.Node(r.getLong(1),r.getString(2),r.getDouble(3),r.getDouble(4),r.getBoolean(5)), siteId,revisionId);
         var edges = jdbc.query("SELECT id,from_node_id,to_node_id,cost,enabled FROM topology.edge WHERE site_id=? AND revision_id=? ORDER BY id",
             (r,n)->new MapSnapshot.Edge(r.getLong(1),r.getLong(2),r.getLong(3),r.getDouble(4),r.getBoolean(5)), siteId,revisionId);
-        var ports = jdbc.query("SELECT id,code,port_type,maker_type,access_vehicle_type,linked_node_id FROM topology.port WHERE site_id=? AND revision_id=? ORDER BY id",
-            (r,n)->new MapSnapshot.Port(r.getLong(1),r.getString(2),r.getString(3),r.getString(4),VehicleType.valueOf(r.getString(5)),r.getLong(6)), siteId,revisionId);
+        var ports = jdbc.query("SELECT id,code,port_type,access_vehicle_type,linked_node_id FROM topology.port WHERE site_id=? AND revision_id=? ORDER BY id",
+            (r,n)->new MapSnapshot.Port(r.getLong(1),r.getString(2),r.getString(3),VehicleType.valueOf(r.getString(4)),r.getLong(5)), siteId,revisionId);
         return new MapSnapshot(siteId,revisionId,nodes,edges,ports);
     }
 }

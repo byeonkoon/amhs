@@ -9,7 +9,7 @@
 | 리소스 | 소유 모듈 | 내용 |
 | --- | --- | --- |
 | vehicles | fleet | 차량 타입, 크기, 초기/홈/충전 노드, 사용·배차 여부, 제어권, BCR·충전 정책 |
-| ports | topology | revision, PortType, MakerType, AccessVehicleType, LinkedNodeId |
+| ports | topology | revision, PortType, AccessVehicleType, LinkedNodeId |
 | connections | integration | TCP CLIENT/SERVER 또는 MQTT BROKER, host, port |
 | protocols | integration | PC/PLC/VDA5050, 정확한 버전, 명시적 adapterKey |
 | communications | integration | 차량과 접속/프로토콜 연결, manufacturer, 외부 식별자, VDA serial/interface |

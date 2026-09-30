@@ -1,6 +1,6 @@
 export type Node = { id: number; code: string; x: number; y: number; enabled: boolean };
 export type Edge = { id: number; fromNodeId: number; toNodeId: number; cost: number; enabled: boolean };
-export type Port = { id: number; code: string; portType: string; makerType: string; accessVehicleType: 'OHT' | 'AGV'; linkedNodeId: number };
+export type Port = { id: number; code: string; portType: string; accessVehicleType: 'OHT' | 'AGV'; linkedNodeId: number };
 export type MapData = { siteId: number; revisionId: number; nodes: Node[]; edges: Edge[]; ports: Port[] };
 export type Vehicle = {
   id: number; code: string; vType: 'OHT' | 'AGV'; currentNodeId: number;
@@ -61,7 +61,7 @@ export type VehicleSettings = {
   vdaProfileId?: number | null;
 };
 export type PortSettings = {
-  revisionId: number; code: string; portType: string; makerType: string;
+  revisionId: number; code: string; portType: string;
   accessVehicleType: 'OHT' | 'AGV'; linkedNodeId: number;
 };
 export type ConnectionSettings = { commType: 'TCP' | 'MQTT'; role: string; host: string; port: number; enabled: boolean };

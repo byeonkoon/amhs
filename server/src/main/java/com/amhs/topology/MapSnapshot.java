@@ -9,5 +9,5 @@ public record MapSnapshot(long siteId, long revisionId, List<Node> nodes, List<E
         public Node(long id,String code,double x,double y) { this(id,code,x,y,true); }
     }
     public record Edge(long id, long fromNodeId, long toNodeId, double cost, boolean enabled) {}
-    public record Port(long id, String code, String portType, String makerType, VehicleType accessVehicleType, long linkedNodeId) {}
+    public record Port(long id, String code, String portType, VehicleType accessVehicleType, long linkedNodeId) {}
 }

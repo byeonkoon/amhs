@@ -18,21 +18,21 @@ class TopologyValidationTest {
   return new TopologyValidation((site,revision)->map,events::add);
  }
  @Test void disabledReverseEdgeStillPreventsMixingVehicleTypes() {
-  var validation=validator(map(List.of(new MapSnapshot.Port(10,"P","LOAD","TEST",VehicleType.OHT,2))));
+  var validation=validator(map(List.of(new MapSnapshot.Port(10,"P","LOAD",VehicleType.OHT,2))));
   assertThatThrownBy(()->validation.vehicleNodes(1,1,VehicleType.AGV,1,null,null))
    .isInstanceOf(ConfigurationException.class).hasMessage("VEHICLE_TYPE_NETWORK_MISMATCH");
  }
  @Test void disconnectedNetworkCanUseAnotherType() {
-  var validation=validator(map(List.of(new MapSnapshot.Port(10,"P","LOAD","TEST",VehicleType.OHT,2))));
+  var validation=validator(map(List.of(new MapSnapshot.Port(10,"P","LOAD",VehicleType.OHT,2))));
   assertThatCode(()->validation.vehicleNodes(1,1,VehicleType.AGV,3,null,null)).doesNotThrowAnyException();
  }
  @Test void homeAndChargeNodesMustAlsoMatchTheNetwork() {
-  var validation=validator(map(List.of(new MapSnapshot.Port(10,"P","LOAD","TEST",VehicleType.OHT,2))));
+  var validation=validator(map(List.of(new MapSnapshot.Port(10,"P","LOAD",VehicleType.OHT,2))));
   assertThatThrownBy(()->validation.vehicleNodes(1,1,VehicleType.AGV,3,1L,null)).hasMessage("VEHICLE_TYPE_NETWORK_MISMATCH");
   assertThatThrownBy(()->validation.vehicleNodes(1,1,VehicleType.AGV,3,null,999L)).hasMessage("NODE_OUTSIDE_REVISION");
  }
  @Test void portChangePublishesEntirePhysicalComponentForFleetValidation() {
-  var validation=validator(map(List.of(new MapSnapshot.Port(10,"P","LOAD","TEST",VehicleType.OHT,2))));
+  var validation=validator(map(List.of(new MapSnapshot.Port(10,"P","LOAD",VehicleType.OHT,2))));
   validation.portNode(1,1,1,VehicleType.AGV,10);
   assertThat(events).containsExactly(new PortChanging(1,1,VehicleType.AGV,Set.of(1L,2L)));
  }

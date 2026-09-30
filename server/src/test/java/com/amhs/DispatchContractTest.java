@@ -11,7 +11,7 @@ class DispatchContractTest {
  private MapSnapshot map() {
   return new MapSnapshot(1,1,List.of(new MapSnapshot.Node(1,"O1",0,0),new MapSnapshot.Node(2,"O2",1,0),new MapSnapshot.Node(3,"A1",0,2),new MapSnapshot.Node(4,"A2",1,2),new MapSnapshot.Node(5,"ISOLATED",9,9)),
   List.of(new MapSnapshot.Edge(1,1,2,10,true),new MapSnapshot.Edge(2,3,4,1,true)),
-  List.of(new MapSnapshot.Port(1,"O-A","L","S",VehicleType.OHT,1),new MapSnapshot.Port(2,"O-B","U","S",VehicleType.OHT,2),new MapSnapshot.Port(3,"A-A","L","S",VehicleType.AGV,3)));
+  List.of(new MapSnapshot.Port(1,"O-A","L",VehicleType.OHT,1),new MapSnapshot.Port(2,"O-B","U",VehicleType.OHT,2),new MapSnapshot.Port(3,"A-A","L",VehicleType.AGV,3)));
  }
  private DispatchEvaluator.Candidate vehicle(long id,VehicleType type,long node) { return new DispatchEvaluator.Candidate(id,type,node,true,true,true,true,true); }
  @Test void closerAgvIsExcludedAndUnreachableOhtDoesNotBlockOtherCandidates() {

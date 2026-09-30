@@ -17,7 +17,7 @@
 
 ## 식별·포트·지도
 내부 ID bigint, 외부 코드 NVARCHAR(64), 좌표 mm, 시간 UTC.
-PortType·MakerType은 원본 의미를 유지할 문자열이다. 가상 seed의 LOAD/UNLOAD/SYNTHETIC은 원본 코드 매핑이 아니다.
+PortType은 이 프로젝트에서 정의한 문자열이다. 가상 seed의 LOAD·UNLOAD·SYNTHETIC은 외부 시스템 코드 매핑이 아니다. 장비 제조사를 식별하는 칸은 두지 않는다.
 AccessVehicleType은 OHT 또는 AGV, LinkedNodeId는 같은 site/revision의 노드를 참조한다.
 OHT와 AGV는 단절된 실제 Node/Edge 그래프와 포트 접근 노드로 분리한다. layer는 필수가 아니다.
 지도 활성화 검증 시 반대 차종 포트가 동일 연결 성분에 섞이는 구성을 거부한다. 현재 편집/import/활성화 API는 미구현이다.
