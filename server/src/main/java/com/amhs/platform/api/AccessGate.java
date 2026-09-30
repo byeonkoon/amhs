@@ -4,12 +4,9 @@ import jakarta.servlet.*;
 import jakarta.servlet.http.*;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.*;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 /**
@@ -22,19 +19,16 @@ import org.springframework.web.filter.OncePerRequestFilter;
 class AccessGate extends OncePerRequestFilter {
  private static final Logger log=LoggerFactory.getLogger(AccessGate.class);
  private static final Set<String> READS=Set.of("GET","HEAD","OPTIONS");
- private final boolean localTokenEnabled; private final String localToken;
- private final ObjectMapper mapper; private final AccountQuery accounts; private final AuditRecorder audit;
- AccessGate(@Value("${amhs.configuration.writes-enabled:false}") boolean localTokenEnabled,
-  @Value("${amhs.configuration.write-token:}") String localToken,
-  ObjectMapper mapper,AccountQuery accounts,AuditRecorder audit){
-  this.localTokenEnabled=localTokenEnabled;this.localToken=localToken;this.mapper=mapper;this.accounts=accounts;this.audit=audit;
+ private final ObjectMapper mapper; private final PrincipalResolver principals; private final AuditRecorder audit;
+ AccessGate(ObjectMapper mapper,PrincipalResolver principals,AuditRecorder audit){
+  this.mapper=mapper;this.principals=principals;this.audit=audit;
  }
  protected void doFilterInternal(HttpServletRequest req,HttpServletResponse res,FilterChain chain)throws IOException,ServletException{
   if(READS.contains(req.getMethod())){chain.doFilter(req,res);return;}
   String traceId=UUID.randomUUID().toString();
   String target=req.getMethod()+" "+decode(req.getRequestURI());
   String reason=req.getHeader("X-Amhs-Reason");
-  Principal actor=resolve(req.getHeader("Authorization"));
+  Principal actor=principals.resolve(req.getHeader("Authorization")).orElse(null);
   if(actor==null){deny(res,401,"PRINCIPAL_REQUIRED",traceId,Principal.anonymous(),req.getMethod(),target,reason);return;}
   Role required=requiredRole(req.getRequestURI());
   if(!actor.role().allows(required)){deny(res,403,"ROLE_"+required+"_REQUIRED",traceId,actor,req.getMethod(),target,reason);return;}
@@ -46,24 +40,21 @@ class AccessGate extends OncePerRequestFilter {
    throw ex;
   }
  }
- /** Configuration endpoints change stored contracts, so they need the highest authority. */
- private static Role requiredRole(String uri){return decode(uri).contains("/configuration/")?Role.ADMIN:Role.OPERATOR;}
- private Principal resolve(String header){
-  if(header==null||!header.startsWith("Bearer "))return null;
-  String supplied=header.substring(7);
-  if(localTokenEnabled&&localToken.length()>=32
-   &&MessageDigest.isEqual(localToken.getBytes(StandardCharsets.UTF_8),supplied.getBytes(StandardCharsets.UTF_8)))
-   return Principal.localAdmin();
-  return accounts.findByTokenHash(sha256Hex(supplied)).orElse(null);
+ /**
+  * What a request needs, decided by what it can break rather than by whether it is a write.
+  *
+  * <p>Running configured work is the operator's job. Configuring the vehicles, ports and
+  * equipment that work uses is the engineer's. The track itself, the site-wide options and the
+  * accounts are the administrator's, because a mistake there reaches every vehicle at once and
+  * is not visible until something drives into it.
+  */
+ private static Role requiredRole(String uri){
+  String path=decode(uri);
+  if(!path.contains("/configuration/"))return Role.OPERATOR;
+  for(String area:SITE_WIDE)if(path.contains("/configuration/"+area))return Role.ADMIN;
+  return Role.ENGINEER;
  }
- static String sha256Hex(String value){
-  try{
-   var digest=MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8));
-   var out=new StringBuilder(64);
-   for(byte b:digest)out.append(Character.forDigit((b>>4)&0xF,16)).append(Character.forDigit(b&0xF,16));
-   return out.toString();
-  }catch(NoSuchAlgorithmException e){throw new IllegalStateException("SHA-256 unavailable",e);}
- }
+ private static final List<String> SITE_WIDE=List.of("system","topology","accounts");
  private static String decode(String uri){
   try{return java.net.URLDecoder.decode(uri,StandardCharsets.UTF_8);}catch(RuntimeException e){return uri;}
  }

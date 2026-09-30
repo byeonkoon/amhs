@@ -11,14 +11,22 @@ class AccessGateTest {
  private final List<AuditEntry> recorded=new ArrayList<>();
  private final AuditRecorder audit=recorded::add;
  private final AccountQuery accounts=hash->
-  AccessGate.sha256Hex(OPERATOR_TOKEN).equals(hash)
+  PrincipalResolver.sha256Hex(OPERATOR_TOKEN).equals(hash)
    ? Optional.of(new Principal(7L,1L,"op1",Role.OPERATOR)) : Optional.empty();
+ private final AccountQuery engineers=hash->
+  PrincipalResolver.sha256Hex(ENGINEER_TOKEN).equals(hash)
+   ? Optional.of(new Principal(8L,1L,"eng1",Role.ENGINEER)) : Optional.empty();
+ private static final String ENGINEER_TOKEN="engineer-token-at-least-32-characters-long";
  private MockHttpServletResponse call(boolean enabled,String configured,String supplied,String method,String uri)throws Exception{
+  return call(enabled,configured,supplied,method,uri,accounts);
+ }
+ private MockHttpServletResponse call(boolean enabled,String configured,String supplied,String method,String uri,
+                                      AccountQuery directory)throws Exception{
   var request=new MockHttpServletRequest(method,uri);
   if(supplied!=null)request.addHeader("Authorization",supplied);
   request.addHeader("X-Amhs-Reason","line stopped");
   var response=new MockHttpServletResponse();
-  new AccessGate(enabled,configured,new ObjectMapper(),accounts,audit)
+  new AccessGate(new ObjectMapper(),new PrincipalResolver(enabled,configured,directory),audit)
    .doFilter(request,response,(r,s)->((MockHttpServletResponse)s).getWriter().write("PASSED"));
   return response;
  }
@@ -41,6 +49,21 @@ class AccessGateTest {
  @Test void operatorCannotChangeConfigurationButCanIssueOperations()throws Exception{
   assertThat(config(true,TOKEN,"Bearer "+OPERATOR_TOKEN,"POST").getStatus()).isEqualTo(403);
   assertThat(call(true,TOKEN,"Bearer "+OPERATOR_TOKEN,"POST","/api/v1/sites/1/transport-orders").getContentAsString()).isEqualTo("PASSED");
+ }
+
+ /**
+  * Configuring a vehicle and rewiring the track are different jobs, so they stop sharing a
+  * level: the engineer does the first and is refused the second.
+  */
+ @Test void engineerConfiguresResourcesButNotTheTrackOptionsOrAccounts()throws Exception{
+  String engineer="Bearer "+ENGINEER_TOKEN;
+  assertThat(call(true,TOKEN,engineer,"POST","/api/v1/sites/1/configuration/vehicles",engineers).getContentAsString()).isEqualTo("PASSED");
+  assertThat(call(true,TOKEN,engineer,"POST","/api/v1/sites/1/configuration/equipment",engineers).getContentAsString()).isEqualTo("PASSED");
+  assertThat(call(true,TOKEN,engineer,"PUT","/api/v1/sites/1/configuration/topology/nodes/1",engineers).getStatus()).isEqualTo(403);
+  assertThat(call(true,TOKEN,engineer,"PUT","/api/v1/sites/1/configuration/system",engineers).getStatus()).isEqualTo(403);
+  assertThat(call(true,TOKEN,engineer,"POST","/api/v1/sites/1/configuration/accounts",engineers).getStatus()).isEqualTo(403);
+  // Running the work stays open to anyone from OPERATOR up.
+  assertThat(call(true,TOKEN,engineer,"POST","/api/v1/sites/1/operation-sweep",engineers).getContentAsString()).isEqualTo("PASSED");
  }
  @Test void everyChangeIsAuditedWithActorTargetResultAndReason()throws Exception{
   recorded.clear();

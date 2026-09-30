@@ -2,7 +2,7 @@ package com.amhs.platform.api;
 import com.amhs.platform.*;
 import org.springframework.web.bind.annotation.*;
 @RestController
-@RequestMapping("/api/v1/sites/{siteId}/configuration/operation")
+@RequestMapping("/api/v1/sites/{siteId}/configuration/system")
 class OperationOptionController {
  private final OperationOptionConfiguration service;
  OperationOptionController(OperationOptionConfiguration service){this.service=service;}

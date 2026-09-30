@@ -35,6 +35,9 @@ public class TransportAssignment {
 
  public record Assigned(TransportOrder order,AssignmentView assignment,String commandId,boolean created){}
 
+ /** Every vehicle currently held at this site, so a screen can name the holder of each order. */
+ public List<AssignmentView> active(long siteId){ return ledger.activeAssignments(siteId); }
+
  @Transactional
  public Assigned assign(long siteId,long orderId,String actorCode,String traceId){
   var order=ledger.lock(siteId,orderId)

@@ -41,7 +41,16 @@ class TopologySqlTest {
         var types = new java.util.HashMap<Long,String>();
         draft.nodes().forEach(n -> types.put(n.id(),n.code().substring(0,3)));
         assertThat(draft.edges()).allSatisfy(e -> assertThat(types.get(e.fromNodeId())).isEqualTo(types.get(e.toNodeId())));
-        assertThat(maps.getMap(1,1).nodes()).hasSize(8);
+        // The active layout is the simulation one: a twenty-node OHT ring and a twelve-node AGV
+        // loop that splits and rejoins, kept apart from the draft revision above.
+        var active=maps.getMap(1,1);
+        assertThat(active.nodes()).hasSize(32);
+        assertThat(active.nodes().stream().filter(n -> n.code().startsWith("OHT-"))).hasSize(20);
+        assertThat(active.nodes().stream().filter(n -> n.code().startsWith("AGV-"))).hasSize(12);
+        // One-way: no span of the active layout carries an edge in both directions, which is what
+        // keeps two vehicles from meeting nose to nose instead of queueing.
+        var spans=active.edges().stream().map(e -> e.fromNodeId()+">"+e.toNodeId()).collect(java.util.stream.Collectors.toSet());
+        assertThat(active.edges()).noneMatch(e -> spans.contains(e.toNodeId()+">"+e.fromNodeId()));
         assertThat(jdbc.queryForObject("SELECT id FROM topology.map_revision WHERE site_id=1 AND status='ACTIVE'",Long.class)).isEqualTo(1L);
         mvc.perform(get("/api/v1/sites/1/maps/2"))
             .andExpect(status().isOk()).andExpect(jsonPath("$.revisionId").value(2))

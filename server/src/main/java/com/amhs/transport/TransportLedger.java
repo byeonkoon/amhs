@@ -18,6 +18,8 @@ public interface TransportLedger {
  /** The route this order was assigned against, empty when it has none. */
  List<Long> plannedRoute(long orderId);
  Optional<AssignmentView> activeAssignment(long siteId,long orderId);
+ /** Every vehicle currently held at this site, with the order holding it. */
+ List<AssignmentView> activeAssignments(long siteId);
  /** Vehicles currently held by some order at this site. */
  List<Long> assignedVehicleIds(long siteId);
  /** Orders that currently hold a vehicle at this site. */

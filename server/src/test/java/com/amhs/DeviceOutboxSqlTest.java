@@ -116,7 +116,10 @@ class DeviceOutboxSqlTest {
   // Even with every timer expired, a command the device may hold is not offered again.
   makeClaimable(cmd);
   assertThat(claim(50,5)).extracting(DeviceCommand::commandId).doesNotContain(cmd);
-  assertThat(outbox.inDoubt(1,200)).extracting(DeviceCommand::commandId).contains(cmd);
+  // The operator's list is oldest first and capped, so membership is checked against this
+  // order's own commands and the shared list is checked for the ordering it promises.
+  assertThat(outbox.byOrder(1,id)).anyMatch(c -> c.commandId().equals(cmd)&&c.status().inDoubt());
+  assertThat(outbox.inDoubt(1,200)).isSortedAccordingTo(java.util.Comparator.comparing(DeviceCommand::createdAt));
  }
 
  @Test void receiptResolvesDoubtButNotBeforeAnythingWasSent(){

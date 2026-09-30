@@ -1,0 +1,66 @@
+/*
+ * Monitoring density. The map is what an operator watches, so everything around it gives up
+ * room: the sidebar narrows, the page header shrinks, and the numbers that used to take four
+ * large cards become one thin strip. Nothing is removed — the detail moves into panels that
+ * open when asked for.
+ */
+.shell.compact { grid-template-columns: 178px 1fr; }
+.compact .nav-brand { padding: 11px 13px 10px; }
+.compact .nav-brand b { font-size: 13px; }
+.compact .nav-brand span { display: none; }
+.compact .nav-menu { padding: 5px 0; }
+.compact .nav-menu button { padding: 6px 13px; }
+.compact .nav-menu .t1 { font-size: 12px; }
+.compact .nav-menu .t2 { font-size: 9px; }
+.compact .nav-foot { padding: 9px 13px 11px; font-size: 10px; }
+.compact .topbar { min-height: 38px; }
+.compact .phead { padding: 10px 14px 0; }
+.compact .phead h1 { font-size: 16.5px; }
+.compact .phead .sub { font-size: 11px; }
+.compact .body { padding: 9px 14px 12px; gap: 9px; }
+
+/* One row instead of four cards. Same numbers, a twentieth of the height. */
+.statbar { display: flex; flex-wrap: wrap; background: var(--srf); border: 1px solid var(--ln); border-radius: 7px; overflow: hidden; }
+.statbar .s { display: flex; align-items: baseline; gap: 6px; padding: 6px 13px; border-right: 1px solid var(--ln); }
+.statbar .s:last-child { border-right: 0; }
+.statbar .s .k { font-size: 9.5px; letter-spacing: .05em; text-transform: uppercase; color: var(--mut); font-weight: 600; }
+.statbar .s .v { font-family: var(--mono); font-size: 14px; font-weight: 600; letter-spacing: -.01em; }
+.statbar .s .d { font-size: 10.5px; color: var(--mut); }
+
+/* Panels fold away so a screen can carry more than fits at once. */
+.panel { background: var(--srf); border: 1px solid var(--ln); border-radius: 7px; }
+.panel > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 7px; padding: 8px 12px; font-size: 12.5px; font-weight: 600; }
+.panel > summary::-webkit-details-marker { display: none; }
+.panel > summary::before { content: "\25B8"; font-size: 10px; color: var(--mut); transition: transform .12s ease; }
+.panel[open] > summary::before { transform: rotate(90deg); }
+.panel > summary:focus-visible { outline: 2px solid var(--acc); outline-offset: -2px; border-radius: 7px; }
+.panel > summary .aux { margin-left: auto; font-weight: 400; font-size: 10.5px; color: var(--mut); }
+.panel > .pb { border-top: 1px solid var(--ln); }
+.panel > .pb.pad { padding: 11px 12px; }
+
+/* A grid dense enough to read a fleet at a glance. Columns are set per use. */
+.sgrid { display: grid; gap: 1px; background: var(--ln); font-size: 11.5px; }
+.sgrid .hd, .sgrid .rw { display: grid; grid-template-columns: var(--cols); background: var(--srf); align-items: center; }
+.sgrid .hd { background: var(--gnd); font-size: 9.5px; letter-spacing: .04em; text-transform: uppercase; color: var(--mut); font-weight: 600; }
+.sgrid .hd > *, .sgrid .rw > * { padding: 5px 9px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sgrid button.rw { border: 0; text-align: left; font: inherit; color: inherit; cursor: pointer; width: 100%; }
+.sgrid .rw:hover { background: var(--acc-soft); }
+.sgrid .rw.sel { background: var(--acc-soft); box-shadow: inset 2px 0 0 var(--acc); }
+.sgrid .muted { color: var(--mut); }
+
+/* The map gets the space everything else gave up. */
+.g-mon { grid-template-columns: minmax(0, 1fr) 296px; }
+.compact .mapwrap { min-height: min(58vh, 620px); }
+@media (max-width: 1100px) { .g-mon { grid-template-columns: minmax(0, 1fr); } }
+
+/* Account menu: where site-wide options live, because they are not one machine's settings. */
+.acct { position: relative; }
+.acct > button { display: flex; align-items: center; gap: 7px; border: 1px solid transparent; background: none; cursor: pointer; font: inherit; color: inherit; padding: 3px 6px; border-radius: 6px; }
+.acct > button:hover { border-color: var(--ln2); }
+.acct-menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; min-width: 224px; background: var(--srf); border: 1px solid var(--ln2); border-radius: 8px; box-shadow: 0 10px 28px rgba(23, 34, 49, .16); padding: 5px; }
+.acct-menu .who { padding: 8px 11px 7px; font-size: 11px; color: var(--mut); line-height: 1.5; }
+.acct-menu .sep { height: 1px; background: var(--ln); margin: 4px 0; }
+.acct-menu button { width: 100%; text-align: left; border: 0; background: none; padding: 8px 11px; border-radius: 5px; font-size: 12px; color: var(--ink); cursor: pointer; display: flex; align-items: center; gap: 8px; }
+.acct-menu button:hover:not(:disabled) { background: var(--gnd); }
+.acct-menu button:disabled { opacity: .45; cursor: not-allowed; }
+.acct-menu button .lv { margin-left: auto; font-size: 10px; color: var(--mut); font-family: var(--mono); }

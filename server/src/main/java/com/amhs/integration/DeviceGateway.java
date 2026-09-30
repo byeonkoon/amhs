@@ -1,4 +1,5 @@
 package com.amhs.integration;
+import com.amhs.platform.OperationOptionConfiguration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -14,17 +15,18 @@ import java.time.Duration;
 public class DeviceGateway {
     private static final Logger log=LoggerFactory.getLogger(DeviceGateway.class);
     private final CommandOutbox outbox; private final DeviceChannel channel;
-    private final int batchSize; private final int maxAttempts; private final Duration retryDelay;
-    public DeviceGateway(CommandOutbox outbox,DeviceChannel channel,
-                         @Value("${amhs.device.batch-size:32}") int batchSize,
-                         @Value("${amhs.device.max-attempts:5}") int maxAttempts,
-                         @Value("${amhs.device.retry-delay-seconds:15}") long retryDelaySeconds) {
-        this.outbox=outbox; this.channel=channel; this.batchSize=batchSize; this.maxAttempts=maxAttempts;
-        this.retryDelay=Duration.ofSeconds(retryDelaySeconds);
+    private final OperationOptionConfiguration options; private final int batchSize;
+    public DeviceGateway(CommandOutbox outbox,DeviceChannel channel,OperationOptionConfiguration options,
+                         @Value("${amhs.device.batch-size:32}") int batchSize) {
+        this.outbox=outbox; this.channel=channel; this.options=options; this.batchSize=batchSize;
     }
     public record Publication(int claimed, int delivered, int notDelivered, int inDoubt) {}
     public Publication publishPending(long siteId) {
-        var claimed=outbox.claim(siteId,batchSize,maxAttempts);
+        // How hard to retry is an operating decision, so it is read from the site's options each
+        // sweep rather than fixed at start-up: changing it must not require a restart.
+        var option=options.get(siteId).settings();
+        var retryDelay=Duration.ofSeconds(option.commandRetrySeconds());
+        var claimed=outbox.claim(siteId,batchSize,option.commandMaxAttempts());
         int delivered=0,notDelivered=0,inDoubt=0;
         for (var command : claimed) {
             DeviceChannel.Verdict verdict;

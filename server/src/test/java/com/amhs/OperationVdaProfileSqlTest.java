@@ -33,10 +33,18 @@ class OperationVdaProfileSqlTest {
  private VdaProfileSettings profile(String code,String topic,String json,String source,String dest){
   return new VdaProfileSettings(code,"vda5050",topic,"TEST-MAKER",json,source,dest);
  }
- private static final String OPTION_JSON="{\"commType\":\"%s\",\"nodeCount\":20,\"moreEnabled\":true,\"moreType\":\"NODE\",\"moreRemainingNodes\":3,\"moreRemainingPercent\":25}";
- private static OperationOptions opt(String commType,int nodeCount){return new OperationOptions(commType,nodeCount,true,"NODE",3,25);}
+ private static final String OPTION_JSON="{\"commType\":\"%s\",\"nodeCount\":20,\"moreEnabled\":true,\"moreType\":\"NODE\","
+  +"\"moreRemainingNodes\":3,\"moreRemainingPercent\":25,\"autoDispatch\":false,\"commandMaxAttempts\":5,"
+  +"\"commandRetrySeconds\":15,\"positionStaleSeconds\":10}";
+ private static OperationOptions opt(String commType,int nodeCount){
+  return new OperationOptions(commType,nodeCount,true,"NODE",3,25,false,5,15,10);
+ }
+ private static OperationOptions more(String moreType,int nodeCount,boolean enabled,int nodes,int percent){
+  return new OperationOptions("PC",nodeCount,enabled,moreType,nodes,percent,false,5,15,10);
+ }
  private static OperationOptions with(OperationOptions o,String commType){
-  return new OperationOptions(commType,o.nodeCount(),o.moreEnabled(),o.moreType(),o.moreRemainingNodes(),o.moreRemainingPercent());
+  return new OperationOptions(commType,o.nodeCount(),o.moreEnabled(),o.moreType(),o.moreRemainingNodes(),
+   o.moreRemainingPercent(),o.autoDispatch(),o.commandMaxAttempts(),o.commandRetrySeconds(),o.positionStaleSeconds());
  }
  private void setComm(String commType){
   options.update(1,options.get(1).version(),with(options.get(1).settings(),commType));
@@ -47,7 +55,7 @@ class OperationVdaProfileSqlTest {
  }
 
  @Test void operationOptionDefaultsToPcWithTwentyNodes()throws Exception{
-  mvc.perform(get(BASE+"operation")).andExpect(status().isOk())
+  mvc.perform(get(BASE+"system")).andExpect(status().isOk())
    .andExpect(jsonPath("$.settings.commType").value("PC")).andExpect(jsonPath("$.settings.nodeCount").value(20))
    .andExpect(jsonPath("$.settings.moreEnabled").value(true)).andExpect(jsonPath("$.settings.moreType").value("NODE"))
    .andExpect(jsonPath("$.settings.moreRemainingNodes").value(3)).andExpect(jsonPath("$.settings.moreRemainingPercent").value(25));
@@ -60,22 +68,36 @@ class OperationVdaProfileSqlTest {
   var changed=options.update(1,v,opt("PLC",35));
   assertThat(changed.settings()).isEqualTo(opt("PLC",35));
   rejected(()->options.update(1,v,opt("PC",20)),409,"VERSION_CONFLICT");
-  mvc.perform(put(BASE+"operation?expectedVersion="+changed.version()).contentType("application/json").content(OPTION_JSON.formatted("PC")))
+  mvc.perform(put(BASE+"system?expectedVersion="+changed.version()).contentType("application/json").content(OPTION_JSON.formatted("PC")))
    .andExpect(status().isUnauthorized());
-  mvc.perform(put(BASE+"operation?expectedVersion="+changed.version()).header("Authorization",TOKEN).contentType("application/json").content(OPTION_JSON.formatted("MQTT")))
+  mvc.perform(put(BASE+"system?expectedVersion="+changed.version()).header("Authorization",TOKEN).contentType("application/json").content(OPTION_JSON.formatted("MQTT")))
    .andExpect(status().isOk()).andExpect(jsonPath("$.settings.commType").value("MQTT"));
  }
  @Test void moreOptionIsValidatedAndStored(){
   long v=options.get(1).version();
-  rejected(()->options.update(1,v,new OperationOptions("PC",20,true,"TIME",3,25)),422,"INVALID_MORE_TYPE");
-  rejected(()->options.update(1,v,new OperationOptions("PC",20,true,"NODE",0,25)),422,"INVALID_MORE_REMAINING_NODES");
-  rejected(()->options.update(1,v,new OperationOptions("PC",5,true,"NODE",5,25)),422,"MORE_NODES_NOT_BELOW_NODE_COUNT");
-  rejected(()->options.update(1,v,new OperationOptions("PC",20,true,"DISTANCE",3,0)),422,"INVALID_MORE_REMAINING_PERCENT");
-  rejected(()->options.update(1,v,new OperationOptions("PC",20,true,"DISTANCE",3,100)),422,"INVALID_MORE_REMAINING_PERCENT");
-  var distance=new OperationOptions("PC",20,true,"DISTANCE",3,30);
+  rejected(()->options.update(1,v,more("TIME",20,true,3,25)),422,"INVALID_MORE_TYPE");
+  rejected(()->options.update(1,v,more("NODE",20,true,0,25)),422,"INVALID_MORE_REMAINING_NODES");
+  rejected(()->options.update(1,v,more("NODE",5,true,5,25)),422,"MORE_NODES_NOT_BELOW_NODE_COUNT");
+  rejected(()->options.update(1,v,more("DISTANCE",20,true,3,0)),422,"INVALID_MORE_REMAINING_PERCENT");
+  rejected(()->options.update(1,v,more("DISTANCE",20,true,3,100)),422,"INVALID_MORE_REMAINING_PERCENT");
+  var distance=more("DISTANCE",20,true,3,30);
   assertThat(options.update(1,v,distance).settings()).isEqualTo(distance);
-  var off=new OperationOptions("PC",20,false,"NODE",4,30);
+  var off=more("NODE",20,false,4,30);
   assertThat(options.update(1,v+1,off).settings()).isEqualTo(off);
+ }
+
+ @Test void commandRetryAndFreshnessBoundsAreEnforced(){
+  long v=options.get(1).version();
+  var base=opt("PC",20);
+  rejected(()->options.update(1,v,new OperationOptions("PC",20,true,"NODE",3,25,false,0,15,10)),
+   422,"INVALID_COMMAND_MAX_ATTEMPTS");
+  rejected(()->options.update(1,v,new OperationOptions("PC",20,true,"NODE",3,25,false,5,0,10)),
+   422,"INVALID_COMMAND_RETRY_SECONDS");
+  rejected(()->options.update(1,v,new OperationOptions("PC",20,true,"NODE",3,25,false,5,15,0)),
+   422,"INVALID_POSITION_STALE_SECONDS");
+  var tuned=new OperationOptions("PC",20,true,"NODE",3,25,true,3,30,20);
+  assertThat(options.update(1,v,tuned).settings()).isEqualTo(tuned);
+  assertThat(base.autoDispatch()).isFalse();
  }
  @Test void runningSiteRejectsOptionChanges(){
   jdbc.update("UPDATE platform.site_operation SET mode='RUNNING' WHERE site_id=1");

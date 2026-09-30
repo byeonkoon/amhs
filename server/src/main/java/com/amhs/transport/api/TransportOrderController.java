@@ -32,6 +32,10 @@ class TransportOrderController {
  TransportOrder get(@PathVariable long siteId,@PathVariable long orderId){
   return orders.find(siteId,orderId).orElseThrow(()->new TransportRejected("ORDER_NOT_FOUND","unknown order",false));
  }
+ /** Which vehicle each order is holding right now. */
+ @GetMapping("/assignments")
+ List<AssignmentView> assignments(@PathVariable long siteId){return assignment.active(siteId);}
+
  @GetMapping("/{orderId}/events")
  List<OrderEventView> events(@PathVariable long siteId,@PathVariable long orderId){return orders.events(siteId,orderId);}
 

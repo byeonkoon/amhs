@@ -150,6 +150,15 @@ class JdbcTransportLedger implements TransportLedger {
  }
 
  @Transactional(readOnly=true)
+ public List<AssignmentView> activeAssignments(long siteId){
+  return jdbc.query("SELECT a.id,a.order_id,a.vehicle_id,a.assigned_at,a.released_at,a.release_reason"
+   +" FROM transport.assignment a JOIN transport.order o ON o.id=a.order_id"
+   +" WHERE o.site_id=? AND a.released_at IS NULL ORDER BY a.order_id",
+   (r,n)->new AssignmentView(r.getLong(1),r.getLong(2),r.getLong(3),
+    r.getObject(4,OffsetDateTime.class),r.getObject(5,OffsetDateTime.class),r.getString(6)),siteId);
+ }
+
+ @Transactional(readOnly=true)
  public List<Long> assignedOrderIds(long siteId){
   return jdbc.query("SELECT a.order_id FROM transport.assignment a JOIN transport.order o ON o.id=a.order_id"
    +" WHERE o.site_id=? AND a.released_at IS NULL ORDER BY a.order_id",(r,n)->r.getLong(1),siteId);
