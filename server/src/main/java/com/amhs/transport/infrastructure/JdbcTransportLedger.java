@@ -143,6 +143,13 @@ class JdbcTransportLedger implements TransportLedger {
    +" WHERE o.site_id=? AND a.released_at IS NULL",(r,n)->r.getLong(1),siteId);
  }
 
+ @Transactional(readOnly=true)
+ public Long assignedVehicleOf(long orderId){
+  var rows=jdbc.query("SELECT vehicle_id FROM transport.assignment WHERE order_id=? ORDER BY assigned_at DESC,id DESC LIMIT 1",
+   (r,n)->r.getLong(1),orderId);
+  return rows.isEmpty()?null:rows.getFirst();
+ }
+
  private Optional<TransportOrder> one(String sql,Object... args){
   var rows=jdbc.query(sql,MAPPER,args);
   return rows.isEmpty()?Optional.empty():Optional.of(rows.get(0));

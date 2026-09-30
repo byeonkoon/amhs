@@ -18,6 +18,8 @@ public interface TransportLedger {
  Optional<AssignmentView> activeAssignment(long siteId,long orderId);
  /** Vehicles currently held by some order at this site. */
  List<Long> assignedVehicleIds(long siteId);
+ /** The vehicle of the order's latest assignment, released or not; null when it never had one. */
+ Long assignedVehicleOf(long orderId);
  /** Applies a checked transition and appends the matching event in one transaction. */
  TransportOrder transition(long siteId,long orderId,OrderStatus target,String reason,String actorCode,String traceId);
 }

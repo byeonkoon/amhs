@@ -1,6 +1,7 @@
 package com.amhs;
 import com.amhs.fleet.*;
 import com.amhs.integration.*;
+import com.amhs.traffic.TrafficControl;
 import com.amhs.transport.*;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
@@ -21,7 +22,7 @@ import static org.assertj.core.api.Assertions.*;
 @EnabledIfEnvironmentVariable(named="AMHS_SQL_TEST",matches="true")
 class AssignmentSqlTest {
  @Autowired TransportOrders orders; @Autowired TransportAssignment assignment;
- @Autowired FleetState fleet; @Autowired CommandOutbox outbox;
+ @Autowired FleetState fleet; @Autowired CommandOutbox outbox; @Autowired TrafficControl traffic;
  @Autowired JdbcTemplate jdbc; @Autowired TransactionTemplate tx;
 
  private static final long SITE=1, REVISION=1, OHT=1, AGV=2, OHT_SOURCE_NODE=101;
@@ -45,7 +46,11 @@ class AssignmentSqlTest {
   jdbc.update("UPDATE fleet.vehicle_profile SET assignment_enabled=FALSE WHERE site_id=? AND revision_id=?",SITE,REVISION);
  }
  private void available(long vehicleId,long node){ report(vehicleId,node,true,true,true); }
- private void releaseAll(){ jdbc.update("UPDATE transport.assignment SET released_at=now() WHERE released_at IS NULL"); }
+ private void releaseAll(){
+  jdbc.update("UPDATE transport.assignment SET released_at=now() WHERE released_at IS NULL");
+  jdbc.update("DELETE FROM traffic.reservation_wait WHERE site_id=?",SITE);
+  jdbc.update("DELETE FROM traffic.node_reservation WHERE site_id=?",SITE);
+ }
  private TransportAssignment.Assigned assign(long orderId){
   return tx.execute(s->assignment.assign(SITE,orderId,"tester","trace"));
  }
@@ -117,6 +122,30 @@ class AssignmentSqlTest {
    .isInstanceOf(IllegalArgumentException.class).hasMessage("NODE_NOT_IN_REVISION");
   assertThatThrownBy(()->report(999999L,OHT_SOURCE_NODE,true,true,true))
    .isInstanceOf(IllegalArgumentException.class).hasMessage("VEHICLE_NOT_FOUND");
+ }
+
+ @Test void theCommandCarriesOnlyWhatTrafficPermitted(){
+  releaseAll(); parked(); available(OHT,OHT_SOURCE_NODE);
+  long id=order("authorized-run");
+  assign(id);
+  var payload=outbox.byOrder(SITE,id).getFirst().payload();
+  assertThat(payload).contains("\"authorizedNodeIds\"").contains("\"authorityComplete\"");
+  assertThat(traffic.heldBy(SITE,OHT)).isNotEmpty();
+  // Permission starts where the vehicle is standing, not somewhere along the plan.
+  assertThat(traffic.heldBy(SITE,OHT).getFirst().nodeId()).isEqualTo(OHT_SOURCE_NODE);
+ }
+
+ @Test void aVehicleThatCannotBeLetOutIsStillAssignedButNotCommanded(){
+  releaseAll(); parked(); available(OHT,OHT_SOURCE_NODE);
+  // Somebody else is standing exactly where this vehicle is supposed to start.
+  jdbc.update("INSERT INTO traffic.node_reservation(site_id,revision_id,node_id,vehicle_id,sequence)"
+   +" VALUES(?,?,?,?,1)",SITE,REVISION,OHT_SOURCE_NODE,9999);
+  long id=order("stalled-start");
+  var assigned=assign(id);
+  assertThat(assigned.order().status()).isEqualTo(OrderStatus.ASSIGNED);
+  assertThat(assigned.commandId()).isNull();
+  // Holding the vehicle is not permission to move it, so no movement command exists yet.
+  assertThat(outbox.byOrder(SITE,id)).isEmpty();
  }
 
  @Test void aReportRecordsWhereItCameFromSoSimulationIsNotMistakenForEvidence(){

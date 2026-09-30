@@ -1,5 +1,9 @@
 package com.amhs.transport;
 import com.amhs.platform.VehicleType;
+import com.amhs.fleet.FleetState;
+import com.amhs.fleet.VehicleSnapshot;
+import com.amhs.traffic.TrafficControl;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.stereotype.Service;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -13,8 +17,10 @@ import java.util.*;
  */
 @Service
 public class TransportOrders {
- private final TransportLedger ledger;
- public TransportOrders(TransportLedger ledger){this.ledger=ledger;}
+ private final TransportLedger ledger; private final FleetState fleet; private final TrafficControl traffic;
+ public TransportOrders(TransportLedger ledger,FleetState fleet,TrafficControl traffic){
+  this.ledger=ledger; this.fleet=fleet; this.traffic=traffic;
+ }
 
  public record Accepted(TransportOrder order,boolean created){}
 
@@ -53,15 +59,36 @@ public class TransportOrders {
  }
 
  /** Cancel before pickup ends the order; after pickup it waits for the device to confirm. */
+ @Transactional
  public TransportOrder cancel(long siteId,long orderId,String reason,String actorCode,String traceId){
   var order=ledger.find(siteId,orderId).orElseThrow(()->reject("ORDER_NOT_FOUND","unknown order"));
   var target=order.status().cancelTarget();
   if(target==null)throw new TransportRejected("ORDER_ALREADY_TERMINAL","order is already finished",true);
-  return ledger.transition(siteId,orderId,target,reason,actorCode,traceId);
+  return settle(siteId,orderId,ledger.transition(siteId,orderId,target,reason,actorCode,traceId));
  }
 
+ @Transactional
  public TransportOrder advance(long siteId,long orderId,OrderStatus target,String reason,String actorCode,String traceId){
-  return ledger.transition(siteId,orderId,target,reason,actorCode,traceId);
+  return settle(siteId,orderId,ledger.transition(siteId,orderId,target,reason,actorCode,traceId));
+ }
+
+ /**
+  * Gives back the road once the work is over.
+  *
+  * <p>The node the vehicle is standing on stays held: finishing a job does not move the vehicle
+  * off the track, and handing that node to somebody else would route them into it. If nothing
+  * has reported where the vehicle is, nothing is released at all, because every node in its run
+  * is somewhere it might be.
+  */
+ private TransportOrder settle(long siteId,long orderId,TransportOrder after){
+  if(!after.status().isTerminal())return after;
+  // The ledger released the vehicle with the transition, so the holder is read from the event
+  // that is still visible here rather than looked up again afterwards.
+  var vehicleId=ledger.assignedVehicleOf(orderId);
+  if(vehicleId==null)return after;
+  var position=fleet.find(siteId,after.revisionId(),vehicleId).map(VehicleSnapshot::nodeId).orElse(null);
+  traffic.releaseAhead(siteId,vehicleId,position,"ORDER_"+after.status());
+  return after;
  }
 
  public Optional<TransportOrder> find(long siteId,long orderId){return ledger.find(siteId,orderId);}
