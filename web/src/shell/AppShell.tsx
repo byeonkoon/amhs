@@ -18,7 +18,7 @@ const MENU: Entry[] = [
   { key: 'transport', label: 'Transport', sub: 'Job / Route', ready: true },
   { key: 'traffic', label: 'Traffic', sub: 'Reservation / Deadlock', ready: true },
   { key: 'resources', label: 'Resources', sub: 'Vehicle / Node / Port', ready: true },
-  { key: 'equipment', label: 'Equipment', sub: 'EQP / Rack / Slot', ready: false },
+  { key: 'equipment', label: 'Equipment', sub: 'EQP / Rack / Slot', ready: true },
   { key: 'inventory', label: 'Inventory', sub: 'Carrier / Stocker', ready: false },
   { key: 'alarms', label: 'Alarms', sub: 'Event / Notification', ready: false },
   { key: 'history', label: 'History', sub: 'Log / Trace', ready: false },

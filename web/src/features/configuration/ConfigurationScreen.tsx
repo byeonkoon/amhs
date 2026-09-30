@@ -2,9 +2,10 @@ import React from 'react';
 import {
   ApiError, cfgApi, get, hasWriteToken, send, setWriteToken,
   type Cfg, type ConnectionSettings, type MapData, type OperationOptions, type PortSettings, type ProtocolSettings,
-  type VdaProfileSettings, type VehicleSettings,
+  type Session, type VdaProfileSettings, type VehicleSettings,
 } from '../../api';
 import { Chip, Empty, Failed, Loading } from '../../shell/States';
+import { NodeTab, SegmentTab } from './TopologyTabs';
 import {
   ADAPTER_DISABLED_REASON, BCR_POLICY, CONTROL_AUTHORITY, chargeNodeRequired, chargingPolicyOptions,
   connectionIssues, explainCode, protocolIssues, PROTO_TYPES, roleOptions, vdaProfileIssues,
@@ -16,14 +17,15 @@ import {
  * vehicle and every command rather than to one of these, so they sit behind the account menu
  * where changing them needs the authority that reach deserves.
  */
-type Tab = 'vehicles' | 'vda' | 'ports' | 'connections' | 'protocols';
+type Tab = "vehicles" | "vda" | "ports" | "nodes" | "segments" | "connections" | "protocols";
 const TABS: { key: Tab; label: string }[] = [
   { key: 'vehicles', label: '차량' }, { key: 'vda', label: 'VDA 프로파일' },
   { key: 'ports', label: '포트' },
+  { key: 'nodes', label: '노드' }, { key: 'segments', label: '구간' },
   { key: 'connections', label: '연결' }, { key: 'protocols', label: '프로토콜' },
 ];
 
-export function ConfigurationScreen({ map }: { map: MapData }) {
+export function ConfigurationScreen({ map, session }: { map: MapData; session: Session }) {
   const [tab, setTab] = React.useState<Tab>('vehicles');
   const [tokenSet, setTokenSet] = React.useState(hasWriteToken());
   return (
@@ -42,6 +44,8 @@ export function ConfigurationScreen({ map }: { map: MapData }) {
         </div>
         <div className="cb">
           {tab === 'vehicles' && <VehicleTab map={map} canWrite={tokenSet} />}
+          {tab === 'nodes' && <NodeTab session={session} revisionId={map.revisionId} />}
+          {tab === 'segments' && <SegmentTab session={session} revisionId={map.revisionId} />}
           {tab === 'vda' && <VdaProfileTab canWrite={tokenSet} />}
           {tab === 'ports' && <PortTab map={map} canWrite={tokenSet} />}
           {tab === 'connections' && <ConnectionTab canWrite={tokenSet} />}

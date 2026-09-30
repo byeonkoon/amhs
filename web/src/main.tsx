@@ -16,6 +16,7 @@ import { TransportScreen } from './features/transport/TransportScreen';
 import { TrafficScreen } from './features/traffic/TrafficScreen';
 import { DiagnosticsScreen } from './features/operations/DiagnosticsScreen';
 import { SignInScreen, SystemOptionsScreen } from './features/system/SystemOptionsScreen';
+import { EquipmentScreen } from './features/equipment/EquipmentScreen';
 
 const REVISION_ID = 1;
 const ANONYMOUS: Session = { authenticated: false, code: 'anonymous', role: 'VIEWER', allows: [] };
@@ -77,7 +78,8 @@ function App() {
         : error ? <div className="card"><Failed error={error} onRetry={retry} /></div>
           : !data ? <div className="card"><Loading what={page.title} /></div>
             : menu === 'system' ? <SystemOptionsScreen session={session} />
-              : menu === 'resources' ? <ConfigurationScreen map={data.map} />
+              : menu === 'resources' ? <ConfigurationScreen map={data.map} session={session} />
+              : menu === 'equipment' ? <EquipmentScreen session={session} revisionId={REVISION_ID} />
                 : menu === 'transport'
                   ? <TransportScreen orders={data.orders} map={data.map} vehicles={data.state}
                       loadedAt={loadedAt} onRetry={retry} />

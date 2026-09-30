@@ -187,8 +187,31 @@ export const opsApi = {
   extendAll: () => `/api/v1/sites//movement-authority`,
   publish: () => `/api/v1/sites/${SITE_ID}/device-commands/publish`,
   sweep: () => `/api/v1/sites/${SITE_ID}/operation-sweep`,
+  nodes: (revisionId: number) => `/api/v1/sites/${SITE_ID}/configuration/topology/${revisionId}/nodes`,
+  segments: (revisionId: number) => `/api/v1/sites/${SITE_ID}/configuration/topology/${revisionId}/segments`,
+  equipment: () => `/api/v1/sites/${SITE_ID}/configuration/equipment`,
+  racks: (unitId: number) => `/api/v1/sites/${SITE_ID}/configuration/equipment/${unitId}/racks`,
+  slots: (unitId: number, rackId: number) =>
+    `/api/v1/sites/${SITE_ID}/configuration/equipment/${unitId}/racks/${rackId}/slots`,
   assignments: () => `/api/v1/sites/${SITE_ID}/transport-orders/assignments`,
   session: () => `/api/v1/session`,
+};
+
+/** A node's editable parameters. Its revision and the segments reaching it are structure, not these. */
+export type NodeSettings = { code: string; xMm: number; yMm: number; enabled: boolean };
+/** A segment's editable parameters. Endpoints are what the segment is, so they are read-only here. */
+export type EdgeSettings = { fromNodeId: number; toNodeId: number; cost: number; enabled: boolean };
+
+export type EquipmentKind = 'STOCKER' | 'BUFFER' | 'PROCESS';
+export type EquipmentSettings = { revisionId: number; code: string; name: string; kind: EquipmentKind; enabled: boolean };
+export type RackSettings = { code: string; levels: number; columns: number; enabled: boolean };
+/**
+ * One cell. `usable` says somebody decided it is not to be filled — it is not occupancy, not a
+ * reservation, and not where a carrier is. Showing those as one turns a blocked cell into a full one.
+ */
+export type SlotView = {
+  id: number; rackId: number; level: number; col: number; code: string;
+  usable: boolean; unusableReason: string | null;
 };
 
 /** Authority levels, lowest first. A screen offers what the session says it may do. */
