@@ -24,6 +24,7 @@ class TransportOrderSqlTest {
  private static final String TOKEN="Bearer amhs-test-only-token-32-characters-long";
  private static final String BASE="/api/v1/sites/1/transport-orders";
  @Autowired MockMvc mvc; @Autowired ObjectMapper json; @Autowired TransportOrders orders;
+ @Autowired org.springframework.jdbc.core.JdbcTemplate jdbc;
 
  private Map<String,Object> body(String from,String to,String carrier){
   var m=new LinkedHashMap<String,Object>();
@@ -90,6 +91,27 @@ class TransportOrderSqlTest {
   mvc.perform(MockMvcRequestBuilders.post(BASE+"/"+created.id()+"/cancel").header("Authorization",TOKEN))
    .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("CANCEL_REQUESTED"));
   assertThat(orders.find(1L,created.id()).orElseThrow().terminalAt()).isNull();
+ }
+ @Test void cancellationAcknowledgementCannotLoseAnUnknownOrOnboardCarrier(){
+  for(var location:List.of(CarrierLocation.UNKNOWN,CarrierLocation.VEHICLE)){
+   var created=orders.accept(1,new OrderRequest("test","cancel-location-"+location,
+    "OHT-A","OHT-B","CST",50),"test",null).order();
+   for(var status:List.of(OrderStatus.ASSIGNED,OrderStatus.TO_SOURCE,OrderStatus.LOADING,OrderStatus.CANCEL_REQUESTED))
+    orders.advance(1,created.id(),status,"prepare","test",null);
+   // Model the last persisted observation; no adapter or physical device is involved.
+   jdbc.update("UPDATE transport.order SET carrier_location=? WHERE id=?",location.name(),created.id());
+   var before=orders.find(1,created.id()).orElseThrow();
+   var after=orders.advance(1,created.id(),OrderStatus.CANCELLED,"device acknowledged","test","cancel-trace");
+   assertThat(after.status()).isEqualTo(OrderStatus.RECOVERY_REQUIRED);
+   assertThat(after.carrierLocation()).isEqualTo(location);
+   assertThat(after.terminalAt()).isNull();
+   assertThat(after.version()).isEqualTo(before.version()+1);
+   var events=orders.events(1,created.id());
+   assertThat(events).hasSize(6);
+   assertThat(events.getLast().oldStatus()).isEqualTo(OrderStatus.CANCEL_REQUESTED);
+   assertThat(events.getLast().newStatus()).isEqualTo(OrderStatus.RECOVERY_REQUIRED);
+   assertThat(events.getLast().reason()).isEqualTo("CANCEL_REQUIRES_CARRIER_RECOVERY: device acknowledged");
+  }
  }
  @Test void forbiddenTransitionIsRejectedAndLeavesNoEvent()throws Exception{
   var created=json.readValue(post("key-skip",body("OHT-A","OHT-B",null))

@@ -79,6 +79,13 @@ class JdbcTransportLedger implements TransportLedger {
   if(current==target)return locked;
   if(!current.canTransitionTo(target))
    throw new TransportRejected("TRANSITION_NOT_ALLOWED",current+" cannot move to "+target,true);
+  // A cancellation acknowledgement does not establish where the carrier ended up.
+  // Decide under the same row lock used for the state update and event append.
+  if(current==OrderStatus.CANCEL_REQUESTED&&target==OrderStatus.CANCELLED
+    &&(locked.carrierLocation()==CarrierLocation.UNKNOWN||locked.carrierLocation()==CarrierLocation.VEHICLE)){
+   target=OrderStatus.RECOVERY_REQUIRED;
+   reason="CANCEL_REQUIRES_CARRIER_RECOVERY"+(reason==null||reason.isBlank()?"":": "+reason);
+  }
   boolean starting=locked.startedAt()==null&&target!=OrderStatus.QUEUED;
   jdbc.update("UPDATE transport.order SET status=?,version=version+1"
    +",started_at=CASE WHEN ? THEN now() ELSE started_at END"

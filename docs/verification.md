@@ -127,3 +127,11 @@ seed에 연결·프로토콜 프로파일 예시를 추가했다(migration V6). 
 - `scripts/test-postgres.ps1` 보완: 프로세스 핸들을 먼저 잡지 않으면 Windows PowerShell이 정상 기동의 종료 코드를 비워 보고해 시험이 중단되던 문제를 고쳤다.
 
 실제 통신 어댑터·실장비 운전은 검증 대상이 아니다.
+
+## 2026-09-30 · A06 취소 확인 시 화물 위치 보호
+
+CANCEL_REQUESTED에서 CANCELLED 전이를 요청해도 저장된 화물 위치가 UNKNOWN 또는 VEHICLE이면 RECOVERY_REQUIRED로 전환한다. 행 잠금 아래 상태 변경과 이력 추가를 수행하며 위치는 유지하고 종료 시각은 설정하지 않는다. 이력 사유에 CANCEL_REQUIRES_CARRIER_RECOVERY와 요청 사유를 함께 남긴다.
+
+기준 앱 커밋 d358544에서 scripts/test-postgres.ps1 실행: 57개 통과, 실패·오류·skip 0, 패키징 성공 및 독립 시험 DB 종료 확인. 반송 SQL 11개에 UNKNOWN/VEHICLE 두 경우의 상태·위치·버전·종료 시각·이력 검증을 추가했다. 기존 적재 전 취소 시험도 통과했다.
+
+이 변경은 취소 확인 경로의 보완이다. 완료 증거 입력·검증, 위치 갱신 계약, 조건부 재시도 및 복구 해소의 증거 요구는 후속 작업이다. 전체 A06 재검토 완료나 실장비 검증을 뜻하지 않는다.
