@@ -112,4 +112,26 @@ class TopologySqlTest {
         assertThatThrownBy(() -> jdbc.update("UPDATE fleet.vehicle_profile SET initial_node_id=101 WHERE id=1101"))
             .isInstanceOf(DataIntegrityViolationException.class);
     }
+
+    @Test void routeApiReturnsScopedSegmentSequenceAndNoPathReasons() throws Exception {
+        mvc.perform(get("/api/v1/sites/1/maps/2/route?startNodeId=1101&goalNodeId=1104"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("FOUND"))
+            .andExpect(jsonPath("$.edgeIds[0]").value(1101)).andExpect(jsonPath("$.edgeIds[2]").value(1103))
+            .andExpect(jsonPath("$.costSeconds").value(9000));
+        mvc.perform(get("/api/v1/sites/1/maps/2/route?startNodeId=1101&goalNodeId=1201"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.reason").value("NO_PATH"));
+        mvc.perform(get("/api/v1/sites/1/maps/2/route?goalNodeId=1104"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.reason").value("START_UNKNOWN"));
+        mvc.perform(get("/api/v1/sites/999/maps/2/route?startNodeId=1101&goalNodeId=1104"))
+            .andExpect(status().isNotFound());
+    }
+
+    @Test void persistedDisabledNodeIsVisibleAndExcludedFromRoute() throws Exception {
+        jdbc.update("UPDATE topology.node SET enabled=FALSE WHERE id=1102");
+        assertThat(maps.getMap(1,2).nodes().stream().filter(n->n.id()==1102).findFirst().orElseThrow().enabled()).isFalse();
+        mvc.perform(get("/api/v1/sites/1/maps/2/route?startNodeId=1101&goalNodeId=1104"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.reason").value("NO_PATH"));
+        mvc.perform(get("/api/v1/sites/1/maps/2/route?startNodeId=1102&goalNodeId=1104"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.reason").value("START_BLOCKED"));
+    }
 }

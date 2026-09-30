@@ -50,7 +50,9 @@ export function MapView(props: {
           if (!visible(t)) return null;
           return (
             <g key={n.id}>
-              <circle cx={n.x} cy={n.y} r={62} fill="#fff" stroke={t === 'OHT' ? OHT : AGV} strokeWidth={18} />
+              <circle cx={n.x} cy={n.y} r={62} fill={n.enabled ? '#fff' : '#c4c4c4'} stroke={t === 'OHT' ? OHT : AGV} strokeWidth={18}>
+                <title>{n.enabled ? n.code : `${n.code} · 사용 금지`}</title>
+              </circle>
               <text x={n.x} y={n.y + 250} textAnchor="middle" fontSize={165}>{n.code}</text>
             </g>
           );

@@ -1,4 +1,4 @@
-export type Node = { id: number; code: string; x: number; y: number };
+export type Node = { id: number; code: string; x: number; y: number; enabled: boolean };
 export type Edge = { id: number; fromNodeId: number; toNodeId: number; cost: number; enabled: boolean };
 export type Port = { id: number; code: string; portType: string; makerType: string; accessVehicleType: 'OHT' | 'AGV'; linkedNodeId: number };
 export type MapData = { siteId: number; revisionId: number; nodes: Node[]; edges: Edge[]; ports: Port[] };
