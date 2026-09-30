@@ -1,0 +1,73 @@
+package com.amhs.fleet.infrastructure;
+import com.amhs.fleet.*;
+import com.amhs.platform.VehicleType;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+import java.util.List;
+import java.util.Optional;
+@Service
+class JdbcFleetState implements FleetState {
+ private final JdbcTemplate jdbc;
+ JdbcFleetState(JdbcTemplate jdbc){this.jdbc=jdbc;}
+
+ /**
+  * A configured vehicle with no report yet is listed with everything false and no position, so
+  * it is visible as "not reporting" instead of disappearing from the fleet.
+  */
+ @Transactional(readOnly=true)
+ public List<VehicleSnapshot> snapshot(long siteId,long revisionId){
+  return jdbc.query(SELECT+" ORDER BY p.id",MAPPER,siteId,revisionId);
+ }
+ @Transactional(readOnly=true)
+ public Optional<VehicleSnapshot> find(long siteId,long revisionId,long vehicleId){
+  var rows=jdbc.query(SELECT+" AND p.id=?",MAPPER,siteId,revisionId,vehicleId);
+  return rows.isEmpty()?Optional.empty():Optional.of(rows.getFirst());
+ }
+
+ @Transactional
+ public VehicleSnapshot report(long siteId,long revisionId,long vehicleId,VehicleReport report){
+  int known=jdbc.queryForObject("SELECT count(*) FROM fleet.vehicle_profile WHERE site_id=? AND revision_id=? AND id=?",
+   Integer.class,siteId,revisionId,vehicleId);
+  if(known==0) throw new IllegalArgumentException("VEHICLE_NOT_FOUND");
+  if(report.nodeId()!=null){
+   int onMap=jdbc.queryForObject("SELECT count(*) FROM topology.node WHERE site_id=? AND revision_id=? AND id=?",
+    Integer.class,siteId,revisionId,report.nodeId());
+   // A position that is not on this revision's map is not a position; it is a bad report.
+   if(onMap==0) throw new IllegalArgumentException("NODE_NOT_IN_REVISION");
+  }
+  jdbc.update("INSERT INTO fleet.vehicle_state(site_id,vehicle_id,revision_id,node_id,online,remote,idle,carrier_present,source)"
+   +" VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(site_id,vehicle_id) DO UPDATE SET"
+   +" revision_id=EXCLUDED.revision_id,node_id=EXCLUDED.node_id,online=EXCLUDED.online,remote=EXCLUDED.remote,"
+   +" idle=EXCLUDED.idle,carrier_present=EXCLUDED.carrier_present,source=EXCLUDED.source,"
+   +" reported_at=now(),version=fleet.vehicle_state.version+1",
+   siteId,vehicleId,revisionId,report.nodeId(),report.online(),report.remote(),report.idle(),
+   report.carrierPresent(),report.source());
+  return find(siteId,revisionId,vehicleId).orElseThrow();
+ }
+
+ /**
+  * Ascending id order is the whole point: two assignments that want overlapping vehicles take
+  * the same locks in the same sequence, so one waits instead of both holding half of what the
+  * other needs. Carrier and slot claims join this ordering when they arrive.
+  */
+ @Transactional(propagation=Propagation.MANDATORY)
+ public void lockForAssignment(long siteId,List<Long> vehicleIds){
+  var ordered=vehicleIds.stream().distinct().sorted().toList();
+  for(Long id:ordered)
+   jdbc.query("SELECT vehicle_id FROM fleet.vehicle_state WHERE site_id=? AND vehicle_id=? FOR UPDATE",
+    (r,n)->r.getLong(1),siteId,id);
+ }
+
+ private static final String SELECT="SELECT p.id,p.code,p.v_type,s.node_id,p.enabled,p.assignment_enabled,"
+  +"COALESCE(s.online,FALSE),COALESCE(s.remote,FALSE),COALESCE(s.idle,FALSE),COALESCE(s.carrier_present,FALSE),"
+  +"COALESCE(s.source,'INITIAL_CONFIGURATION')"
+  +" FROM fleet.vehicle_profile p LEFT JOIN fleet.vehicle_state s ON s.site_id=p.site_id AND s.vehicle_id=p.id"
+  +" WHERE p.site_id=? AND p.revision_id=?";
+ private static final RowMapper<VehicleSnapshot> MAPPER=(r,n)->new VehicleSnapshot(
+  r.getLong(1),r.getString(2),VehicleType.valueOf(r.getString(3)),
+  r.getObject(4)==null?null:r.getLong(4),
+  r.getBoolean(5),r.getBoolean(6),r.getBoolean(7),r.getBoolean(8),r.getBoolean(9),r.getBoolean(10),r.getString(11));
+}

@@ -6,8 +6,8 @@ import java.util.*;
 @RestController
 @RequestMapping("/api/v1/sites/{siteId}/transport-orders")
 class TransportOrderController {
- private final TransportOrders orders;
- TransportOrderController(TransportOrders orders){this.orders=orders;}
+ private final TransportOrders orders; private final TransportAssignment assignment;
+ TransportOrderController(TransportOrders orders,TransportAssignment assignment){this.orders=orders;this.assignment=assignment;}
 
  /** 201 for a new order, 200 when the same key and payload are replayed. */
  @PostMapping
@@ -40,6 +40,16 @@ class TransportOrderController {
  TransportOrder cancel(@PathVariable long siteId,@PathVariable long orderId,
   @RequestHeader(value="X-Amhs-Reason",required=false) String reason){
   return orders.cancel(siteId,orderId,reason,actor(),traceId());
+ }
+
+ /**
+  * Holds a vehicle for this order. Repeating the request returns the vehicle already held
+  * rather than assigning a second one.
+  */
+ @PostMapping("/{orderId}/assignment")
+ ResponseEntity<TransportAssignment.Assigned> assign(@PathVariable long siteId,@PathVariable long orderId){
+  var assigned=assignment.assign(siteId,orderId,actor(),traceId());
+  return ResponseEntity.status(assigned.created()?HttpStatus.CREATED:HttpStatus.OK).body(assigned);
  }
 
  @ExceptionHandler(TransportRejected.class)

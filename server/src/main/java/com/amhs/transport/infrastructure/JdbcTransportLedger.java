@@ -3,7 +3,9 @@ import com.amhs.platform.VehicleType;
 import com.amhs.transport.*;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.dao.DuplicateKeyException;
 import java.time.OffsetDateTime;
 import java.util.*;
 @Service
@@ -94,10 +96,51 @@ class JdbcTransportLedger implements TransportLedger {
    +" WHERE site_id=? AND id=?",
    target.name(),starting,target.isTerminal(),
    target==OrderStatus.CANCELLED||target==OrderStatus.CANCEL_REQUESTED,reason,siteId,orderId);
+  // A finished order must not keep holding its vehicle, so the release happens with the
+  // transition rather than in a later step that could be missed.
+  if(target.isTerminal())
+   jdbc.update("UPDATE transport.assignment SET released_at=now(),release_reason=?"
+    +" WHERE order_id=? AND released_at IS NULL",target.name(),orderId);
   Integer seq=jdbc.queryForObject("SELECT COALESCE(MAX(seq),0)+1 FROM transport.order_event WHERE order_id=?",Integer.class,orderId);
   jdbc.update("INSERT INTO transport.order_event(order_id,seq,old_status,new_status,reason,actor_code,trace_id)"
    +" VALUES(?,?,?,?,?,?,?)",orderId,seq,current.name(),target.name(),reason,actorCode,traceId);
   return find(siteId,orderId).orElseThrow();
+ }
+
+ @Transactional(propagation=Propagation.MANDATORY)
+ public Optional<TransportOrder> lock(long siteId,long orderId){
+  return one("SELECT "+COLS+" FROM transport.order WHERE site_id=? AND id=? FOR UPDATE",siteId,orderId);
+ }
+
+ /**
+  * The filtered unique indexes, not this method, settle the race: a second active assignment for
+  * the same vehicle or the same order is refused by the database, which rolls the whole decision
+  * back rather than leaving one vehicle holding two jobs.
+  */
+ @Transactional(propagation=Propagation.MANDATORY)
+ public long assign(long orderId,long vehicleId){
+  try{
+   return jdbc.queryForObject("INSERT INTO transport.assignment(order_id,vehicle_id) VALUES(?,?) RETURNING id",
+    Long.class,orderId,vehicleId);
+  }catch(DuplicateKeyException e){
+   throw new TransportRejected("ASSIGNMENT_CONFLICT","vehicle or order is already assigned",true);
+  }
+ }
+
+ @Transactional(readOnly=true)
+ public Optional<AssignmentView> activeAssignment(long siteId,long orderId){
+  var rows=jdbc.query("SELECT a.id,a.order_id,a.vehicle_id,a.assigned_at,a.released_at,a.release_reason"
+   +" FROM transport.assignment a JOIN transport.order o ON o.id=a.order_id"
+   +" WHERE o.site_id=? AND a.order_id=? AND a.released_at IS NULL",
+   (r,n)->new AssignmentView(r.getLong(1),r.getLong(2),r.getLong(3),
+    r.getObject(4,OffsetDateTime.class),r.getObject(5,OffsetDateTime.class),r.getString(6)),siteId,orderId);
+  return rows.isEmpty()?Optional.empty():Optional.of(rows.getFirst());
+ }
+
+ @Transactional(readOnly=true)
+ public List<Long> assignedVehicleIds(long siteId){
+  return jdbc.query("SELECT a.vehicle_id FROM transport.assignment a JOIN transport.order o ON o.id=a.order_id"
+   +" WHERE o.site_id=? AND a.released_at IS NULL",(r,n)->r.getLong(1),siteId);
  }
 
  private Optional<TransportOrder> one(String sql,Object... args){

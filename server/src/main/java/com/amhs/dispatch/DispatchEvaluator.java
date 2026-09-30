@@ -2,11 +2,14 @@ package com.amhs.dispatch;
 import com.amhs.platform.VehicleType;
 import com.amhs.topology.MapSnapshot;
 import com.amhs.routing.RoutePlanner;
+import com.amhs.routing.RouteQuery;
 import com.amhs.routing.RouteResult;
+import com.amhs.routing.EdgeCostPolicy;
 import java.util.*;
 /** Produces a proposal; transport must revalidate and claim resources atomically. */
 public final class DispatchEvaluator {
-    public record Candidate(long id, VehicleType vType, long currentNodeId, boolean enabled,
+    /** currentNodeId is null when nothing has reported where the vehicle is. */
+    public record Candidate(long id, VehicleType vType, Long currentNodeId, boolean enabled,
         boolean assignmentEnabled, boolean online, boolean remote, boolean idle) {}
     /** Both legs keep their ordered segments so a claim can be built without replanning. */
     public record Proposal(long vehicleId, RouteResult toSource, RouteResult toDestination, double cost) {}
@@ -27,7 +30,9 @@ public final class DispatchEvaluator {
         if(!delivery.reachable()) return new Result("DELIVERY_ROUTE_"+delivery.reason(),Optional.empty());
         var proposals=new ArrayList<Proposal>(); var approachFailures=EnumSet.noneOf(RouteResult.Reason.class);
         for(var c:available) {
-            var approach=planner.find(map,c.currentNodeId(),source.get().linkedNodeId());
+            // The query form is used so an unreported position stays START_UNKNOWN instead of
+            // being replaced by some node the vehicle was merely configured at.
+            var approach=planner.find(new RouteQuery(map,c.currentNodeId(),source.get().linkedNodeId(),EdgeCostPolicy.staticCost()));
             if(approach.reachable()) proposals.add(new Proposal(c.id(),approach,delivery,approach.costSeconds()+delivery.costSeconds()));
             else approachFailures.add(approach.reason());
         }

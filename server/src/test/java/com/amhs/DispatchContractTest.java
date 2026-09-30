@@ -28,7 +28,7 @@ class DispatchContractTest {
   assertThat(r.find(map(),1,1).costSeconds()).isZero();
  }
  @Test void offlineVehicleIsExcluded() {
-  var v=new DispatchEvaluator.Candidate(1,VehicleType.OHT,1,true,true,false,true,true);
+  var v=new DispatchEvaluator.Candidate(1,VehicleType.OHT,1L,true,true,false,true,true);
   assertThat(new DispatchEvaluator().evaluate(map(),1,2,List.of(v)).reason()).isEqualTo("NO_AVAILABLE_VEHICLE");
  }
  @Test void deterministicTieBreak() {
