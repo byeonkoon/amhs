@@ -1,7 +1,7 @@
 import React from 'react';
 
 /** Menu entries share one shape so every screen shows the same sidebar. */
-export type MenuKey = 'overview' | 'fleet' | 'equipment' | 'transport' | 'inventory' | 'alarms' | 'history' | 'diagnostics';
+export type MenuKey = 'overview' | 'fleet' | 'equipment' | 'transport' | 'traffic' | 'inventory' | 'alarms' | 'history' | 'diagnostics';
 type Entry = { key: MenuKey; label: string; sub: string; ready: boolean };
 
 const MENU: Entry[] = [
@@ -9,10 +9,11 @@ const MENU: Entry[] = [
   { key: 'fleet', label: 'Fleet', sub: 'OHT / AGV', ready: true },
   { key: 'equipment', label: 'Equipment', sub: 'Stations / Ports', ready: true },
   { key: 'transport', label: 'Transport', sub: 'Job / Route', ready: true },
+  { key: 'traffic', label: 'Traffic', sub: 'Reservation / Deadlock', ready: true },
   { key: 'inventory', label: 'Inventory', sub: 'Carrier / Stocker', ready: false },
   { key: 'alarms', label: 'Alarms', sub: 'Event / Notification', ready: false },
   { key: 'history', label: 'History', sub: 'Log / Trace', ready: false },
-  { key: 'diagnostics', label: 'Diagnostics', sub: 'Health / Recovery', ready: false },
+  { key: 'diagnostics', label: 'Diagnostics', sub: 'Health / Recovery', ready: true },
 ];
 
 export type ServerState = 'connecting' | 'connected' | 'unreachable';

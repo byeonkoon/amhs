@@ -32,12 +32,15 @@ class JdbcCommandOutbox implements CommandOutbox {
   * send is left visible as DISPATCHING instead of quietly returning to the queue.
   */
  @Transactional
- public List<DeviceCommand> claim(int limit,int maxAttempts){
+ public List<DeviceCommand> claim(long siteId,int limit,int maxAttempts){
+  // The row lock is taken on the outbox rows alone. Joining the order inside FOR UPDATE would
+  // lock order rows too, which the transport side is already locking in its own sequence.
   return jdbc.query("UPDATE integration.command_outbox SET status='DISPATCHING',attempt=attempt+1,last_error=NULL"
-   +" WHERE id IN (SELECT id FROM integration.command_outbox"
-   +"  WHERE status IN ('PENDING','FAILED') AND available_at<=now() AND attempt<?"
-   +"  ORDER BY created_at,id FOR UPDATE SKIP LOCKED LIMIT ?) RETURNING "+COLS,
-   MAPPER,maxAttempts,Math.max(limit,1));
+   +" WHERE id IN (SELECT c.id FROM integration.command_outbox c"
+   +"  WHERE c.status IN ('PENDING','FAILED') AND c.available_at<=now() AND c.attempt<?"
+   +"   AND c.order_id IN (SELECT id FROM transport.order WHERE site_id=?)"
+   +"  ORDER BY c.created_at,c.id FOR UPDATE SKIP LOCKED LIMIT ?) RETURNING "+COLS,
+   MAPPER,maxAttempts,siteId,Math.max(limit,1));
  }
 
  @Transactional

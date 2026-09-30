@@ -58,9 +58,10 @@ class ContinuousMovementSqlTest {
  }
  private ContinuousMovement.Extension extend(long orderId){ return tx.execute(s->movement.extend(SITE,orderId)); }
  private void acknowledgeAll(long orderId){
-  // Acknowledgement only means something for a command that was actually attempted, so the
-  // gateway runs first and the device answer comes after it.
-  gateway.publishPending();
+  // Acknowledgement only means something for a command that was actually attempted. The outbox
+  // is shared and one sweep is capped, so publishing repeats until this order has been reached.
+  for(int pass=0;pass<40&&outbox.byOrder(SITE,orderId).stream().anyMatch(c->c.status()==CommandStatus.PENDING);pass++)
+   gateway.publishPending(SITE);
   for(var c:outbox.byOrder(SITE,orderId)) tx.execute(s->outbox.acknowledge(c.commandId()));
  }
  private List<Long> heldNodes(){ return traffic.heldBy(SITE,OHT).stream().map(NodeHold::nodeId).toList(); }

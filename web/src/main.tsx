@@ -1,15 +1,29 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import './style.css';
-import { api, get, SITE_ID, type MapData, type TransportOrder, type Vehicle } from './api';
+import {
+  api, get, opsApi,
+  type Deadlock, type DeviceCommand, type MapData, type NodeHold,
+  type TransportOrder, type Vehicle, type VehicleSnapshot,
+} from './api';
 import { AppShell, type MenuKey, type ServerState } from './shell/AppShell';
 import { Chip, Empty, Failed, freshnessOf, Loading } from './shell/States';
 import { MapLegend, MapView } from './features/map/MapView';
 import { ConfigurationScreen } from './features/configuration/ConfigurationScreen';
+import { TransportScreen } from './features/transport/TransportScreen';
+import { TrafficScreen } from './features/traffic/TrafficScreen';
+import { DiagnosticsScreen } from './features/operations/DiagnosticsScreen';
 
 const REVISION_ID = 1;
 
-type Loaded = { map: MapData; vehicles: Vehicle[]; orders: TransportOrder[] };
+type Loaded = {
+  map: MapData; vehicles: Vehicle[]; orders: TransportOrder[];
+  state: VehicleSnapshot[]; holds: NodeHold[]; deadlocks: Deadlock[]; inDoubt: DeviceCommand[];
+};
+
+/** Screens that are read-only when the operating data is missing still render, so a failure in
+ *  one endpoint does not blank the whole application. */
+const softly = <T,>(promise: Promise<T>, fallback: T) => promise.catch(() => fallback);
 
 function App() {
   const [menu, setMenu] = React.useState<MenuKey>('fleet');
@@ -22,14 +36,21 @@ function App() {
 
   React.useEffect(() => {
     const controller = new AbortController();
+    const signal = controller.signal;
     setError(null); setData(null);
     Promise.all([
-      get<MapData>(api.map(REVISION_ID), controller.signal),
-      get<Vehicle[]>(api.vehicles(REVISION_ID), controller.signal),
-      // The transport list is optional here: A06 owns the ledger, this screen only previews it.
-      get<TransportOrder[]>(api.transportOrders(), controller.signal).catch(() => [] as TransportOrder[]),
+      get<MapData>(api.map(REVISION_ID), signal),
+      get<Vehicle[]>(api.vehicles(REVISION_ID), signal),
+      softly(get<TransportOrder[]>(api.transportOrders(), signal), [] as TransportOrder[]),
+      softly(get<VehicleSnapshot[]>(opsApi.vehicleState(REVISION_ID), signal), [] as VehicleSnapshot[]),
+      softly(get<NodeHold[]>(opsApi.reservations(), signal), [] as NodeHold[]),
+      softly(get<Deadlock[]>(opsApi.deadlocks(), signal), [] as Deadlock[]),
+      softly(get<DeviceCommand[]>(opsApi.inDoubt(), signal), [] as DeviceCommand[]),
     ])
-      .then(([map, vehicles, orders]) => { setData({ map, vehicles, orders }); setLoadedAt(new Date()); })
+      .then(([map, vehicles, orders, state, holds, deadlocks, inDoubt]) => {
+        setData({ map, vehicles, orders, state, holds, deadlocks, inDoubt });
+        setLoadedAt(new Date());
+      })
       .catch(cause => { if ((cause as Error).name !== 'AbortError') setError(cause); });
     return () => controller.abort();
   }, [reload]);
@@ -43,12 +64,17 @@ function App() {
       crumb={['Home', page.crumb, page.title]} title={page.title} subtitle={page.subtitle} server={server}>
       {error ? <div className="card"><Failed error={error} onRetry={retry} /></div>
         : !data ? <div className="card"><Loading what={page.title} /></div>
-          : menu === 'equipment'
-            ? <ConfigurationScreen map={data.map} />
+          : menu === 'equipment' ? <ConfigurationScreen map={data.map} />
             : menu === 'transport'
-              ? <TransportScreen orders={data.orders} map={data.map} loadedAt={loadedAt} onRetry={retry} />
-              : <FleetScreen data={data} selected={selected} onSelect={setSelected}
-                  layer={layer} onLayer={setLayer} loadedAt={loadedAt} onRetry={retry} />}
+              ? <TransportScreen orders={data.orders} map={data.map} vehicles={data.state}
+                  loadedAt={loadedAt} onRetry={retry} />
+              : menu === 'traffic'
+                ? <TrafficScreen map={data.map} holds={data.holds} deadlocks={data.deadlocks} vehicles={data.state} />
+                : menu === 'diagnostics'
+                  ? <DiagnosticsScreen map={data.map} revisionId={REVISION_ID} vehicles={data.state}
+                      inDoubt={data.inDoubt} onChanged={retry} />
+                  : <FleetScreen data={data} selected={selected} onSelect={setSelected}
+                      layer={layer} onLayer={setLayer} loadedAt={loadedAt} onRetry={retry} />}
     </AppShell>
   );
 }
@@ -58,10 +84,11 @@ const PAGES: Record<MenuKey, { title: string; subtitle: string; crumb: string }>
   fleet: { title: '지도·차량 현황', subtitle: 'Fleet · Map / Vehicles', crumb: 'Fleet' },
   equipment: { title: '설비 파라미터 설정', subtitle: 'Equipment · Vehicle / Port / Connection / Protocol', crumb: 'Equipment' },
   transport: { title: '반송 작업', subtitle: 'Transport · Job / Route', crumb: 'Transport' },
+  traffic: { title: '구간 점유·교착', subtitle: 'Traffic · Reservation / Deadlock', crumb: 'Traffic' },
   inventory: { title: '재고', subtitle: 'Inventory · Carrier / Stocker', crumb: 'Inventory' },
   alarms: { title: '알람', subtitle: 'Alarms · Event / Notification', crumb: 'Alarms' },
   history: { title: '이력', subtitle: 'History · Log / Trace', crumb: 'History' },
-  diagnostics: { title: '진단', subtitle: 'Diagnostics · Health / Recovery', crumb: 'Diagnostics' },
+  diagnostics: { title: '장비 명령·상태 보고', subtitle: 'Diagnostics · Health / Recovery', crumb: 'Diagnostics' },
 };
 
 function Refreshed({ at, onRetry }: { at: Date | null; onRetry: () => void }) {
@@ -194,47 +221,6 @@ function VehicleDetail({ vehicle, nodeCode }: { vehicle: Vehicle; nodeCode?: str
       )}
     </>
   );
-}
-
-function TransportScreen(props: { orders: TransportOrder[]; map: MapData; loadedAt: Date | null; onRetry: () => void }) {
-  const portCode = (id: number) => props.map.ports.find(p => p.id === id)?.code ?? String(id);
-  return (
-    <section className="card">
-      <div className="ch"><h2>반송 작업</h2><Refreshed at={props.loadedAt} onRetry={props.onRetry} /></div>
-      {props.orders.length === 0
-        ? <Empty title="접수된 반송 작업이 없습니다" hint="작업이 접수되면 대기 상태로 이 목록에 나타납니다." />
-        : (
-          <div className="tbl-scroll">
-            <table className="t">
-              <thead><tr><th>번호</th><th>상태</th><th>경로</th><th>차종</th><th>캐리어</th><th className="mono">우선순위</th></tr></thead>
-              <tbody>
-                {props.orders.map(o => (
-                  <tr key={o.id}>
-                    <td className="mono">{o.id}</td>
-                    <td><Chip tone={toneOf(o.status)}>{o.status}</Chip></td>
-                    <td className="mono">{portCode(o.sourcePortId)} → {portCode(o.destinationPortId)}</td>
-                    <td className="mono">{o.vehicleType}</td>
-                    <td className="mono">{o.carrierCode ?? '—'}</td>
-                    <td className="mono">{o.priority}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      <p className="hint" style={{ padding: '0 15px 14px' }}>
-        현재는 접수된 작업의 조회만 제공합니다. 배차·실행과 실시간 갱신은 후속 작업에서 연결합니다.
-      </p>
-    </section>
-  );
-}
-
-function toneOf(status: string): string {
-  if (status === 'COMPLETED') return 'ok';
-  if (status === 'FAILED' || status === 'RECOVERY_REQUIRED') return 'er';
-  if (status === 'CANCELLED' || status === 'CANCEL_REQUESTED') return 'wr';
-  if (status === 'QUEUED') return 'id';
-  return 'ac';
 }
 
 function Kpi({ k, v, d }: { k: string; v: React.ReactNode; d: string }) {

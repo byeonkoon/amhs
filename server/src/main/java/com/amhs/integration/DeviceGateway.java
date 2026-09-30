@@ -23,8 +23,8 @@ public class DeviceGateway {
         this.retryDelay=Duration.ofSeconds(retryDelaySeconds);
     }
     public record Publication(int claimed, int delivered, int notDelivered, int inDoubt) {}
-    public Publication publishPending() {
-        var claimed=outbox.claim(batchSize,maxAttempts);
+    public Publication publishPending(long siteId) {
+        var claimed=outbox.claim(siteId,batchSize,maxAttempts);
         int delivered=0,notDelivered=0,inDoubt=0;
         for (var command : claimed) {
             DeviceChannel.Verdict verdict;

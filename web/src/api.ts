@@ -110,3 +110,90 @@ export async function send<T>(url: string, method: 'POST' | 'PUT', body: unknown
   }
   return res.json() as Promise<T>;
 }
+
+// ---- 운영 (배차 · 예약 · 이동 허가 · 장비 명령) ----
+
+/** Reported vehicle state. nodeId null means nobody has said where it is, which is not a position. */
+export type VehicleSnapshot = {
+  id: number; code: string; vType: 'OHT' | 'AGV'; nodeId: number | null;
+  enabled: boolean; assignmentEnabled: boolean;
+  online: boolean; remote: boolean; idle: boolean; carrierPresent: boolean;
+  /** INITIAL_CONFIGURATION is configuration, SIMULATED is entered by hand, DEVICE came from a vehicle. */
+  source: 'INITIAL_CONFIGURATION' | 'SIMULATED' | 'DEVICE';
+};
+export type VehicleReportInput = {
+  nodeId: number | null; online: boolean; remote: boolean; idle: boolean;
+  carrierPresent: boolean; source: string;
+};
+/** What a report changed in traffic: authorized false means the vehicle reported a node it does not hold. */
+export type TrafficProgress = { vehicleId: number; nodeId: number; authorized: boolean; released: number; stillHeld: number };
+export type VehicleReportResult = { vehicle: VehicleSnapshot; traffic?: TrafficProgress };
+
+/** One node a vehicle may occupy. sequence orders the run it was granted. */
+export type NodeHold = {
+  id: number; siteId: number; revisionId: number; nodeId: number;
+  vehicleId: number; orderId: number | null; sequence: number; grantedAt: string;
+};
+/** A closed chain of vehicles, each waiting for a node the next one holds. */
+export type Deadlock = { vehicleIds: number[]; wantedNodeIds: number[] };
+
+export type CommandStatus = 'PENDING' | 'DISPATCHING' | 'SENT' | 'ACCEPTED' | 'FAILED';
+export type DeviceCommand = {
+  id: number; orderId: number; commandId: string; commandType: string; payload: string;
+  status: CommandStatus; attempt: number;
+  lastOutcome: string | null; lastError: string | null;
+  createdAt: string; publishedAt: string | null; settledAt: string | null;
+};
+
+export type AssignmentView = {
+  id: number; orderId: number; vehicleId: number;
+  assignedAt: string; releasedAt: string | null; releaseReason: string | null;
+};
+/** commandId null means the vehicle is held but traffic granted nothing, so it cannot start yet. */
+export type Assigned = { order: TransportOrder; assignment: AssignmentView; commandId: string | null; created: boolean };
+/** decision says why nothing was extended when addedNodeIds is empty. */
+export type Extension = { orderId: number; vehicleId: number; decision: string; addedNodeIds: number[]; commandId: string | null };
+
+export const opsApi = {
+  vehicleState: (revisionId: number) => `/api/v1/sites/${SITE_ID}/maps/${revisionId}/vehicle-state`,
+  reportVehicle: (revisionId: number, vehicleId: number) =>
+    `/api/v1/sites/${SITE_ID}/maps/${revisionId}/vehicle-state/${vehicleId}`,
+  reservations: (vehicleId?: number) =>
+    `/api/v1/sites/${SITE_ID}/traffic/reservations${vehicleId === undefined ? '' : `?vehicleId=${vehicleId}`}`,
+  deadlocks: () => `/api/v1/sites/${SITE_ID}/traffic/deadlocks`,
+  inDoubt: (limit = 50) => `/api/v1/sites/${SITE_ID}/device-commands/in-doubt?limit=${limit}`,
+  orderCommands: (orderId: number) => `/api/v1/sites/${SITE_ID}/transport-orders/${orderId}/device-commands`,
+  orders: () => `/api/v1/sites/${SITE_ID}/transport-orders`,
+  assign: (orderId: number) => `/api/v1/sites/${SITE_ID}/transport-orders/${orderId}/assignment`,
+  cancel: (orderId: number) => `/api/v1/sites/${SITE_ID}/transport-orders/${orderId}/cancel`,
+  extendAll: () => `/api/v1/sites//movement-authority`,
+  publish: () => `/api/v1/sites/${SITE_ID}/device-commands/publish`,
+};
+
+/** Reasons the movement-authority sweep gives back, as sentences an operator can act on. */
+export function explainDecision(decision: string): string {
+  const map: Record<string, string> = {
+    EXTENDED: '허가를 연장했습니다.',
+    NOT_NEEDED: '아직 허가가 충분해 연장하지 않았습니다.',
+    ROUTE_COMPLETE: '경로 끝까지 이미 확보해 연장할 것이 없습니다.',
+    MORE_DISABLED: '연장 기능이 꺼져 있습니다.',
+    MORE_OUTSTANDING: '앞선 연장 명령의 결과를 아직 모릅니다. 그것이 정리되기 전에는 보내지 않습니다.',
+    VEHICLE_NOT_MOVING: '차량이 정지 상태입니다. 연장이 아니라 새 이동 명령이 필요합니다.',
+    VEHICLE_NOT_CONTROLLABLE: '차량이 오프라인이거나 원격 제어 상태가 아닙니다.',
+    VEHICLE_NOT_FOUND: '차량을 찾지 못했습니다.',
+    POSITION_UNKNOWN: '차량 위치를 보고한 주체가 없습니다.',
+    POSITION_OUTSIDE_AUTHORITY: '차량이 허가받지 않은 노드를 보고했습니다.',
+    POSITION_OFF_ROUTE: '차량이 계획 경로 밖에 있습니다.',
+    NO_ASSIGNMENT: '이 작업에 배정된 차량이 없습니다.',
+    ORDER_FINISHED: '이미 끝난 작업입니다.',
+    NOTHING_TO_ADD: '더 받을 구간이 없습니다.',
+    NODE_HELD_BY_OTHER_VEHICLE: '다음 노드를 다른 차량이 점유하고 있습니다.',
+    POSITION_HELD_BY_OTHER_VEHICLE: '차량이 선 노드를 다른 차량이 점유하고 있습니다. 점유 기록과 현장이 어긋납니다.',
+    NODE_NOT_AVAILABLE: '다음 노드가 사용 금지 상태입니다.',
+    NO_AVAILABLE_VEHICLE: '조건에 맞는 차량이 없습니다.',
+    APPROACH_ROUTE_START_UNKNOWN: '차량 위치를 몰라 인수 지점까지 경로를 낼 수 없습니다.',
+    APPROACH_ROUTE_NO_PATH: '모든 차량이 인수 지점에 도달할 수 없습니다.',
+    DELIVERY_ROUTE_NO_PATH: '인수 지점에서 목적지까지 경로가 없습니다.',
+  };
+  return map[decision] ?? decision;
+}

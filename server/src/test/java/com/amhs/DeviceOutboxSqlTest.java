@@ -47,8 +47,11 @@ class DeviceOutboxSqlTest {
  private int rows(String commandId){
   return jdbc.queryForObject("SELECT count(*) FROM integration.command_outbox WHERE command_id=?",Integer.class,commandId);
  }
+ private java.util.List<DeviceCommand> claimAt(long siteId,int limit,int maxAttempts){
+  return tx.execute(s->outbox.claim(siteId,limit,maxAttempts));
+ }
  private java.util.List<DeviceCommand> claim(int limit,int maxAttempts){
-  return tx.execute(s->outbox.claim(limit,maxAttempts));
+  return tx.execute(s->outbox.claim(1,limit,maxAttempts));
  }
  private void makeClaimable(String commandId){
   jdbc.update("UPDATE integration.command_outbox SET available_at=now()-make_interval(secs=>1) WHERE command_id=?",commandId);
@@ -139,10 +142,19 @@ class DeviceOutboxSqlTest {
   assertThat(claim(50,2)).extracting(DeviceCommand::commandId).doesNotContain(cmd);
  }
 
+ @Test void publishingIsScopedToOneSite(){
+  long id=order("scoped"); String cmd=name("cmd-scoped");
+  enqueue(id,cmd);
+  // The command belongs to site 1 through its order, so another site's sweep must not take it.
+  assertThat(claimAt(2,50,5)).extracting(DeviceCommand::commandId).doesNotContain(cmd);
+  assertThat(reload(id,cmd).status()).isEqualTo(CommandStatus.PENDING);
+  assertThat(claim(50,5)).extracting(DeviceCommand::commandId).contains(cmd);
+ }
+
  @Test void withoutAnAdapterNothingLeavesTheSystemAndTheCommandStaysRetryable(){
   long id=order("gateway"); String cmd=name("cmd-gateway");
   enqueue(id,cmd);
-  var published=gateway.publishPending();
+  var published=gateway.publishPending(1);
   assertThat(published.claimed()).isPositive();
   assertThat(published.delivered()).isZero();
   var command=reload(id,cmd);
