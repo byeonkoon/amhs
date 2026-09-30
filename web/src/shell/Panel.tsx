@@ -29,7 +29,7 @@ export function Panel(props: {
 /** A dense grid. `cols` is a CSS grid-template-columns value, set by the caller per table. */
 export function Grid(props: { cols: string; head: React.ReactNode[]; children: React.ReactNode }) {
   return (
-    <div className="sgrid" style={{ ['--cols' as string]: props.cols }}>
+    <div className="sgrid" style={{ '--cols': props.cols } as React.CSSProperties}>
       <div className="hd">{props.head.map((h, i) => <span key={i}>{h}</span>)}</div>
       {props.children}
     </div>

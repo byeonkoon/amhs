@@ -63,11 +63,13 @@ class JdbcFleetState implements FleetState {
 
  private static final String SELECT="SELECT p.id,p.code,p.v_type,s.node_id,p.enabled,p.assignment_enabled,"
   +"COALESCE(s.online,FALSE),COALESCE(s.remote,FALSE),COALESCE(s.idle,FALSE),COALESCE(s.carrier_present,FALSE),"
-  +"COALESCE(s.source,'INITIAL_CONFIGURATION')"
+  +"COALESCE(s.source,'INITIAL_CONFIGURATION'),s.reported_at"
   +" FROM fleet.vehicle_profile p LEFT JOIN fleet.vehicle_state s ON s.site_id=p.site_id AND s.vehicle_id=p.id"
   +" WHERE p.site_id=? AND p.revision_id=?";
+ // reported_at stays null until something reports, so a screen can tell "never" from "a while ago".
  private static final RowMapper<VehicleSnapshot> MAPPER=(r,n)->new VehicleSnapshot(
   r.getLong(1),r.getString(2),VehicleType.valueOf(r.getString(3)),
   r.getObject(4)==null?null:r.getLong(4),
-  r.getBoolean(5),r.getBoolean(6),r.getBoolean(7),r.getBoolean(8),r.getBoolean(9),r.getBoolean(10),r.getString(11));
+  r.getBoolean(5),r.getBoolean(6),r.getBoolean(7),r.getBoolean(8),r.getBoolean(9),r.getBoolean(10),r.getString(11),
+  r.getObject(12,java.time.OffsetDateTime.class));
 }

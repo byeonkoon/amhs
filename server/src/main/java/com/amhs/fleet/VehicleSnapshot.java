@@ -7,4 +7,4 @@ import com.amhs.platform.VehicleType;
 public record VehicleSnapshot(long id, String code, VehicleType vType, Long nodeId,
                               boolean enabled, boolean assignmentEnabled,
                               boolean online, boolean remote, boolean idle, boolean carrierPresent,
-                              String source) {}
+                              String source, java.time.OffsetDateTime reportedAt) {}

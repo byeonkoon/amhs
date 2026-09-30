@@ -6,14 +6,19 @@ import {
 } from '../../api';
 import { Chip, Empty, Failed, Loading } from '../../shell/States';
 import {
-  ADAPTER_DISABLED_REASON, BCR_POLICY, COMM_TYPES, MORE_TYPES, CONTROL_AUTHORITY, chargeNodeRequired, chargingPolicyOptions,
-  connectionIssues, explainCode, operationIssues, protocolIssues, PROTO_TYPES, roleOptions, vdaProfileIssues,
+  ADAPTER_DISABLED_REASON, BCR_POLICY, CONTROL_AUTHORITY, chargeNodeRequired, chargingPolicyOptions,
+  connectionIssues, explainCode, protocolIssues, PROTO_TYPES, roleOptions, vdaProfileIssues,
   vehicleIssues, vehicleVdaIssues, versionOptions,
 } from './rules';
 
-type Tab = 'operation' | 'vehicles' | 'vda' | 'ports' | 'connections' | 'protocols';
+/**
+ * Resources: what the controller commands. Site-wide options are not here — they apply to every
+ * vehicle and every command rather than to one of these, so they sit behind the account menu
+ * where changing them needs the authority that reach deserves.
+ */
+type Tab = 'vehicles' | 'vda' | 'ports' | 'connections' | 'protocols';
 const TABS: { key: Tab; label: string }[] = [
-  { key: 'operation', label: '운영 옵션' }, { key: 'vehicles', label: '차량' }, { key: 'vda', label: 'VDA 프로파일' },
+  { key: 'vehicles', label: '차량' }, { key: 'vda', label: 'VDA 프로파일' },
   { key: 'ports', label: '포트' },
   { key: 'connections', label: '연결' }, { key: 'protocols', label: '프로토콜' },
 ];
@@ -33,10 +38,9 @@ export function ConfigurationScreen({ map }: { map: MapData }) {
                 background: tab === t.key ? 'var(--acc)' : 'var(--srf)', color: tab === t.key ? '#fff' : 'var(--ink2)',
               }}>{t.label}</button>
           ))}
-          <span className="aux">저장은 관리자 토큰과 유지보수 상태가 필요합니다</span>
+          <span className="aux">저장은 설비 설정 권한과 유지보수 상태가 필요합니다</span>
         </div>
         <div className="cb">
-          {tab === 'operation' && <OperationTab canWrite={tokenSet} />}
           {tab === 'vehicles' && <VehicleTab map={map} canWrite={tokenSet} />}
           {tab === 'vda' && <VdaProfileTab canWrite={tokenSet} />}
           {tab === 'ports' && <PortTab map={map} canWrite={tokenSet} />}
@@ -127,7 +131,9 @@ function SaveBar({ issues, canWrite, busy, message, onSave }: {
 
 function VehicleTab({ map, canWrite }: { map: MapData; canWrite: boolean }) {
   const { items, error, reload } = useList<VehicleSettings>(cfgApi.vehicles());
-  const { item: option } = useOne<OperationOptions>(cfgApi.operation());
+  // Read only: the site's communication type decides whether a vehicle needs a VDA profile.
+  // Changing it belongs to the system options, not here.
+  const { item: option } = useOne<OperationOptions>(cfgApi.system());
   const { items: profiles } = useList<VdaProfileSettings>(cfgApi.vdaProfiles());
   const commType = option?.settings.commType ?? null;
   const [draft, setDraft] = React.useState<Cfg<VehicleSettings> | null>(null);
@@ -293,7 +299,7 @@ function PortTab({ map, canWrite }: { map: MapData; canWrite: boolean }) {
         {!s || !draft ? <p className="hint" style={{ margin: 0 }}>왼쪽에서 포트를 선택하세요.</p> : (
           <>
             <div style={row}><label htmlFor="p-code">코드</label><input id="p-code" style={field} value={s.code} onChange={e => set({ code: e.target.value })} /></div>
-            <div style={row}><label htmlFor="p-type">포트 종류</label><input id="p-type" style={field} value={s.portType} onChange={e => set({ portType: e.target.value })} /></div>
+            <div style={row}><label htmlFor="p-type">포트 종류</label><input id="p-type" style={field} value={s.portType} onChange={e => set({ portType: e.target.value })} /></div>
             <div style={row}>
               <label htmlFor="p-access">접근 차종</label>
               <div>
@@ -461,82 +467,8 @@ function ProtocolTab({ canWrite }: { canWrite: boolean }) {
   );
 }
 
-function OperationTab({ canWrite }: { canWrite: boolean }) {
-  const { item, error, reload } = useOne<OperationOptions>(cfgApi.operation());
-  const [draft, setDraft] = React.useState<OperationOptions | null>(null);
-  const [busy, setBusy] = React.useState(false);
-  const [message, setMessage] = React.useState<string | null>(null);
-  React.useEffect(() => { setDraft(item ? { ...item.settings } : null); }, [item]);
-  if (error) return <Failed error={error} onRetry={reload} />;
-  if (!item || !draft) return <Loading what="운영 옵션" />;
-  const save = async () => {
-    setBusy(true); setMessage(null);
-    try {
-      await send(`${cfgApi.operation()}?expectedVersion=${item.version}`, 'PUT', draft, '설정 화면에서 수정');
-      setMessage('저장했습니다.'); reload();
-    } catch (e) {
-      setMessage(explainCode(e instanceof ApiError ? e.message : String(e)));
-    } finally { setBusy(false); }
-  };
-  return (
-    <div style={{ maxWidth: 560 }}>
-      <div style={row}>
-        <label htmlFor="o-comm">통신 방식</label>
-        <div>
-          <select id="o-comm" style={field} value={draft.commType}
-            onChange={e => setDraft({ ...draft, commType: e.target.value as OperationOptions['commType'] })}>
-            {COMM_TYPES.map(o => <option key={o} value={o}>{o}</option>)}
-          </select>
-          <span className="hint">사이트의 모든 차량에 적용됩니다. MQTT이면 차량마다 VDA 프로파일을 지정합니다. MQTT에서 다른 방식으로 바꾸려면 차량의 프로파일을 먼저 비워야 합니다.</span>
-        </div>
-      </div>
-      <div style={row}>
-        <label htmlFor="o-nodes">허가 노드 수</label>
-        <div>
-          <input id="o-nodes" type="number" style={field} value={draft.nodeCount}
-            onChange={e => setDraft({ ...draft, nodeCount: Number(e.target.value) })} />
-          <span className="hint">한 번의 진입 허가에 포함할 수 있는 최대 노드 수입니다(1~100).</span>
-        </div>
-      </div>
-      <div style={row}>
-        <label>MORE 사용</label>
-        <label style={{ fontSize: 12 }}>
-          <input type="checkbox" checked={draft.moreEnabled} onChange={e => setDraft({ ...draft, moreEnabled: e.target.checked })} /> 주행 중 진입 허가 연장(MORE)
-        </label>
-      </div>
-      <div style={row}>
-        <label htmlFor="o-more-type">MORE 판정 방식</label>
-        <div>
-          <select id="o-more-type" style={field} value={draft.moreType} disabled={!draft.moreEnabled}
-            onChange={e => setDraft({ ...draft, moreType: e.target.value as OperationOptions['moreType'] })}>
-            {MORE_TYPES.map(o => <option key={o} value={o}>{o === 'NODE' ? 'NODE — 남은 노드 수' : 'DISTANCE — 남은 거리 비율'}</option>)}
-          </select>
-          <span className="hint">NODE는 허가 구간에 남은 노드 수로, DISTANCE는 처음 허가한 거리 대비 남은 거리 비율로 MORE를 보냅니다.</span>
-        </div>
-      </div>
-      {draft.moreType === 'NODE' ? (
-        <div style={row}>
-          <label htmlFor="o-more-nodes">MORE 남은 노드 수</label>
-          <div>
-            <input id="o-more-nodes" type="number" style={field} value={draft.moreRemainingNodes} disabled={!draft.moreEnabled}
-              onChange={e => setDraft({ ...draft, moreRemainingNodes: Number(e.target.value) })} />
-            <span className="hint">남은 허가 노드가 이 수 이하가 되면 MORE를 보냅니다. 허가 노드 수보다 작아야 합니다.</span>
-          </div>
-        </div>
-      ) : (
-        <div style={row}>
-          <label htmlFor="o-more-pct">MORE 남은 거리 비율 (%)</label>
-          <div>
-            <input id="o-more-pct" type="number" style={field} value={draft.moreRemainingPercent} disabled={!draft.moreEnabled}
-              onChange={e => setDraft({ ...draft, moreRemainingPercent: Number(e.target.value) })} />
-            <span className="hint">남은 거리가 처음 허가 거리의 이 비율 이하가 되면 MORE를 보냅니다(1~99).</span>
-          </div>
-        </div>
-      )}
-      <SaveBar issues={operationIssues(draft)} canWrite={canWrite} busy={busy} message={message} onSave={save} />
-    </div>
-  );
-}
+// The site-wide options that used to sit here moved to the system options screen: they are not
+// one resource's parameters, and editing them beside a vehicle's settings hid how far they reach.
 
 const VDA_FIELDS: { key: keyof VdaProfileSettings; label: string; hint?: string }[] = [
   { key: 'code', label: '코드', hint: '차량 파라미터에서 이 프로파일을 고를 때 쓰는 이름입니다.' },

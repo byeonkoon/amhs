@@ -66,11 +66,16 @@ export type PortSettings = {
 };
 export type ConnectionSettings = { commType: 'TCP' | 'MQTT'; role: string; host: string; port: number; enabled: boolean };
 export type ProtocolSettings = { protoType: 'PC' | 'PLC' | 'VDA5050'; protoVersion: string; adapterKey: string };
-/** Site-wide option: one communication type for every vehicle, and the node limit of one movement authority. */
+/**
+ * Site-wide options. Every field changes behaviour that exists: the communication type applies to
+ * every vehicle, nodeCount bounds one movement authority, MORE decides when a running authority
+ * is lengthened, the command values decide how a provably failed send is retried, and the
+ * staleness threshold decides when a position that stopped arriving stops being called current.
+ */
 export type OperationOptions = {
   commType: 'PC' | 'PLC' | 'MQTT'; nodeCount: number;
-  /** MORE extends a running authority: NODE by remaining nodes, DISTANCE by remaining share of the authorized distance. */
   moreEnabled: boolean; moreType: 'NODE' | 'DISTANCE'; moreRemainingNodes: number; moreRemainingPercent: number;
+  autoDispatch: boolean; commandMaxAttempts: number; commandRetrySeconds: number; positionStaleSeconds: number;
 };
 /** Topic version and JSON version are separate values; actions are sent at the pickup and drop ports. */
 export type VdaProfileSettings = {
@@ -83,7 +88,8 @@ export const cfgApi = {
   ports: () => `/api/v1/sites/${SITE_ID}/configuration/ports`,
   connections: () => `/api/v1/sites/${SITE_ID}/configuration/connections`,
   protocols: () => `/api/v1/sites/${SITE_ID}/configuration/protocols`,
-  operation: () => `/api/v1/sites/${SITE_ID}/configuration/operation`,
+  /** Site-wide options: not one machine's parameters, so they sit apart and need ADMIN. */
+  system: () => `/api/v1/sites/${SITE_ID}/configuration/system`,
   vdaProfiles: () => `/api/v1/sites/${SITE_ID}/configuration/vda-profiles`,
 };
 
@@ -120,7 +126,19 @@ export type VehicleSnapshot = {
   online: boolean; remote: boolean; idle: boolean; carrierPresent: boolean;
   /** INITIAL_CONFIGURATION is configuration, SIMULATED is entered by hand, DEVICE came from a vehicle. */
   source: 'INITIAL_CONFIGURATION' | 'SIMULATED' | 'DEVICE';
+  /** Null until something reports, which is different from having reported a while ago. */
+  reportedAt: string | null;
 };
+
+/** How current a reported position is, against the site's configured threshold. */
+export function freshness(v: VehicleSnapshot, staleAfterMs: number):
+  { label: string; tone: string } {
+  if (v.source === 'INITIAL_CONFIGURATION' || !v.reportedAt) return { label: '보고 없음', tone: 'id' };
+  const age = Date.now() - new Date(v.reportedAt).getTime();
+  return age > staleAfterMs
+    ? { label: `보고 지연 ${Math.round(age / 1000)}초`, tone: 'wr' }
+    : { label: '최근 보고', tone: 'ok' };
+}
 export type VehicleReportInput = {
   nodeId: number | null; online: boolean; remote: boolean; idle: boolean;
   carrierPresent: boolean; source: string;
@@ -168,7 +186,34 @@ export const opsApi = {
   cancel: (orderId: number) => `/api/v1/sites/${SITE_ID}/transport-orders/${orderId}/cancel`,
   extendAll: () => `/api/v1/sites//movement-authority`,
   publish: () => `/api/v1/sites/${SITE_ID}/device-commands/publish`,
+  sweep: () => `/api/v1/sites/${SITE_ID}/operation-sweep`,
+  assignments: () => `/api/v1/sites/${SITE_ID}/transport-orders/assignments`,
+  session: () => `/api/v1/session`,
 };
+
+/** Authority levels, lowest first. A screen offers what the session says it may do. */
+export type Role = 'VIEWER' | 'OPERATOR' | 'ENGINEER' | 'ADMIN';
+/** `allows` names the areas this session may change, as the server itself computes them. */
+export type Session = { authenticated: boolean; code: string; role: Role; allows: string[] };
+export const ROLE_LABEL: Record<Role, string> = {
+  VIEWER: '조회', OPERATOR: '운전', ENGINEER: '설비 설정', ADMIN: '관리자',
+};
+
+export type Publication = { claimed: number; delivered: number; notDelivered: number; inDoubt: number };
+export type SweepResult = {
+  autoDispatch: boolean; assigned: number[]; skipped: { orderId: number; reason: string }[];
+  extended: Extension[]; published: Publication;
+};
+
+/**
+ * A read that identifies the caller, used to ask what this session may do. The token is sent
+ * and never stored or rendered back; an unauthenticated call is answered as a viewer.
+ */
+export async function getAs<T>(url: string, signal?: AbortSignal): Promise<T> {
+  const res = await fetch(url, { signal, headers: writeToken ? { Authorization: `Bearer ${writeToken}` } : {} });
+  if (!res.ok) throw new ApiError(res.status, url, describe(res.status));
+  return res.json() as Promise<T>;
+}
 
 /** Reasons the movement-authority sweep gives back, as sentences an operator can act on. */
 export function explainDecision(decision: string): string {

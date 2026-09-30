@@ -1,15 +1,24 @@
 import React from 'react';
+import { ROLE_LABEL, type Session } from '../api';
 
 /** Menu entries share one shape so every screen shows the same sidebar. */
-export type MenuKey = 'overview' | 'fleet' | 'equipment' | 'transport' | 'traffic' | 'inventory' | 'alarms' | 'history' | 'diagnostics';
+export type MenuKey = 'overview' | 'fleet' | 'resources' | 'equipment' | 'transport' | 'traffic'
+  | 'inventory' | 'alarms' | 'history' | 'diagnostics';
 type Entry = { key: MenuKey; label: string; sub: string; ready: boolean };
 
+/**
+ * Resources holds what the controller commands — vehicles, the nodes and segments they run on,
+ * and the ports that face equipment. Equipment holds the equipment itself, with its racks and
+ * slots. They are separate because configuring a machine and rewiring the track are different
+ * jobs with different consequences.
+ */
 const MENU: Entry[] = [
   { key: 'overview', label: 'Overview', sub: 'Status / KPI', ready: false },
-  { key: 'fleet', label: 'Fleet', sub: 'OHT / AGV', ready: true },
-  { key: 'equipment', label: 'Equipment', sub: 'Stations / Ports', ready: true },
+  { key: 'fleet', label: 'Fleet', sub: 'Map / Vehicles', ready: true },
   { key: 'transport', label: 'Transport', sub: 'Job / Route', ready: true },
   { key: 'traffic', label: 'Traffic', sub: 'Reservation / Deadlock', ready: true },
+  { key: 'resources', label: 'Resources', sub: 'Vehicle / Node / Port', ready: true },
+  { key: 'equipment', label: 'Equipment', sub: 'EQP / Rack / Slot', ready: false },
   { key: 'inventory', label: 'Inventory', sub: 'Carrier / Stocker', ready: false },
   { key: 'alarms', label: 'Alarms', sub: 'Event / Notification', ready: false },
   { key: 'history', label: 'History', sub: 'Log / Trace', ready: false },
@@ -37,13 +46,15 @@ export function AppShell(props: {
   title: string;
   subtitle: string;
   server: ServerState;
+  session: Session;
+  onAccount: (item: 'system' | 'accounts' | 'signin') => void;
   children: React.ReactNode;
 }) {
   const clock = useClock();
   const serverDot = props.server === 'connected' ? 'ok' : props.server === 'connecting' ? 'wr' : 'er';
   const serverText = props.server === 'connected' ? 'Connected' : props.server === 'connecting' ? 'Connecting' : 'Unreachable';
   return (
-    <div className="shell">
+    <div className="shell compact">
       <aside className="nav">
         <div className="nav-brand">
           <b>AMHS Operations</b>
@@ -91,7 +102,7 @@ export function AppShell(props: {
           <div className="top-right">
             <span className="clock">{clock}</span>
             <span className="sysok"><i className={`dot ${serverDot}`} />{props.server === 'connected' ? '시스템 정상' : props.server === 'connecting' ? '연결 확인 중' : '서버 미연결'}</span>
-            <span className="user"><span className="avatar">OP</span>operator01</span>
+            <AccountMenu session={props.session} onSelect={props.onAccount} />
           </div>
         </div>
 
@@ -110,6 +121,57 @@ export function AppShell(props: {
           <span className="r"><span>관제시스템</span><span className="mono">가상 데이터 · 시뮬레이션 모드</span></span>
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Site-wide settings live behind the account, not in a machine's screen, because they are a
+ * property of who you are signed in as and what that lets you change. Entries the session may
+ * not use are shown disabled with the level they need, so the limit is visible rather than
+ * discovered by being refused.
+ */
+function AccountMenu({ session, onSelect }: { session: Session; onSelect: (item: 'system' | 'accounts' | 'signin') => void }) {
+  const [open, setOpen] = React.useState(false);
+  const box = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => {
+    if (!open) return;
+    const away = (e: MouseEvent) => { if (box.current && !box.current.contains(e.target as Node)) setOpen(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', away); document.addEventListener('keydown', esc);
+    return () => { document.removeEventListener('mousedown', away); document.removeEventListener('keydown', esc); };
+  }, [open]);
+
+  const may = (area: string) => session.allows.includes(area);
+  const pick = (item: 'system' | 'accounts' | 'signin') => { setOpen(false); onSelect(item); };
+  const initials = session.code.slice(0, 2).toUpperCase();
+
+  return (
+    <div className="acct" ref={box}>
+      <button type="button" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(v => !v)}>
+        <span className="avatar">{initials}</span>
+        <span className="mono" style={{ fontSize: 12 }}>{session.code}</span>
+        <span style={{ fontSize: 10, color: 'var(--mut)' }}>{ROLE_LABEL[session.role]}</span>
+      </button>
+      {open && (
+        <div className="acct-menu" role="menu">
+          <div className="who">
+            <b className="mono">{session.code}</b><br />
+            {session.authenticated ? `권한 ${ROLE_LABEL[session.role]} · ${session.role}` : '토큰 없음 · 조회만 가능합니다'}
+          </div>
+          <div className="sep" />
+          <button type="button" role="menuitem" disabled={!may('system')} onClick={() => pick('system')}>
+            시스템 옵션<span className="lv">ADMIN</span>
+          </button>
+          <button type="button" role="menuitem" disabled title="계정 관리 화면은 아직 구현하지 않았습니다.">
+            계정·권한<span className="lv">ADMIN</span>
+          </button>
+          <div className="sep" />
+          <button type="button" role="menuitem" onClick={() => pick('signin')}>
+            {session.authenticated ? '토큰 변경·해제' : '토큰 입력'}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
