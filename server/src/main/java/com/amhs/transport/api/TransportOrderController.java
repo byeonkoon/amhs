@@ -2,6 +2,9 @@ package com.amhs.transport.api;
 import com.amhs.transport.*;
 import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.context.request.RequestAttributes;
+import org.springframework.web.context.request.RequestContextHolder;
+import com.amhs.platform.Principal;
 import java.util.*;
 @RestController
 @RequestMapping("/api/v1/sites/{siteId}/transport-orders")
@@ -59,6 +62,26 @@ class TransportOrderController {
  }
 
  /**
+  * Moves an order on, with the evidence the move rests on. This is how a device adapter or the
+  * simulator reports progress: finishing a pickup or a drop needs evidence of where the carrier
+  * went, trying one again needs evidence that it did not move, and a person's confirmation needs
+  * an identified person.
+  */
+ @PostMapping("/{orderId}/transitions")
+ TransportOrder transition(@PathVariable long siteId,@PathVariable long orderId,@RequestBody Map<String,Object> body){
+  var target=parseStatus(str(body.get("status")));
+  var evidence=body.get("evidence") instanceof Map<?,?> m?m:Map.of();
+  TransitionEvidence.Kind kind;
+  try{ kind=evidence.get("kind")==null?TransitionEvidence.Kind.SYSTEM:TransitionEvidence.Kind.valueOf(String.valueOf(evidence.get("kind"))); }
+  catch(IllegalArgumentException e){ throw new TransportRejected("UNKNOWN_EVIDENCE_KIND",String.valueOf(evidence.get("kind")),false); }
+  CarrierLocation location;
+  try{ location=evidence.get("carrierLocation")==null?null:CarrierLocation.valueOf(String.valueOf(evidence.get("carrierLocation"))); }
+  catch(IllegalArgumentException e){ throw new TransportRejected("UNKNOWN_CARRIER_LOCATION",String.valueOf(evidence.get("carrierLocation")),false); }
+  return orders.advance(siteId,orderId,target,str(body.get("reason")),actor(),traceId(),
+   new TransitionEvidence(kind,str(evidence.get("commandId")),location));
+ }
+
+ /**
   * Holds a vehicle for this order. Repeating the request returns the vehicle already held
   * rather than assigning a second one.
   */
@@ -83,7 +106,11 @@ class TransportOrderController {
   if(v instanceof Number n)return n.intValue();
   try{return Integer.valueOf(String.valueOf(v));}catch(NumberFormatException e){throw new TransportRejected("PRIORITY_NOT_A_NUMBER","priority must be a number",false);}
  }
- // A16 resolves the principal in the access gate; wiring it through to the ledger is A16 follow-up.
- private static String actor(){return "api";}
+ /** Who the access gate let through; a request that never passed it is just "api". */
+ private static String actor(){
+  var attributes=RequestContextHolder.getRequestAttributes();
+  var principal=attributes==null?null:attributes.getAttribute(Principal.REQUEST_ATTRIBUTE,RequestAttributes.SCOPE_REQUEST);
+  return principal instanceof Principal p?p.code():"api";
+ }
  private static String traceId(){return UUID.randomUUID().toString();}
 }

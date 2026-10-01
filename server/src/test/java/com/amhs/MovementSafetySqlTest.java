@@ -55,7 +55,10 @@ class MovementSafetySqlTest {
   return orders.accept(SITE,new OrderRequest("SAFETY",UUID.randomUUID().toString(),"OHT-A",to,"C",50),"test",null).order().id();
  }
  private long assigned(String to){ long id=order(to); assignment.assign(SITE,id,"test",null); return id; }
- private void advance(long id,OrderStatus... path){ for(var s:path) orders.advance(SITE,id,s,"test","test",null); }
+ /** Walks the order on. Moving off the pickup carries the load sensor's word that the carrier is on board. */
+ private void advance(long id,OrderStatus... path){
+  for(var stage:path) orders.advance(SITE,id,stage,"test","test",null,stage==OrderStatus.TO_DESTINATION?TransitionEvidence.sensor(CarrierLocation.VEHICLE):TransitionEvidence.system());
+ }
  /** What a publisher and the device would do: take the order's commands out and acknowledge them. */
  private void acknowledge(long id){
   outbox.claim(SITE,500,20);

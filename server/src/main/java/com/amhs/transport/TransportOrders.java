@@ -80,7 +80,17 @@ public class TransportOrders {
 
  @Transactional
  public TransportOrder advance(long siteId,long orderId,OrderStatus target,String reason,String actorCode,String traceId){
-  var after=ledger.transition(siteId,orderId,target,reason,actorCode,traceId);
+  return advance(siteId,orderId,target,reason,actorCode,traceId,TransitionEvidence.system());
+ }
+
+ /**
+  * Moves the order on, resting on {@code evidence}. Finishing a pickup or a drop needs evidence of
+  * where the carrier went; trying one again needs evidence that it did not move.
+  */
+ @Transactional
+ public TransportOrder advance(long siteId,long orderId,OrderStatus target,String reason,String actorCode,String traceId,
+                               TransitionEvidence evidence){
+  var after=ledger.transition(siteId,orderId,target,reason,actorCode,traceId,evidence);
   // A stage in which the vehicle is not meant to drive takes back whatever movement has not left:
   // a command written for the previous stage would otherwise go out after the stage had ended.
   if(!after.status().movable()) outbox.withdraw(orderId,"ORDER_"+after.status());
@@ -102,10 +112,12 @@ public class TransportOrders {
    throw reject("RECOVERY_LOCATION_REQUIRED","the carrier must be found at the source or at the destination");
   if(reason==null||reason.isBlank())
    throw reject("RECOVERY_REASON_REQUIRED","say how the carrier location was established");
-  ledger.recordCarrierLocation(siteId,orderId,location);
   var target=location==CarrierLocation.DESTINATION?OrderStatus.COMPLETED:OrderStatus.CANCELLED;
   outbox.withdraw(orderId,"ORDER_RECOVERED");
-  return settle(siteId,orderId,ledger.transition(siteId,orderId,target,"RECOVERED: "+reason,actorCode,traceId));
+  // An operator's decision: it needs an identified person, and the location it states is written
+  // with the transition that ends the order.
+  return settle(siteId,orderId,ledger.transition(siteId,orderId,target,"RECOVERED: "+reason,actorCode,traceId,
+   new TransitionEvidence(TransitionEvidence.Kind.OPERATOR_DECISION,null,location)));
  }
 
  /**

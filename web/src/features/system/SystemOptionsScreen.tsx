@@ -121,6 +121,14 @@ export function SystemOptionsScreen({ session }: { session: Session }) {
         </Field>
       </Panel>
 
+      <Panel id="sys-transfer" title="이적재" aux="일어나지 않은 적재·하역을 몇 번 다시 할지" padded>
+        <Field label="재시도 상한"
+          note="센서가 적재·하역이 일어나지 않았음을 보여 줄 때 다시 시도하는 횟수입니다. 이 횟수에 이르면 복구 대기로 보냅니다. 1~10.">
+          <input type="number" style={field} value={draft.transferMaxAttempts} min={1} max={10} disabled={!mayChange}
+            onChange={e => set({ transferMaxAttempts: Number(e.target.value) })} />
+        </Field>
+      </Panel>
+
       <Panel id="sys-dispatch" title="배차" aux="실행 스윕이 대기 작업을 맡을지" padded>
         <Field label="자동 배차"
           note="켜면 실행 스윕이 대기 중인 작업을 배차합니다. 스윕은 타이머가 아니라 호출로 돕니다.">

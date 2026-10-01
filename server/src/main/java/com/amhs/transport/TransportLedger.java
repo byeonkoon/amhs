@@ -32,11 +32,7 @@ public interface TransportLedger {
  void moveRouteCursor(long orderId,int cursor);
  /** Replaces what lies ahead in the route, keeping the cursor, with the pickup's new place in it. */
  void replaceRoute(long orderId,java.util.List<Long> routeNodeIds,int pickupIndex);
- /**
-  * Records where somebody has established the carrier to be. Leaving recovery depends on it, so it
-  * is written only from an explicit statement, never inferred from a state change.
-  */
- void recordCarrierLocation(long siteId,long orderId,CarrierLocation location);
+
  Optional<AssignmentView> activeAssignment(long siteId,long orderId);
  /** Every vehicle currently held at this site, with the order holding it. */
  List<AssignmentView> activeAssignments(long siteId);
@@ -56,6 +52,16 @@ public interface TransportLedger {
  void replaceRelocationRoute(long relocationId,List<Long> routeNodeIds);
  /** Closes a move, saying why: arrived, or abandoned because it could no longer be carried out. */
  void finishRelocation(long relocationId,String reason);
- /** Applies a checked transition and appends the matching event in one transaction. */
- TransportOrder transition(long siteId,long orderId,OrderStatus target,String reason,String actorCode,String traceId);
+ /** Applies a checked transition resting on the system's own bookkeeping. */
+ default TransportOrder transition(long siteId,long orderId,OrderStatus target,String reason,String actorCode,String traceId){
+  return transition(siteId,orderId,target,reason,actorCode,traceId,TransitionEvidence.system());
+ }
+ /**
+  * Applies a checked transition on the given evidence and appends the matching event, in one
+  * transaction. Finishing a pickup or a drop, or trying one again, is refused unless the evidence
+  * establishes where the carrier is; that location is written with the transition and kept with the
+  * event. A claim only a person can make is refused without an identified person.
+  */
+ TransportOrder transition(long siteId,long orderId,OrderStatus target,String reason,String actorCode,String traceId,
+                           TransitionEvidence evidence);
 }

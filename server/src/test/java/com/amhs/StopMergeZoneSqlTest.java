@@ -199,7 +199,7 @@ class StopMergeZoneSqlTest {
    "tester","trace").order().id());
   tx.execute(s->assignment.assign(SITE,id,"tester","trace"));
   for(var stage:List.of(OrderStatus.TO_SOURCE,OrderStatus.LOADING,OrderStatus.TO_DESTINATION))
-   tx.execute(s->orders.advance(SITE,id,stage,"test","tester","trace"));
+   tx.execute(s->orders.advance(SITE,id,stage,"test","tester","trace",stage==OrderStatus.TO_DESTINATION?TransitionEvidence.sensor(CarrierLocation.VEHICLE):TransitionEvidence.system()));
   tx.execute(s->movement.resume(SITE,id));
   return id;
  }

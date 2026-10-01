@@ -74,14 +74,37 @@ class JdbcTransportLedger implements TransportLedger {
   * source state and both write. A rejected transition leaves no event behind.
   */
  @Transactional
- public TransportOrder transition(long siteId,long orderId,OrderStatus target,String reason,String actorCode,String traceId){
+ public TransportOrder transition(long siteId,long orderId,OrderStatus target,String reason,String actorCode,String traceId,
+                                  TransitionEvidence evidence){
+  if(evidence==null) evidence=TransitionEvidence.system();
   var locked=one("SELECT "+COLS+" FROM transport.order WHERE site_id=? AND id=? FOR UPDATE",siteId,orderId)
    .orElseThrow(()->new TransportRejected("ORDER_NOT_FOUND","unknown order",false));
   var current=locked.status();
   if(current==target)return locked;
   if(!current.canTransitionTo(target))
    throw new TransportRejected("TRANSITION_NOT_ALLOWED",current+" cannot move to "+target,true);
-  boolean carrierUnsettled=locked.carrierLocation()==CarrierLocation.UNKNOWN||locked.carrierLocation()==CarrierLocation.VEHICLE;
+  // A claim only a person can make needs a person behind it, not the bare API or nobody.
+  if(evidence.kind().byPerson()&&!isPerson(actorCode))
+   throw new TransportRejected("EVIDENCE_NEEDS_PRINCIPAL",evidence.kind()+" must come from an identified person",false);
+  var established=evidence.kind().establishes()?evidence.carrierLocation():null;
+  // Finishing a pickup or a drop moves the carrier, and only evidence of where it went may say so.
+  // Going back to try again needs evidence that the carrier did not move.
+  var required=requiredLocation(current,target);
+  if(required!=null&&established!=required)
+   throw new TransportRejected(evidenceCode(current,target),
+    current+" to "+target+" needs evidence that the carrier is at "+required,true);
+  boolean retry=(current==OrderStatus.LOADING&&target==OrderStatus.TO_SOURCE)
+   ||(current==OrderStatus.UNLOADING&&target==OrderStatus.TO_DESTINATION);
+  if(retry){
+   Integer attempts=jdbc.queryForObject("SELECT transfer_attempt FROM transport.order WHERE id=?",Integer.class,orderId);
+   // Trying again forever is not recovery: past the site's limit a person has to look.
+   if((attempts==null?0:attempts)+1>=transferLimit(siteId)){
+    target=OrderStatus.RECOVERY_REQUIRED; retry=false;
+    reason="TRANSFER_ATTEMPTS_EXHAUSTED"+(reason==null||reason.isBlank()?"":": "+reason);
+   }
+  }
+  var effective=established!=null?established:locked.carrierLocation();
+  boolean carrierUnsettled=effective==CarrierLocation.UNKNOWN||effective==CarrierLocation.VEHICLE;
   // A cancellation acknowledgement does not establish where the carrier ended up once a pickup
   // has begun. A cancel requested before any pickup (the vehicle was only driving there) leaves
   // the carrier where it always was. Decide under the same row lock used for the state update.
@@ -98,21 +121,23 @@ class JdbcTransportLedger implements TransportLedger {
     throw new TransportRejected("RECOVERY_EVIDENCE_REQUIRED","where the carrier is must be recorded first",true);
    }
    boolean consistent=switch(target){
-    case COMPLETED -> locked.carrierLocation()==CarrierLocation.DESTINATION;
-    case CANCELLED -> locked.carrierLocation()==CarrierLocation.SOURCE;
+    case COMPLETED -> effective==CarrierLocation.DESTINATION;
+    case CANCELLED -> effective==CarrierLocation.SOURCE;
     default -> true;
    };
    if(!consistent)
     throw new TransportRejected("RECOVERY_LOCATION_MISMATCH",
-     "the carrier is recorded at "+locked.carrierLocation()+", which does not end the order as "+target,true);
+     "the carrier is recorded at "+effective+", which does not end the order as "+target,true);
   }
   boolean starting=locked.startedAt()==null&&target!=OrderStatus.QUEUED;
   jdbc.update("UPDATE transport.order SET status=?,version=version+1"
+   +",carrier_location=COALESCE(CAST(? AS VARCHAR),carrier_location)"
+   +",transfer_attempt=transfer_attempt+CASE WHEN ? THEN 1 ELSE 0 END"
    +",started_at=CASE WHEN ? THEN now() ELSE started_at END"
    +",terminal_at=CASE WHEN ? THEN now() ELSE terminal_at END"
    +",cancel_reason=CASE WHEN ? THEN ? ELSE cancel_reason END"
    +" WHERE site_id=? AND id=?",
-   target.name(),starting,target.isTerminal(),
+   target.name(),established==null?null:established.name(),retry,starting,target.isTerminal(),
    target==OrderStatus.CANCELLED||target==OrderStatus.CANCEL_REQUESTED,reason,siteId,orderId);
   // A finished order must not keep holding its vehicle, so the release happens with the
   // transition rather than in a later step that could be missed.
@@ -120,9 +145,33 @@ class JdbcTransportLedger implements TransportLedger {
    jdbc.update("UPDATE transport.assignment SET released_at=now(),release_reason=?"
     +" WHERE order_id=? AND released_at IS NULL",target.name(),orderId);
   Integer seq=jdbc.queryForObject("SELECT COALESCE(MAX(seq),0)+1 FROM transport.order_event WHERE order_id=?",Integer.class,orderId);
-  jdbc.update("INSERT INTO transport.order_event(order_id,seq,old_status,new_status,reason,actor_code,trace_id)"
-   +" VALUES(?,?,?,?,?,?,?)",orderId,seq,current.name(),target.name(),reason,actorCode,traceId);
+  jdbc.update("INSERT INTO transport.order_event(order_id,seq,old_status,new_status,reason,actor_code,trace_id,"
+   +"evidence_kind,command_id,carrier_location) VALUES(?,?,?,?,?,?,?,?,?,?)",
+   orderId,seq,current.name(),target.name(),reason,actorCode,traceId,
+   evidence.kind().name(),evidence.commandId(),established==null?null:established.name());
   return find(siteId,orderId).orElseThrow();
+ }
+
+ /** Where the carrier must be shown to be for this step, or null when the step does not move it. */
+ private static CarrierLocation requiredLocation(OrderStatus from,OrderStatus to){
+  if(from==OrderStatus.LOADING&&to==OrderStatus.TO_DESTINATION) return CarrierLocation.VEHICLE;
+  if(from==OrderStatus.UNLOADING&&to==OrderStatus.COMPLETED) return CarrierLocation.DESTINATION;
+  if(from==OrderStatus.LOADING&&to==OrderStatus.TO_SOURCE) return CarrierLocation.SOURCE;
+  if(from==OrderStatus.UNLOADING&&to==OrderStatus.TO_DESTINATION) return CarrierLocation.VEHICLE;
+  return null;
+ }
+ private static String evidenceCode(OrderStatus from,OrderStatus to){
+  if(to==OrderStatus.TO_DESTINATION&&from==OrderStatus.LOADING) return "PICKUP_EVIDENCE_REQUIRED";
+  if(to==OrderStatus.COMPLETED) return "DROP_EVIDENCE_REQUIRED";
+  return "RETRY_EVIDENCE_REQUIRED";
+ }
+ /** The bare API and the anonymous caller are not people; every account and the local admin are. */
+ private static boolean isPerson(String actorCode){
+  return actorCode!=null&&!actorCode.isBlank()&&!"api".equals(actorCode)&&!"anonymous".equals(actorCode);
+ }
+ private int transferLimit(long siteId){
+  var rows=jdbc.query("SELECT transfer_max_attempts FROM platform.site_operation WHERE site_id=?",(r,n)->r.getInt(1),siteId);
+  return rows.isEmpty()?3:rows.getFirst();
  }
 
  /** Whether this order ever reached the pickup, which is when the carrier may have changed hands. */
@@ -130,13 +179,6 @@ class JdbcTransportLedger implements TransportLedger {
   Boolean began=jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM transport.order_event WHERE order_id=? AND new_status='LOADING')",
    Boolean.class,orderId);
   return Boolean.TRUE.equals(began);
- }
-
- @Transactional(propagation=Propagation.MANDATORY)
- public void recordCarrierLocation(long siteId,long orderId,CarrierLocation location){
-  int updated=jdbc.update("UPDATE transport.order SET carrier_location=?,version=version+1 WHERE site_id=? AND id=?",
-   location.name(),siteId,orderId);
-  if(updated==0) throw new TransportRejected("ORDER_NOT_FOUND","unknown order",false);
  }
 
  @Transactional(propagation=Propagation.MANDATORY)

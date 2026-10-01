@@ -89,6 +89,8 @@ export type OperationOptions = {
   moreVehicleSignal: boolean;
   /** Who decides who goes first at a merge point: this controller, or the vehicle (signal) later on. */
   mergeControl: 'CONTROLLER' | 'VEHICLE_SIGNAL';
+  /** How often a pickup or drop shown not to have happened is tried again before recovery. */
+  transferMaxAttempts: number;
 };
 /** Topic version and JSON version are separate values; actions are sent at the pickup and drop ports. */
 export type VdaProfileSettings = {
@@ -316,6 +318,10 @@ export function explainDecision(decision: string): string {
     RECOVERY_LOCATION_REQUIRED: '화물이 출발지에 있는지 목적지에 있는지 지정해야 합니다.',
     RECOVERY_REASON_REQUIRED: '화물 위치를 어떻게 확인했는지 적어야 합니다.',
     ORDER_NOT_IN_RECOVERY: '복구 대기 중인 작업이 아닙니다.',
+    PICKUP_EVIDENCE_REQUIRED: '화물이 차량에 실렸다는 증거가 있어야 반송 단계로 넘어갑니다.',
+    DROP_EVIDENCE_REQUIRED: '화물이 목적지에 내려졌다는 증거가 있어야 완료됩니다.',
+    RETRY_EVIDENCE_REQUIRED: '이적재가 일어나지 않았다는 증거가 있어야 다시 시도합니다.',
+    EVIDENCE_NEEDS_PRINCIPAL: '사람의 확인·결정은 로그인한 사용자만 기록할 수 있습니다.',
     EVACUATING: '작업을 마치고 Zone 안에 남은 차량을 Zone 밖으로 보냈습니다.',
     ARRIVED: 'Zone 밖 목적지에 도착해 이동을 마쳤습니다.',
     HAS_ORDER: '작업을 가진 차량은 그 작업으로 Zone을 나갑니다.',

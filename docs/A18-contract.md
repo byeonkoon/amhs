@@ -37,7 +37,7 @@ FK는 site/revision을 포함하여 노드·edge·port·차량 초기 노드의 
 9. **단계별 이동 허가.** 경로는 접근·반송 구간을 합쳐 저장하지만, 적재 시작 전에는 **출발지까지만** 허가한다. 반송 구간은 적재 완료가 보고된 뒤 새 이동 명령으로 준다. 적재·하역·취소 요청·복구 대기 단계에서는 이동이나 연장을 만들지 않는다.
 10. **취소 원자성.** 취소는 작업의 명령 행을 송신기와 같은 잠금으로 잡고 판단한다. 아직 나가지 않은 명령은 철회하고 작업을 끝낸다. 이미 나갔거나 나갔을 수 있는 명령이 있으면 차량이 움직이는 중일 수 있으므로 취소 요청 상태로 두고 할당과 점유를 유지하며, 정지 확인 뒤에 끝낸다.
 11. **차량별 명령 순서.** 장비 명령은 사이트와 차량에 속하며 작업이 없을 수 있다(Zone 퇴출). 한 차량의 명령은 기록된 순서대로 하나씩 나간다. 앞선 명령이 대기·재시도 대기·결과 불명이면 뒤 명령을 보내지 않는다. 퇴출 중인 차량은 배차하지 않는다.
-12. 송신 성공은 완료가 아니다. 장비 완료 증거를 받아 다음 전이를 확정한다. 완료 증거 연결은 **미구현**.
+12. 송신 성공은 완료가 아니다. 적재·하역 완료는 화물 위치를 정하는 증거(센서 전이·동작 완료 보고 등)가 있어야 확정되며, 화물 위치는 같은 트랜잭션에서 바뀐다. 이적재 미수행이 증명되면 상한까지 재시도한다. 장비 보고를 증거로 바꾸는 어댑터는 **미구현**.
 
 ## HTTP 계약
 GET /api/v1/sites/{siteId}/maps/{revisionId}: 200 지도 / 404.
@@ -46,7 +46,7 @@ GET /actuator/health: 실제 DB health 포함.
 POST /api/v1/sites/{siteId}/transport-orders: Idempotency-Key(헤더 또는 본문), X-Amhs-Request-Source, 본문 sourcePortCode·destinationPortCode·carrierCode·priority(0..100).
 - site+requestSource+key와 내용이 같으면 기존 작업 반환(200), 내용이 다르면 409. 새 작업은 201, 상태 QUEUED.
 - 포트 불일치·잘못된 입력은 422. 가용 차량 없음은 배차 시점의 재시도 가능한 사유이며 접수 거부가 아니다.
-POST …/transport-orders/{id}/assignment, …/cancel, …/recovery(본문 carrierLocation SOURCE|DESTINATION, reason 필수), POST …/movement-authority, …/operation-sweep.
+POST …/transport-orders/{id}/assignment, …/cancel, …/recovery(본문 carrierLocation SOURCE|DESTINATION, reason 필수), …/transitions(본문 status, reason, evidence{kind, commandId, carrierLocation}), POST …/movement-authority, …/operation-sweep. 반송 이력의 조작 주체는 접근 게이트를 통과한 실제 계정이다.
 반송 API 오류는 code·message·traceId로 응답한다. 변경 요청은 접근 게이트를 거치며 운영 명령은 운전자 이상, 설정 변경은 영역별 권한을 요구한다(A16).
 
 ## 수용 시험

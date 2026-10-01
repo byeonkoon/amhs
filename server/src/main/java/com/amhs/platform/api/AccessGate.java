@@ -32,6 +32,8 @@ class AccessGate extends OncePerRequestFilter {
   if(actor==null){deny(res,401,"PRINCIPAL_REQUIRED",traceId,Principal.anonymous(),req.getMethod(),target,reason);return;}
   Role required=requiredRole(req.getRequestURI());
   if(!actor.role().allows(required)){deny(res,403,"ROLE_"+required+"_REQUIRED",traceId,actor,req.getMethod(),target,reason);return;}
+  // Whoever passed the gate is who the ledger records, not a placeholder.
+  req.setAttribute(Principal.REQUEST_ATTRIBUTE,actor);
   try{
    chain.doFilter(req,res);
    record(actor,req.getMethod(),target,res.getStatus()<400?"ALLOWED":"FAILED",res.getStatus(),reason,traceId);

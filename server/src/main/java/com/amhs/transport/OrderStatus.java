@@ -23,9 +23,11 @@ public enum OrderStatus {
   ALLOWED.put(ASSIGNED,EnumSet.of(TO_SOURCE,QUEUED,CANCEL_REQUESTED,CANCELLED,FAILED));
   ALLOWED.put(TO_SOURCE,EnumSet.of(LOADING,CANCEL_REQUESTED,CANCELLED,FAILED));
   // From LOADING onward the carrier may already be held, so failures require recovery.
-  ALLOWED.put(LOADING,EnumSet.of(TO_DESTINATION,CANCEL_REQUESTED,RECOVERY_REQUIRED));
+  // LOADING→TO_SOURCE and UNLOADING→TO_DESTINATION are retries. The ledger allows them only on
+  // evidence that the transfer did not happen (the carrier is still where it was), up to a limit.
+  ALLOWED.put(LOADING,EnumSet.of(TO_DESTINATION,TO_SOURCE,CANCEL_REQUESTED,RECOVERY_REQUIRED));
   ALLOWED.put(TO_DESTINATION,EnumSet.of(UNLOADING,CANCEL_REQUESTED,RECOVERY_REQUIRED));
-  ALLOWED.put(UNLOADING,EnumSet.of(COMPLETED,RECOVERY_REQUIRED));
+  ALLOWED.put(UNLOADING,EnumSet.of(COMPLETED,TO_DESTINATION,RECOVERY_REQUIRED));
   ALLOWED.put(CANCEL_REQUESTED,EnumSet.of(CANCELLED,RECOVERY_REQUIRED,COMPLETED));
   ALLOWED.put(COMPLETED,EnumSet.noneOf(OrderStatus.class));
   ALLOWED.put(CANCELLED,EnumSet.noneOf(OrderStatus.class));

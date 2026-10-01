@@ -22,12 +22,13 @@ import java.util.Set;
  * <p>Every option here changes behaviour that exists. autoDispatch decides whether a site sweep
  * assigns queued work or only extends what is already running; the command values decide how a
  * send that provably failed is retried; positionStaleSeconds decides when a position that stopped
- * arriving is shown as stale rather than current.
+ * arriving is shown as stale rather than current; transferMaxAttempts bounds how often a pickup or
+ * drop that provably did not happen is tried again before the order goes to recovery.
  */
 public record OperationOptions(String commType,int nodeCount,boolean moreEnabled,String moreType,
  int moreRemainingNodes,int moreRemainingPercent,
  boolean autoDispatch,int commandMaxAttempts,int commandRetrySeconds,int positionStaleSeconds,
- int moreMinRemainingNodes,boolean moreVehicleSignal,String mergeControl){
+ int moreMinRemainingNodes,boolean moreVehicleSignal,String mergeControl,int transferMaxAttempts){
  public static final Set<String> COMM_TYPES=Set.of("PC","PLC","MQTT");
  public static final Set<String> MORE_TYPES=Set.of("NODE","DISTANCE");
  public static final Set<String> MERGE_CONTROLS=Set.of("CONTROLLER","VEHICLE_SIGNAL");
@@ -47,5 +48,6 @@ public record OperationOptions(String commType,int nodeCount,boolean moreEnabled
   // A floor above the trigger would leave no node count at which MORE could ever be sent.
   ConfigurationException.require(moreMinRemainingNodes<=moreRemainingNodes,"MORE_MIN_ABOVE_TRIGGER");
   ConfigurationException.require(MERGE_CONTROLS.contains(mergeControl==null?"":mergeControl),"INVALID_MERGE_CONTROL");
+  ConfigurationException.require(transferMaxAttempts>=1&&transferMaxAttempts<=10,"INVALID_TRANSFER_MAX_ATTEMPTS");
  }
 }
