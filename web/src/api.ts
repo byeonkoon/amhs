@@ -144,6 +144,8 @@ export type VehicleSnapshot = {
   reportedAt: string | null;
   /** What the vehicle last said about accepting a new destination; null when it never said. */
   destinationChangeEnabled?: boolean | null;
+  /** Configured home node; a vehicle leaving a zone goes there first when it can. */
+  homeNodeId?: number | null;
 };
 
 /** How current a reported position is, against the site's configured threshold. */

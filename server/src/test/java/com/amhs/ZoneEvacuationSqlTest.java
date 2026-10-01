@@ -39,7 +39,7 @@ class ZoneEvacuationSqlTest {
   jdbc.update("DELETE FROM traffic.node_reservation");
   jdbc.update("UPDATE integration.command_outbox SET status='WITHDRAWN' WHERE status IN ('PENDING','DISPATCHING','FAILED')");
   jdbc.update("DELETE FROM fleet.vehicle_state WHERE site_id=? AND vehicle_id<>?",SITE,OHT);
-  jdbc.update("UPDATE fleet.vehicle_profile SET assignment_enabled=(id=?) WHERE site_id=?",OHT,SITE);
+  jdbc.update("UPDATE fleet.vehicle_profile SET assignment_enabled=(id=?),home_node_id=NULL WHERE site_id=?",OHT,SITE);
   jdbc.update("UPDATE platform.site_operation SET node_count=20,merge_control='CONTROLLER' WHERE site_id=?",SITE);
   jdbc.update("UPDATE topology.node SET stop_node=FALSE WHERE site_id=? AND revision_id=?",SITE,REVISION);
  }
@@ -81,6 +81,25 @@ class ZoneEvacuationSqlTest {
   assertThat(ledger.relocatingVehicleIds(SITE)).contains(OHT);
   long id=orders.accept(SITE,new OrderRequest("EVAC",UUID.randomUUID().toString(),"OHT-A","OHT-C","C",50),"test",null).order().id();
   assertThatThrownBy(()->assignment.assign(SITE,id,"test",null)).isInstanceOf(TransportRejected.class);
+ }
+
+ @Test void aConfiguredHomeOutsideTheZoneIsPreferred(){
+  jdbc.update("UPDATE fleet.vehicle_profile SET home_node_id=116 WHERE site_id=? AND id=?",SITE,OHT);
+  finishedInTheBay();
+  var step=stepOf(OHT);
+  assertThat(step.decision()).isEqualTo("EVACUATING");
+  assertThat(ledger.openRelocations(SITE)).anySatisfy(r->{
+   assertThat(r.vehicleId()).isEqualTo(OHT);
+   assertThat(r.targetNodeId()).isEqualTo(116L);
+  });
+ }
+
+ @Test void aHomeSomebodyElseStandsOnIsPassedOverForTheNearestClearPlace(){
+  jdbc.update("UPDATE fleet.vehicle_profile SET home_node_id=116 WHERE site_id=? AND id=?",SITE,OHT);
+  traffic.request(SITE,REVISION,PHANTOM,null,List.of(116L));
+  finishedInTheBay();
+  assertThat(stepOf(OHT).decision()).isEqualTo("EVACUATING");
+  assertThat(ledger.openRelocations(SITE)).anySatisfy(r->assertThat(r.targetNodeId()).isEqualTo(111L));
  }
 
  @Test void theMoveIsContinuedOnlyOnceUsedAndClosesWhenTheVehicleArrives(){

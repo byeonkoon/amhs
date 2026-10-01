@@ -23,9 +23,10 @@ import java.util.*;
  *
  * <p>A zone admits only so many vehicles. One that finished at a port inside it and then simply
  * stayed would keep a place it no longer needs, while the vehicles refused entry go round the loop
- * waiting for it. So an idle vehicle with no order, standing in a zone, is given a move to the
- * nearest place outside where it is not in the way: in no zone, not a merge point, not a port, not
- * where another vehicle stands or holds.
+ * waiting for it. So an idle vehicle with no order, standing in a zone, is given a move out: to its
+ * configured home node when that is outside every zone, free and reachable, otherwise to the nearest
+ * place outside where it is not in the way: in no zone, not a merge point, not a port, not where
+ * another vehicle stands or holds.
  *
  * <p>The move carries no transport order, so its command belongs to the vehicle alone. While it is
  * open the vehicle is not offered to dispatch. It is continued past congestion the way an order's
@@ -121,9 +122,12 @@ public class ZoneEvacuation {
  }
 
  /**
-  * The cheapest place outside every zone that does not stand in anybody's way: not a merge point,
-  * which every vehicle joining there has to pass, not a port, which work will come to, and not a
-  * node another vehicle stands on or holds. Ties go to the lower node id so the choice repeats.
+  * Where the vehicle goes. Its home node comes first: somebody chose that place for it. It is used
+  * when it lies outside every zone, nobody else stands on or holds it, and it can be reached.
+  * Otherwise, the cheapest place outside every zone that does not stand in anybody's way: not a
+  * merge point, which every vehicle joining there has to pass, not a port, which work will come to,
+  * and not a node another vehicle stands on or holds. Ties go to the lower node id so the choice
+  * repeats.
   */
  private RouteResult nearestClearPlace(long siteId,MapSnapshot map,Set<Long> zoneNodes,VehicleSnapshot vehicle,
                                        List<VehicleSnapshot> vehicles){
@@ -132,6 +136,11 @@ public class ZoneEvacuation {
   var taken=new HashSet<Long>();
   for(var other:vehicles) if(other.id()!=vehicle.id()&&other.nodeId()!=null) taken.add(other.nodeId());
   for(NodeHold hold:traffic.held(siteId)) if(hold.vehicleId()!=vehicle.id()) taken.add(hold.nodeId());
+  Long home=vehicle.homeNodeId();
+  if(home!=null&&!zoneNodes.contains(home)&&!taken.contains(home)){
+   var toHome=planner.find(map,vehicle.nodeId(),home);
+   if(toHome.status()==RouteResult.Status.FOUND) return toHome;
+  }
   RouteResult best=null;
   for(var node:map.nodes()){
    if(!node.enabled()||node.mergePoint()||zoneNodes.contains(node.id())||ports.contains(node.id())||taken.contains(node.id()))
