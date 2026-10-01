@@ -43,7 +43,7 @@ class TransportOrderController {
  @PostMapping("/{orderId}/cancel")
  TransportOrder cancel(@PathVariable long siteId,@PathVariable long orderId,
   @RequestHeader(value="X-Amhs-Reason",required=false) String reason){
-  return orders.cancel(siteId,orderId,reason,actor(),traceId());
+  return orders.cancel(siteId,orderId,com.amhs.platform.RequestReason.fromHeader(reason),actor(),traceId());
  }
 
  /**

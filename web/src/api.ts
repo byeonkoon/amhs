@@ -118,7 +118,8 @@ export async function send<T>(url: string, method: 'POST' | 'PUT', body: unknown
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${writeToken}`,
-      ...(reason ? { 'X-Amhs-Reason': reason } : {}),
+      // Header values must be ISO-8859-1, so a Korean reason travels percent-encoded as UTF-8.
+      ...(reason ? { 'X-Amhs-Reason': encodeURIComponent(reason) } : {}),
     },
     body: JSON.stringify(body),
   });

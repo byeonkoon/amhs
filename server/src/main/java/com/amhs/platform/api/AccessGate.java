@@ -27,7 +27,7 @@ class AccessGate extends OncePerRequestFilter {
   if(READS.contains(req.getMethod())){chain.doFilter(req,res);return;}
   String traceId=UUID.randomUUID().toString();
   String target=req.getMethod()+" "+decode(req.getRequestURI());
-  String reason=req.getHeader("X-Amhs-Reason");
+  String reason=com.amhs.platform.RequestReason.fromHeader(req.getHeader("X-Amhs-Reason"));
   Principal actor=principals.resolve(req.getHeader("Authorization")).orElse(null);
   if(actor==null){deny(res,401,"PRINCIPAL_REQUIRED",traceId,Principal.anonymous(),req.getMethod(),target,reason);return;}
   Role required=requiredRole(req.getRequestURI());
