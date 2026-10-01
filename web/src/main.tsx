@@ -240,7 +240,7 @@ function MonitorScreen(props: {
             {!selectedVehicle
               ? <p className="hint" style={{ margin: 0 }}>지도나 목록에서 차량을 고르면 상세가 표시됩니다.</p>
               : <VehicleDetail vehicle={selectedVehicle} reported={state.find(v => v.id === selectedVehicle.id) ?? null}
-                  nodeCode={nodeCode} staleAfter={staleAfter}
+                  nodeCode={nodeCode} staleAfter={staleAfter} simulated={options?.runMode === 'SIMULATION'} onChanged={props.onRetry}
                   run={holds.filter(h => h.vehicleId === selectedVehicle.id).sort((a, b) => a.sequence - b.sequence)} />}
           </Panel>
 
@@ -263,9 +263,24 @@ function MonitorScreen(props: {
 
 function VehicleDetail(props: {
   vehicle: Vehicle; reported: VehicleSnapshot | null; nodeCode: (id: number | null) => string;
-  staleAfter: number; run: NodeHold[];
+  staleAfter: number; run: NodeHold[]; simulated?: boolean; onChanged?: () => void;
 }) {
   const r = props.reported;
+  const [stateError, setStateError] = React.useState<string | null>(null);
+  // In simulation a person can put a vehicle into manual, pause it, fault it, or give it back to
+  // the controller, the way a vehicle on site would report it. The simulated vehicle then holds.
+  async function setState(mode: string, status: string) {
+    if (!r) return;
+    setStateError(null);
+    try {
+      await send(opsApi.vehicleState1(REVISION_ID, r.id), 'PUT', {
+        nodeId: r.nodeId, online: true, carrierPresent: r.carrierPresent, source: 'SIMULATED', mode, status,
+      }, '시뮬레이션 상태 변경');
+      props.onChanged?.();
+    } catch (cause) {
+      setStateError(cause instanceof ApiError ? explainDecision(cause.message) : '바꾸지 못했습니다.');
+    }
+  }
   return (
     <div style={{ display: 'grid', gap: 7, fontSize: 12 }}>
       <div style={{ display: 'flex', gap: 7, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -289,6 +304,16 @@ function VehicleDetail(props: {
           ? <span className="muted">없음</span>
           : <span className="mono">{props.run.map(h => props.nodeCode(h.nodeId)).join(' › ')}</span>}
       </div>
+      {props.simulated && r && (
+        <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
+          <span className="hint">시뮬레이션 상태</span>
+          {([['REMOTE', 'IDLE', '원격·대기'], ['MANUAL', 'IDLE', '수동'], ['REMOTE', 'PAUSED', '일시정지'],
+            ['REMOTE', 'ERROR', '에러'], ['REMOTE', 'CHARGING', '충전']] as const).map(([m, s, label]) => (
+            <button key={label} type="button" style={tiny} disabled={!hasWriteToken()} onClick={() => setState(m, s)}>{label}</button>
+          ))}
+          {stateError && <span className="hint" style={{ color: 'var(--crit)' }}>{stateError}</span>}
+        </div>
+      )}
       {r?.source === 'INITIAL_CONFIGURATION' && (
         <p className="hint" style={{ margin: 0 }}>
           아직 아무도 이 차량의 위치를 보고하지 않았습니다. 표시된 값은 설정이며 장비 근거가 아닙니다.

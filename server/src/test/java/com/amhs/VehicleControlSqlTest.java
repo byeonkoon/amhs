@@ -82,6 +82,39 @@ class VehicleControlSqlTest {
 
  // ---- an operator's move ----
 
+ @Test void takingAVehicleOutOfUseTakesBackAMoveThatNeverLeft(){
+  moves.moveTo(SITE,OHT,105L);
+  jdbc.update("UPDATE fleet.vehicle_profile SET enabled=FALSE WHERE site_id=? AND id=?",SITE,OHT);
+  assertThat(moves.evacuateAll(SITE)).anyMatch(s->s.vehicleId()==OHT&&s.decision().equals("VEHICLE_DISABLED"));
+  // The MOVE is withdrawn, so nothing hands it to the vehicle any more.
+  assertThat(outbox.unresolvedForVehicle(SITE,OHT)).isEmpty();
+  assertThat(outbox.claim(SITE,500,20)).noneMatch(c->Long.valueOf(OHT).equals(c.vehicleId()));
+  assertThat(ledger.relocatingVehicleIds(SITE)).doesNotContain(OHT);
+  assertThat(traffic.heldBy(SITE,OHT).stream().map(com.amhs.traffic.NodeHold::nodeId).toList()).containsOnly(118L);
+ }
+
+ @Test void aMoveThatAlreadyLeftKeepsItsRoadUntilTheVehicleHasStopped(){
+  moves.moveTo(SITE,OHT,105L);
+  var sent=outbox.claim(SITE,500,20).stream().filter(c->Long.valueOf(OHT).equals(c.vehicleId())).findFirst().orElseThrow();
+  outbox.settle(sent.commandId(),DeviceChannel.Verdict.delivered(),java.time.Duration.ofSeconds(1));
+  var road=traffic.heldBy(SITE,OHT).stream().map(com.amhs.traffic.NodeHold::nodeId).toList();
+  jdbc.update("UPDATE fleet.vehicle_profile SET enabled=FALSE WHERE site_id=? AND id=?",SITE,OHT);
+  // Sent without an answer: the vehicle may already be on its way, so its road stays.
+  assertThat(moves.evacuateAll(SITE)).anyMatch(s->s.vehicleId()==OHT&&s.decision().equals("VEHICLE_DISABLED_STOPPING"));
+  assertThat(ledger.relocatingVehicleIds(SITE)).contains(OHT);
+  assertThat(traffic.heldBy(SITE,OHT).stream().map(com.amhs.traffic.NodeHold::nodeId).toList()).isEqualTo(road);
+  // Accepted and driving: still kept.
+  outbox.acknowledge(sent.commandId());
+  report(road.get(1),"REMOTE","MOVING");
+  traffic.advanced(SITE,OHT,road.get(1));
+  assertThat(moves.evacuateAll(SITE)).anyMatch(s->s.vehicleId()==OHT&&s.decision().equals("VEHICLE_DISABLED_STOPPING"));
+  // Stopped where it is: the move closes and what lay ahead is freed.
+  report(road.get(1),"REMOTE","IDLE");
+  assertThat(moves.evacuateAll(SITE)).anyMatch(s->s.vehicleId()==OHT&&s.decision().equals("VEHICLE_DISABLED"));
+  assertThat(ledger.relocatingVehicleIds(SITE)).doesNotContain(OHT);
+  assertThat(traffic.heldBy(SITE,OHT).stream().map(com.amhs.traffic.NodeHold::nodeId).toList()).containsOnly(road.get(1));
+ }
+
  @Test void anIdleRemoteVehicleIsSentToTheChosenNodeAndArrives() throws Exception {
   var step=moves.moveTo(SITE,OHT,105L);
   assertThat(step.decision()).isEqualTo("MOVING_TO_TARGET");

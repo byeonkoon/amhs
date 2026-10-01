@@ -97,6 +97,21 @@ class ContinuousMovementSqlTest {
  }
  private List<Long> heldNodes(){ return traffic.heldBy(SITE,OHT).stream().map(NodeHold::nodeId).toList(); }
 
+ @Test void onlyAVehicleThatReportsMovingIsExtended(){
+  long id=assignedOrder("status");
+  var before=heldNodes();
+  // Each of these is "not idle" by the old flag, yet none of them is driving.
+  for(var status:List.of("ERROR","PAUSED","CHARGING","LOADING","UNLOADING","RESET")){
+   tx.execute(s->fleet.report(SITE,REVISION,OHT,new VehicleReport(NEXT,true,true,false,false,"SIMULATED",null,"REMOTE",status)));
+   assertThat(extend(id).decision()).as(status).isEqualTo("VEHICLE_STATUS_"+status);
+   assertThat(outbox.byOrder(SITE,id)).as(status).noneMatch(c->c.commandType().equals("MORE"));
+  }
+  // What it holds is left alone while it is not moving.
+  assertThat(heldNodes()).isEqualTo(before);
+  tx.execute(s->fleet.report(SITE,REVISION,OHT,new VehicleReport(NEXT,true,true,false,false,"SIMULATED",null,"REMOTE","MOVING")));
+  assertThat(extend(id).decision()).isEqualTo("EXTENDED");
+ }
+
  @Test void aMovingVehicleNearTheEndOfItsAuthorityIsExtended(){
   long id=assignedOrder("extend");
   assertThat(heldNodes()).hasSize(2);

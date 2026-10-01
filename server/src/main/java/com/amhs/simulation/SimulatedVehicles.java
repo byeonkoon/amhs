@@ -117,8 +117,18 @@ public class SimulatedVehicles {
   return out;
  }
 
+ /** Statuses in which a vehicle does not drive or transfer until told otherwise. */
+ private static final Set<String> HOLD=Set.of("ERROR","PAUSED","RESET","CHARGING");
+
  private Step act(long siteId,Sim sim,VehicleSnapshot state,TransportOrder order,Map<Long,Long> portNode){
   long at=state.nodeId();
+  // Somebody switched it to manual or semi-auto, or reported it faulted, paused, charging or
+  // resetting: it stays put and keeps saying so until it is reported back to remote and idle.
+  String mode=state.mode()==null?"REMOTE":state.mode();
+  if(!"REMOTE".equals(mode)||HOLD.contains(state.effectiveStatus())){
+   reportAs(siteId,sim.vehicleId(),at,mode,state.effectiveStatus(),sim.carrier());
+   return new Step(sim.vehicleId(),"HELD_"+(!"REMOTE".equals(mode)?mode:state.effectiveStatus()),at);
+  }
   int i=sim.authority().indexOf(at);
   if(i>=0&&i<sim.authority().size()-1){
    long next=sim.authority().get(i+1);
@@ -176,8 +186,11 @@ public class SimulatedVehicles {
  }
  /** Reports the way a vehicle does: remote mode, a status on its own axis, and whether it carries. */
  private VehicleSnapshot report(long siteId,long vehicleId,long nodeId,String status,boolean carrier){
+  return reportAs(siteId,vehicleId,nodeId,"REMOTE",status,carrier);
+ }
+ private VehicleSnapshot reportAs(long siteId,long vehicleId,long nodeId,String mode,String status,boolean carrier){
   long revisionId=ledger.activeRevision(siteId);
   return fleet.report(siteId,revisionId,vehicleId,
-   new VehicleReport(nodeId,true,true,false,carrier,"SIMULATED",null,"REMOTE",status));
+   new VehicleReport(nodeId,true,true,false,carrier,"SIMULATED",null,mode,status));
  }
 }

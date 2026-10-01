@@ -163,8 +163,13 @@ class DeviceOutboxSqlTest {
 
  @Test void withoutAnAdapterNothingLeavesTheSystemAndTheCommandStaysRetryable(){
   long id=order("gateway"); String cmd=name("cmd-gateway");
+  // On real devices, which is what this case is about; the run mode is site state other cases change.
+  String mode=jdbc.queryForObject("SELECT run_mode FROM platform.site_operation WHERE site_id=1",String.class);
+  jdbc.update("UPDATE platform.site_operation SET run_mode='OPERATION' WHERE site_id=1");
   enqueue(id,cmd);
-  var published=gateway.publishPending(1);
+  DeviceGateway.Publication published;
+  try { published=gateway.publishPending(1); }
+  finally { jdbc.update("UPDATE platform.site_operation SET run_mode=? WHERE site_id=1",mode); }
   assertThat(published.claimed()).isPositive();
   assertThat(published.delivered()).isZero();
   var command=reload(id,cmd);

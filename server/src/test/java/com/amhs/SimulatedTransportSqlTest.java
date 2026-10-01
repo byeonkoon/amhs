@@ -80,6 +80,30 @@ class SimulatedTransportSqlTest {
   assertThat(traffic.heldBy(SITE,OHT).stream().map(NodeHold::nodeId).toList()).containsOnly(105L);
  }
 
+ @Test void aVehicleSwitchedToManualOrPausedStaysWhereItIsUntilGivenBack(){
+  simulator.place(SITE,OHT,101L);
+  long id=accept("OHT-C");
+  // Run until it is on its way, then take it out of the controller's hands.
+  for(int i=0;i<20&&fleet.find(SITE,1,OHT).orElseThrow().nodeId()==101L;i++){ sweep.run(SITE,"test",null); simulator.step(SITE); }
+  for(var held:List.of(new String[]{"MANUAL","IDLE"},new String[]{"REMOTE","PAUSED"},new String[]{"REMOTE","ERROR"})){
+   long at=fleet.find(SITE,1,OHT).orElseThrow().nodeId();
+   fleet.report(SITE,1,OHT,new com.amhs.fleet.VehicleReport(at,true,false,false,false,"SIMULATED",null,held[0],held[1]));
+   for(int i=0;i<3;i++){
+    sweep.run(SITE,"test",null);
+    var step=simulator.step(SITE).stream().filter(s->s.vehicleId()==OHT).findFirst().orElseThrow();
+    assertThat(step.action()).startsWith("HELD_");
+    var now=fleet.find(SITE,1,OHT).orElseThrow();
+    assertThat(now.nodeId()).isEqualTo(at);
+    assertThat(now.mode()).isEqualTo(held[0]);
+    assertThat(now.status()).isEqualTo(held[1]);
+   }
+  }
+  // Given back to the controller, it carries on and finishes.
+  long at=fleet.find(SITE,1,OHT).orElseThrow().nodeId();
+  fleet.report(SITE,1,OHT,new com.amhs.fleet.VehicleReport(at,true,false,false,false,"SIMULATED",null,"REMOTE","IDLE"));
+  assertThat(runUntilFinished(id,80).status()).isEqualTo(OrderStatus.COMPLETED);
+ }
+
  @Test void aPickupTheSensorSaysDidNotHappenIsDoneAgain(){
   simulator.place(SITE,OHT,101L);
   long id=accept("OHT-C");

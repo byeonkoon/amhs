@@ -248,6 +248,9 @@ export const opsApi = {
   slots: (unitId: number, rackId: number) =>
     `/api/v1/sites/${SITE_ID}/configuration/equipment/${unitId}/racks/${rackId}/slots`,
   assignments: () => `/api/v1/sites/${SITE_ID}/transport-orders/assignments`,
+  /** Reports a vehicle's state by hand (marked simulated); in simulation the vehicle follows it. */
+  vehicleState1: (revisionId: number, vehicleId: number) =>
+    `/api/v1/sites/${SITE_ID}/maps/${revisionId}/vehicle-state/${vehicleId}`,
   /** An operator sends a vehicle to a node. */
   moveVehicle: (vehicleId: number) => `/api/v1/sites/${SITE_ID}/vehicles/${vehicleId}/move`,
   session: () => `/api/v1/session`,
@@ -378,5 +381,18 @@ export function explainDecision(decision: string): string {
     APPROACH_ROUTE_NO_PATH: '모든 차량이 인수 지점에 도달할 수 없습니다.',
     DELIVERY_ROUTE_NO_PATH: '인수 지점에서 목적지까지 경로가 없습니다.',
   };
-  return map[decision] ?? decision;
+  if (map[decision]) return map[decision];
+  // Reasons that carry the vehicle's reported state after a fixed prefix.
+  const status: Record<string, string> = {
+    ERROR: '에러', PAUSED: '일시정지', CHARGING: '충전', LOADING: '적재', UNLOADING: '하역', RESET: '리셋',
+    MANUAL: '수동', SEMI_AUTO: '반자동',
+  };
+  const said = (s: string) => status[s] ?? s;
+  if (decision.startsWith('VEHICLE_STATUS_'))
+    return `차량이 ${said(decision.slice(15))} 상태를 보고해 연장하지 않았습니다. 이동 중(MOVING)일 때만 연장합니다.`;
+  if (decision.startsWith('HELD_'))
+    return `차량이 ${said(decision.slice(5))} 상태라 시뮬레이터가 움직이지 않았습니다. 원격·대기로 되돌리면 이어서 진행합니다.`;
+  if (decision.endsWith('_STOPPING'))
+    return `${explainDecision(decision.slice(0, -9))} 이미 나간 이동 명령이 있어 차량이 설 때까지 경로를 유지합니다.`;
+  return decision;
 }

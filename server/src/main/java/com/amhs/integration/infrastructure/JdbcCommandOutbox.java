@@ -64,6 +64,19 @@ class JdbcCommandOutbox implements CommandOutbox {
   return claimed.stream().sorted(Comparator.comparingLong(DeviceCommand::id)).toList();
  }
 
+ @Transactional(propagation=Propagation.MANDATORY)
+ public Withdrawal withdrawForVehicle(long siteId,long vehicleId,String reason){
+  var statuses=jdbc.query("SELECT status FROM integration.command_outbox WHERE site_id=? AND vehicle_id=? AND order_id IS NULL"
+   +" ORDER BY id FOR UPDATE",(r,n)->CommandStatus.valueOf(r.getString(1)),siteId,vehicleId);
+  int withdrawn=jdbc.update("UPDATE integration.command_outbox SET status='WITHDRAWN',settled_at=now(),"
+   +"last_outcome='WITHDRAWN',last_error=? WHERE site_id=? AND vehicle_id=? AND order_id IS NULL AND status IN ('PENDING','FAILED')",
+   reason==null?null:reason.length()<=256?reason:reason.substring(0,256),siteId,vehicleId);
+  jdbc.update("UPDATE integration.command_outbox SET withdraw_requested_at=now() WHERE site_id=? AND vehicle_id=?"
+   +" AND order_id IS NULL AND status='DISPATCHING' AND withdraw_requested_at IS NULL",siteId,vehicleId);
+  boolean left=statuses.stream().anyMatch(st->st==CommandStatus.DISPATCHING||st==CommandStatus.SENT);
+  return new Withdrawal(withdrawn,left);
+ }
+
  /**
   * Locks every row of the order without skipping, so a publisher that is claiming one of them right
   * now finishes first and its claim is seen here. Rows that never left are withdrawn; what has left

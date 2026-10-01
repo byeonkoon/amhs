@@ -16,6 +16,10 @@ public record VehicleSnapshot(long id, String code, VehicleType vType, Long node
      * Whether the last report came at or after {@code cutoff}. Configuration alone is never a
      * report: a vehicle nobody has heard from is not somewhere just because it was set up there.
      */
+    /** The status as reported, or derived from the idle flag for a report that did not carry one. */
+    public String effectiveStatus() {
+        return status != null ? status : idle ? "IDLE" : "MOVING";
+    }
     public boolean reportedSince(java.time.OffsetDateTime cutoff) {
         return reportedAt != null && !"INITIAL_CONFIGURATION".equals(source) && !reportedAt.isBefore(cutoff);
     }

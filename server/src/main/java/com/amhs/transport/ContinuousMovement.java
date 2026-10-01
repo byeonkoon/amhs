@@ -74,7 +74,11 @@ public class ContinuousMovement {
   if(!state.online()||!state.remote()) return none(orderId,vehicleId,"VEHICLE_NOT_CONTROLLABLE");
   // MORE lengthens a movement in progress. A stopped vehicle needs a movement command, not an
   // extension of one it is no longer running; resume() gives it that.
-  if(state.idle()) return none(orderId,vehicleId,"VEHICLE_NOT_MOVING");
+  // Only a vehicle that says it is driving can take an extension. Stopped, faulted, paused,
+  // charging, transferring or resetting are all "not moving", whatever the idle flag would suggest.
+  String status=state.effectiveStatus();
+  if(!"MOVING".equals(status))
+   return none(orderId,vehicleId,"IDLE".equals(status)?"VEHICLE_NOT_MOVING":"VEHICLE_STATUS_"+status);
 
   if(!outbox.unresolved(siteId,orderId,"MORE").isEmpty()) return none(orderId,vehicleId,"MORE_OUTSTANDING");
   // Some vehicles say whether they can take a changed destination right now. When the site waits

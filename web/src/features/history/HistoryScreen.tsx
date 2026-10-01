@@ -1,5 +1,5 @@
 import React from 'react';
-import { api, get, type MapData, type OrderEvent, type TransportOrder } from '../../api';
+import { api, ApiError, get, type MapData, type OrderEvent, type TransportOrder } from '../../api';
 import { Chip, Empty } from '../../shell/States';
 
 /**
@@ -11,21 +11,29 @@ export function HistoryScreen({ map }: { map: MapData }) {
   const [selected, setSelected] = React.useState<number | null>(null);
   const [events, setEvents] = React.useState<OrderEvent[] | null>(null);
   const [filter, setFilter] = React.useState<'ALL' | 'COMPLETED' | 'CANCELLED' | 'FAILED'>('ALL');
+  // A failed read is not an empty history: it is said as a failure, with a way to try again, and
+  // whatever was read before stays on screen.
+  const [listError, setListError] = React.useState<string | null>(null);
+  const [eventError, setEventError] = React.useState<string | null>(null);
+  const [reload, setReload] = React.useState(0);
+  const [eventReload, setEventReload] = React.useState(0);
+  const reason = (cause: unknown) => cause instanceof ApiError ? cause.message : '서버에 연결하지 못했습니다.';
 
   React.useEffect(() => {
     const c = new AbortController();
+    setListError(null);
     get<TransportOrder[]>(api.finishedOrders(300), c.signal).then(setOrders)
-      .catch(cause => { if ((cause as Error).name !== 'AbortError') setOrders([]); });
+      .catch(cause => { if ((cause as Error).name !== 'AbortError') setListError(reason(cause)); });
     return () => c.abort();
-  }, []);
+  }, [reload]);
   React.useEffect(() => {
-    if (selected === null) { setEvents(null); return; }
+    if (selected === null) { setEvents(null); setEventError(null); return; }
     const c = new AbortController();
-    setEvents(null);
+    setEvents(null); setEventError(null);
     get<OrderEvent[]>(api.orderEvents(selected), c.signal).then(setEvents)
-      .catch(cause => { if ((cause as Error).name !== 'AbortError') setEvents([]); });
+      .catch(cause => { if ((cause as Error).name !== 'AbortError') setEventError(reason(cause)); });
     return () => c.abort();
-  }, [selected]);
+  }, [selected, eventReload]);
 
   const portCode = (id: number) => map.ports.find(p => p.id === id)?.code ?? String(id);
   const shown = (orders ?? []).filter(o => filter === 'ALL' || o.status === filter);
@@ -46,7 +54,14 @@ export function HistoryScreen({ map }: { map: MapData }) {
             ))}
           </div>
         </div>
-        {orders === null ? <div className="cb"><p className="hint" style={{ margin: 0 }}>불러오는 중…</p></div>
+        {listError && (
+          <div className="cb" style={{ paddingBottom: 0 }}>
+            <p style={{ margin: 0, fontSize: 12 }}><Chip tone="er">조회 실패</Chip> {listError}
+              {orders !== null && ' 아래는 마지막으로 읽은 목록입니다.'}{' '}
+              <button type="button" onClick={() => setReload(v => v + 1)} style={retryStyle}>다시 읽기</button></p>
+          </div>
+        )}
+        {orders === null ? (listError ? null : <div className="cb"><p className="hint" style={{ margin: 0 }}>불러오는 중…</p></div>)
           : shown.length === 0 ? <Empty title="끝난 작업이 없습니다" />
             : (
               <div className="tbl-scroll">
@@ -74,7 +89,10 @@ export function HistoryScreen({ map }: { map: MapData }) {
       {selected !== null && (
         <section className="card">
           <div className="ch"><h2>작업 #{selected} 이력</h2><span className="aux">상태가 바뀐 순서와 사유, 조작 주체</span></div>
-          {events === null ? <div className="cb"><p className="hint" style={{ margin: 0 }}>불러오는 중…</p></div>
+          {eventError ? (
+            <div className="cb"><p style={{ margin: 0, fontSize: 12 }}><Chip tone="er">조회 실패</Chip> {eventError}{' '}
+              <button type="button" onClick={() => setEventReload(v => v + 1)} style={retryStyle}>다시 읽기</button></p></div>
+          ) : events === null ? <div className="cb"><p className="hint" style={{ margin: 0 }}>불러오는 중…</p></div>
             : events.length === 0 ? <Empty title="이력이 없습니다" />
               : (
                 <div className="tbl-scroll">
@@ -99,3 +117,8 @@ export function HistoryScreen({ map }: { map: MapData }) {
     </>
   );
 }
+
+const retryStyle: React.CSSProperties = {
+  border: '1px solid var(--ln2)', background: 'var(--srf)', color: 'var(--ink2)', borderRadius: 4,
+  padding: '1px 8px', fontSize: 11, cursor: 'pointer',
+};

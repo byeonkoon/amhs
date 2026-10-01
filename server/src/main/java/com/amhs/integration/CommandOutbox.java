@@ -35,6 +35,12 @@ public interface CommandOutbox {
     Withdrawal withdraw(long orderId, String reason);
     record Withdrawal(int withdrawn, boolean anyLeft) {}
     /**
+     * The same for a vehicle's commands that belong to no order (moves out of a zone, an operator's
+     * moves): what never left is withdrawn, what is being sent is marked, and whether anything has
+     * left is reported.
+     */
+    Withdrawal withdrawForVehicle(long siteId, long vehicleId, String reason);
+    /**
      * Records what the channel reported for a claimed command. A result never moves a command back:
      * after an acknowledgement it is only recorded, and a command whose withdrawal was asked for
      * during the send is withdrawn if the send failed.

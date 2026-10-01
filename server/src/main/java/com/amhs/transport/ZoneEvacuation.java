@@ -97,8 +97,18 @@ public class ZoneEvacuation {
   // An operator's own move is the operator deciding, so only taking it out of use stops that.
   boolean manual=relocation!=null&&Relocation.MANUAL.equals(relocation.purpose());
   if(!vehicle.enabled()||(!manual&&!vehicle.assignmentEnabled())){
-   if(relocation!=null) ledger.finishRelocation(relocation.id(),"VEHICLE_DISABLED");
-   return none(vehicleId,vehicle.enabled()?"ASSIGNMENT_DISABLED":"VEHICLE_DISABLED");
+   String decision=vehicle.enabled()?"ASSIGNMENT_DISABLED":"VEHICLE_DISABLED";
+   if(relocation!=null){
+    // The move stops here: what never left is taken back and nothing new is sent. A command that
+    // is being sent or went out without an answer yet, or a vehicle not standing idle on a known
+    // node, keeps the move and its road until that is settled and the vehicle has stopped.
+    var withdrawal=outbox.withdrawForVehicle(siteId,vehicleId,decision);
+    boolean stopped=vehicle.nodeId()!=null&&"IDLE".equals(vehicle.effectiveStatus());
+    if(withdrawal.anyLeft()||!stopped) return none(vehicleId,decision+"_STOPPING");
+    ledger.finishRelocation(relocation.id(),decision);
+    traffic.releaseAhead(siteId,vehicleId,vehicle.nodeId(),"MOVE_"+decision);
+   }
+   return none(vehicleId,decision);
   }
   if(vehicle.nodeId()==null) return none(vehicleId,"POSITION_UNKNOWN");
   if(!vehicle.reportedSince(cutoff)) return none(vehicleId,"POSITION_STALE");
