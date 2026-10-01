@@ -1,18 +1,25 @@
 import React from 'react';
 import { MODE_LABEL, STATUS_LABEL, type MapData, type VehicleSnapshot } from '../../api';
 
-const OHT = '#1D6FD8';
-const AGV = '#9A4A9E';
+export const OHT = '#1D6FD8';
+export const AGV = '#9A4A9E';
 const PAD = 900;
 const MIN_SCALE = 1, MAX_SCALE = 12;
 
 /** Status colours: what an operator has to notice first is a fault, then a stop, then work. */
-const STATUS_COLOR: Record<string, string> = {
+export const STATUS_COLOR: Record<string, string> = {
   ERROR: '#C62828', PAUSED: '#E0A100', RESET: '#E0A100', CHARGING: '#2E7D32',
   LOADING: '#EF6C00', UNLOADING: '#EF6C00', MOVING: '#0B7A75', IDLE: '#5B6B7C',
 };
 
 type View = { x: number; y: number; w: number; h: number };
+
+/** Which layer a node belongs to: its port's access type, else the code prefix. Shared by the 2D and 3D views. */
+export function layerOfNode(map: MapData, id: number): 'OHT' | 'AGV' {
+  const port = map.ports.find(p => p.linkedNodeId === id);
+  if (port) return port.accessVehicleType;
+  return map.nodes.find(n => n.id === id)?.code.startsWith('AGV') ? 'AGV' : 'OHT';
+}
 
 /**
  * Layout map. OHT and AGV are drawn as separate layers: solid line for the overhead rail,
@@ -35,11 +42,7 @@ export function MapView(props: {
 }) {
   const { map, vehicles, layer } = props;
   const node = (id: number) => map.nodes.find(n => n.id === id);
-  const typeOfNode = (id: number): 'OHT' | 'AGV' => {
-    const port = map.ports.find(p => p.linkedNodeId === id);
-    if (port) return port.accessVehicleType;
-    return node(id)?.code.startsWith('AGV') ? 'AGV' : 'OHT';
-  };
+  const typeOfNode = (id: number) => layerOfNode(map, id);
   const visible = (t: 'OHT' | 'AGV') => layer === 'all' || layer === t;
 
   const xs = map.nodes.map(n => n.x), ys = map.nodes.map(n => n.y);
@@ -190,7 +193,7 @@ export function MapView(props: {
   );
 }
 
-export function MapLegend() {
+export function MapLegend({ mode = '2D' }: { mode?: '2D' | '3D' }) {
   const swatch = (color: string, label: string) => (
     <span className="li"><svg width="14" height="12"><rect x="1" y="1" width="12" height="10" rx="2" fill="#fff" stroke={color} strokeWidth="2.5" /></svg>{label}</span>
   );
@@ -202,7 +205,9 @@ export function MapLegend() {
       {swatch(STATUS_COLOR.MOVING, '이동')}{swatch(STATUS_COLOR.IDLE, '대기')}{swatch(STATUS_COLOR.LOADING, '적재·하역')}
       {swatch(STATUS_COLOR.CHARGING, '충전')}{swatch(STATUS_COLOR.PAUSED, '일시정지·리셋')}{swatch(STATUS_COLOR.ERROR, '에러')}
       <span className="li"><svg width="12" height="12"><circle cx="6" cy="6" r="5" fill="#FFD54F" stroke="#172231" strokeWidth="1" /></svg>화물 있음</span>
-      <span className="li">R 원격 · S 반자동 · M 수동 · 휠 확대·축소, 끌어서 이동</span>
+      <span className="li">R 원격 · S 반자동 · M 수동 · {mode === '3D'
+        ? '왼쪽 끌기 회전 · 오른쪽 끌기 이동 · 휠 확대·축소'
+        : '휠 확대·축소, 끌어서 이동'}</span>
     </div>
   );
 }

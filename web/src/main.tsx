@@ -12,6 +12,8 @@ import { AppShell, type MenuKey, type ServerState } from './shell/AppShell';
 import { Chip, Empty, Failed, Loading } from './shell/States';
 import { Grid, Panel, Row } from './shell/Panel';
 import { MapLegend, MapView } from './features/map/MapView';
+// three.js is loaded only when somebody switches to 3D.
+const MapView3D = React.lazy(() => import('./features/map/MapView3D'));
 import { ConfigurationScreen } from './features/configuration/ConfigurationScreen';
 import { TransportScreen } from './features/transport/TransportScreen';
 import { TrafficScreen } from './features/traffic/TrafficScreen';
@@ -136,6 +138,14 @@ function MonitorScreen(props: {
 }) {
   const { map, vehicles, state, orders, holds, assignments, deadlocks, options } = props.data;
   const [target, setTarget] = React.useState<number | null>(null);
+  // 2D or 3D, remembered per browser; the 2D plan stays the default.
+  const [mapMode, setMapMode] = React.useState<'2D' | '3D'>(() => {
+    try { return localStorage.getItem('amhs.mapMode') === '3D' ? '3D' : '2D'; } catch { return '2D'; }
+  });
+  const chooseMapMode = (m: '2D' | '3D') => {
+    setMapMode(m);
+    try { localStorage.setItem('amhs.mapMode', m); } catch { /* the choice just is not remembered */ }
+  };
   const nodeCode = (id: number | null) => id === null ? '위치 불명' : map.nodes.find(n => n.id === id)?.code ?? String(id);
   const portCode = (id: number) => map.ports.find(p => p.id === id)?.code ?? String(id);
   const staleAfter = (options?.positionStaleSeconds ?? 10) * 1000;
@@ -174,6 +184,7 @@ function MonitorScreen(props: {
           <div className="ch">
             <h2>설비 레이아웃</h2>
             <div style={{ display: 'flex', gap: 5, marginLeft: 'auto', alignItems: 'center' }}>
+              <ViewSwitch value={mapMode} onChange={chooseMapMode} />
               {(['all', 'OHT', 'AGV'] as const).map(l => (
                 <button key={l} type="button" onClick={() => props.onLayer(l)} aria-pressed={props.layer === l}
                   style={{
@@ -186,10 +197,16 @@ function MonitorScreen(props: {
           </div>
           {map.nodes.length === 0
             ? <Empty title="등록된 지도 노드가 없습니다" hint="이 지도 revision에 노드가 없습니다." />
-            : <MapView map={map} vehicles={state} selectedId={props.selected}
-                onSelect={v => props.onSelect(v.id === props.selected ? null : v.id)} layer={props.layer}
-                targetNodeId={target} onNodeSelect={setTarget} />}
-          <MapLegend />
+            : mapMode === '3D'
+              ? <React.Suspense fallback={<Loading what="3D 보기" />}>
+                  <MapView3D map={map} vehicles={state} selectedId={props.selected}
+                    onSelect={v => props.onSelect(v.id === props.selected ? null : v.id)} layer={props.layer}
+                    targetNodeId={target} onNodeSelect={setTarget} />
+                </React.Suspense>
+              : <MapView map={map} vehicles={state} selectedId={props.selected}
+                  onSelect={v => props.onSelect(v.id === props.selected ? null : v.id)} layer={props.layer}
+                  targetNodeId={target} onNodeSelect={setTarget} />}
+          <MapLegend mode={mapMode} />
         </section>
 
         <div style={{ display: 'grid', gap: 9, alignContent: 'start' }}>
@@ -258,6 +275,27 @@ function MonitorScreen(props: {
         </div>
       </div>
     </>
+  );
+}
+
+/** A two-position switch between the 2D plan and the 3D view. */
+function ViewSwitch(props: { value: '2D' | '3D'; onChange: (v: '2D' | '3D') => void }) {
+  const on = props.value === '3D';
+  return (
+    <button type="button" role="switch" aria-checked={on} aria-label="3D 보기"
+      title={on ? '2D 평면도로 보기' : '3D로 보기'} onClick={() => props.onChange(on ? '2D' : '3D')}
+      style={{
+        position: 'relative', display: 'inline-grid', gridTemplateColumns: '1fr 1fr', alignItems: 'center',
+        width: 74, height: 24, padding: 2, marginRight: 6, border: '1px solid var(--ln2)', borderRadius: 999,
+        background: 'var(--gnd)', cursor: 'pointer', fontSize: 11, fontWeight: 600,
+      }}>
+      <span aria-hidden style={{
+        position: 'absolute', top: 2, bottom: 2, left: on ? 'calc(50% + 1px)' : 2, width: 'calc(50% - 3px)',
+        borderRadius: 999, background: 'var(--acc)', transition: 'left .18s ease',
+      }} />
+      <span style={{ position: 'relative', color: on ? 'var(--mut)' : '#fff' }}>2D</span>
+      <span style={{ position: 'relative', color: on ? '#fff' : 'var(--mut)' }}>3D</span>
+    </button>
   );
 }
 
