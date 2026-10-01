@@ -34,7 +34,11 @@ public interface CommandOutbox {
      */
     Withdrawal withdraw(long orderId, String reason);
     record Withdrawal(int withdrawn, boolean anyLeft) {}
-    /** Records what the channel reported for a claimed command. */
+    /**
+     * Records what the channel reported for a claimed command. A result never moves a command back:
+     * after an acknowledgement it is only recorded, and a command whose withdrawal was asked for
+     * during the send is withdrawn if the send failed.
+     */
     DeviceCommand settle(String commandId, DeviceChannel.Verdict verdict, java.time.Duration retryDelay);
     /** The device acknowledged receipt. Receipt is not execution completion. */
     DeviceCommand acknowledge(String commandId);

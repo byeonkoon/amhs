@@ -76,26 +76,56 @@ class JdbcCommandOutbox implements CommandOutbox {
   int withdrawn=jdbc.update("UPDATE integration.command_outbox SET status='WITHDRAWN',settled_at=now(),"
    +"last_outcome='WITHDRAWN',last_error=? WHERE order_id=? AND status IN ('PENDING','FAILED')",
    reason==null?null:reason.length()<=256?reason:reason.substring(0,256),orderId);
+  // A send already under way cannot be taken back, but its order's wish is kept with it: if that
+  // send proves not to have arrived, it ends there instead of being tried again.
+  jdbc.update("UPDATE integration.command_outbox SET withdraw_requested_at=now()"
+   +" WHERE order_id=? AND status='DISPATCHING' AND withdraw_requested_at IS NULL",orderId);
   boolean left=statuses.stream().anyMatch(s->s==CommandStatus.DISPATCHING||s==CommandStatus.SENT||s==CommandStatus.ACCEPTED);
   return new Withdrawal(withdrawn,left);
  }
 
+ /**
+  * Records what the send reported. Results only ever move a command forward:
+  * <ul>
+  * <li>The acknowledgement and the send's own result travel separately, so the device may already
+  *     have acknowledged the command when the send reports. Its result is then recorded and the
+  *     command stays ACCEPTED; a late failure cannot make a received command unreceived.</li>
+  * <li>A command whose withdrawal was asked for while it was being sent, and which then proves not
+  *     to have reached the device, is withdrawn instead of being queued for another attempt: its
+  *     order no longer wants it.</li>
+  * </ul>
+  */
  @Transactional
  public DeviceCommand settle(String commandId,DeviceChannel.Verdict verdict,Duration retryDelay){
   long seconds=retryDelay==null?0:Math.max(retryDelay.toSeconds(),0);
-  int updated=switch(verdict.outcome()){
+  record Row(CommandStatus status,boolean withdrawRequested){}
+  var rows=jdbc.query("SELECT status,withdraw_requested_at IS NOT NULL FROM integration.command_outbox"
+   +" WHERE command_id=? FOR UPDATE",(r,n)->new Row(CommandStatus.valueOf(r.getString(1)),r.getBoolean(2)),commandId);
+  if(rows.isEmpty()) throw new IllegalStateException("COMMAND_NOT_FOUND");
+  var row=rows.getFirst();
+  if(row.status()==CommandStatus.ACCEPTED){
+   jdbc.update("UPDATE integration.command_outbox SET last_outcome=?,last_error=?,published_at=COALESCE(published_at,now())"
+    +" WHERE command_id=?",verdict.outcome().name()+"_AFTER_ACK",verdict.detail(),commandId);
+   return byCommandId(commandId);
+  }
+  if(row.status()!=CommandStatus.DISPATCHING) throw new IllegalStateException("COMMAND_NOT_DISPATCHING");
+  switch(verdict.outcome()){
    case DELIVERED -> jdbc.update("UPDATE integration.command_outbox SET status='SENT',published_at=now(),"
-    +"last_outcome=?,last_error=? WHERE command_id=? AND status='DISPATCHING'",
-    verdict.outcome().name(),verdict.detail(),commandId);
-   case NOT_DELIVERED -> jdbc.update("UPDATE integration.command_outbox SET status='FAILED',"
-    +"available_at=now()+make_interval(secs=>?),last_outcome=?,last_error=? WHERE command_id=? AND status='DISPATCHING'",
-    (double)seconds,verdict.outcome().name(),verdict.detail(),commandId);
+    +"last_outcome=?,last_error=? WHERE command_id=?",verdict.outcome().name(),verdict.detail(),commandId);
+   case NOT_DELIVERED -> {
+    if(row.withdrawRequested())
+     jdbc.update("UPDATE integration.command_outbox SET status='WITHDRAWN',settled_at=now(),"
+      +"last_outcome=?,last_error=? WHERE command_id=?",verdict.outcome().name(),verdict.detail(),commandId);
+    else
+     jdbc.update("UPDATE integration.command_outbox SET status='FAILED',"
+      +"available_at=now()+make_interval(secs=>?),last_outcome=?,last_error=? WHERE command_id=?",
+      (double)seconds,verdict.outcome().name(),verdict.detail(),commandId);
+   }
    // The status is deliberately left alone: nobody can say whether the device has this command,
    // so it stays out of the claimable set until someone decides.
    case IN_DOUBT -> jdbc.update("UPDATE integration.command_outbox SET last_outcome=?,last_error=?"
-    +" WHERE command_id=? AND status='DISPATCHING'",verdict.outcome().name(),verdict.detail(),commandId);
-  };
-  if(updated==0) throw new IllegalStateException("COMMAND_NOT_DISPATCHING");
+    +" WHERE command_id=?",verdict.outcome().name(),verdict.detail(),commandId);
+  }
   return byCommandId(commandId);
  }
 

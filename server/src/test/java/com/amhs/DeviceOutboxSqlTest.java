@@ -233,4 +233,44 @@ class DeviceOutboxSqlTest {
   // Withdrawal must share the caller's transaction, like enqueue.
   assertThatThrownBy(()->outbox.withdraw(id,"TEST")).isInstanceOf(IllegalTransactionStateException.class);
  }
+
+ @Test void anAcknowledgementThatArrivesBeforeTheSendResultIsNotUndone(){
+  for(var verdict:java.util.List.of(DeviceChannel.Verdict.delivered(),DeviceChannel.Verdict.notDelivered("LINK_DOWN"),
+    DeviceChannel.Verdict.inDoubt("NO_RESPONSE"))){
+   long id=order("ack-first-"+verdict.outcome()); String cmd=name("cmd-ack-first-"+verdict.outcome());
+   enqueue(id,cmd);
+   claim(500,5);
+   outbox.acknowledge(cmd);
+   // The send's own result arrives after the device already said it has the command.
+   var settled=tx.execute(s->outbox.settle(cmd,verdict,Duration.ofSeconds(60)));
+   assertThat(settled.status()).isEqualTo(CommandStatus.ACCEPTED);
+   assertThat(settled.lastOutcome()).isEqualTo(verdict.outcome().name()+"_AFTER_ACK");
+   makeClaimable(cmd);
+   assertThat(claim(500,5)).extracting(DeviceCommand::commandId).doesNotContain(cmd);
+  }
+ }
+
+ @Test void aSendThatFailsAfterItsWithdrawalWasAskedForEndsInsteadOfRetrying(){
+  long id=order("withdraw-mid-send"); String cmd=name("cmd-withdraw-mid-send");
+  enqueue(id,cmd);
+  claim(500,5);
+  // The order stops wanting it while the send is under way.
+  var withdrawal=tx.execute(s->outbox.withdraw(id,"TEST"));
+  assertThat(withdrawal.anyLeft()).isTrue();
+  assertThat(reload(id,cmd).status()).isEqualTo(CommandStatus.DISPATCHING);
+  tx.execute(s->outbox.settle(cmd,DeviceChannel.Verdict.notDelivered("LINK_DOWN"),Duration.ZERO));
+  assertThat(reload(id,cmd).status()).isEqualTo(CommandStatus.WITHDRAWN);
+  makeClaimable(cmd);
+  assertThat(claim(500,5)).extracting(DeviceCommand::commandId).doesNotContain(cmd);
+ }
+
+ @Test void aSendThatArrivesAfterItsWithdrawalWasAskedForIsStillRecordedAsSent(){
+  long id=order("withdraw-but-arrived"); String cmd=name("cmd-withdraw-but-arrived");
+  enqueue(id,cmd);
+  claim(500,5);
+  tx.execute(s->outbox.withdraw(id,"TEST"));
+  // It reached the device anyway; that is a fact the cancel has to deal with, not erase.
+  tx.execute(s->outbox.settle(cmd,DeviceChannel.Verdict.delivered(),Duration.ZERO));
+  assertThat(reload(id,cmd).status()).isEqualTo(CommandStatus.SENT);
+ }
 }

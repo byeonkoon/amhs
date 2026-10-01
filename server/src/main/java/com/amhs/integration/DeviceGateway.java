@@ -45,7 +45,13 @@ public class DeviceGateway {
                 case NOT_DELIVERED -> notDelivered++;
                 case IN_DOUBT -> inDoubt++;
             }
-            outbox.settle(command.commandId(),verdict,retryDelay);
+            try {
+                outbox.settle(command.commandId(),verdict,retryDelay);
+            } catch (IllegalStateException e) {
+                // One command's result that cannot be recorded must not leave the rest of the batch
+                // claimed and unsent-looking; it stays visible in its own state for an operator.
+                log.warn("could not record send result for command {}: {}",command.commandId(),e.getMessage());
+            }
         }
         return new Publication(claimed.size(),delivered,notDelivered,inDoubt);
     }

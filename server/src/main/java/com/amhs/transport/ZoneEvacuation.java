@@ -57,29 +57,42 @@ public class ZoneEvacuation {
   var zoneOf=new HashMap<Long,Long>();
   for(ZoneOccupancy zone:traffic.zones(siteId))
    if(zone.enabled()&&zone.revisionId()==revisionId) for(Long node:zone.nodeIds()) zoneOf.put(node,zone.id());
-  var open=new HashMap<Long,Relocation>();
-  for(var relocation:ledger.openRelocations(siteId)) open.put(relocation.vehicleId(),relocation);
-  var vehicles=fleet.snapshot(siteId,revisionId);
-  var assigned=new HashSet<>(ledger.assignedVehicleIds(siteId));
+  var relocating=new HashSet<>(ledger.relocatingVehicleIds(siteId));
+  var vehicles=fleet.snapshot(siteId,revisionId).stream()
+   .sorted(Comparator.comparingLong(VehicleSnapshot::id)).toList();
   var cutoff=OffsetDateTime.now().minusSeconds(operations.get(siteId).settings().positionStaleSeconds());
 
+  // The read above only picks who to look at. Each one is decided again under its own lock, in
+  // ascending id order like every other vehicle lock, so two passes cannot trap each other.
   var out=new ArrayList<Step>();
   for(var vehicle:vehicles){
-   var relocation=open.get(vehicle.id());
-   Long zone=vehicle.nodeId()==null?null:zoneOf.get(vehicle.nodeId());
-   if(relocation==null&&zone==null) continue;
-   out.add(step(siteId,revisionId,vehicle,relocation,zone,zoneOf.keySet(),assigned,vehicles,cutoff));
+   boolean inZone=vehicle.nodeId()!=null&&zoneOf.containsKey(vehicle.nodeId());
+   if(!inZone&&!relocating.contains(vehicle.id())) continue;
+   out.add(step(siteId,revisionId,vehicle.id(),zoneOf,vehicles,cutoff));
   }
   return out;
  }
 
- private Step step(long siteId,long revisionId,VehicleSnapshot vehicle,Relocation relocation,Long zone,
-                   Set<Long> zoneNodes,Set<Long> assigned,List<VehicleSnapshot> vehicles,OffsetDateTime cutoff){
-  long vehicleId=vehicle.id();
+ private Step step(long siteId,long revisionId,long vehicleId,Map<Long,Long> zoneOf,
+                   List<VehicleSnapshot> vehicles,OffsetDateTime cutoff){
+  // Dispatch takes this same lock before holding a vehicle, so a move out and new work cannot both
+  // claim it: whichever commits first is what the other sees once it gets the lock.
+  fleet.lockForAssignment(siteId,List.of(vehicleId));
+  var vehicle=fleet.find(siteId,revisionId,vehicleId).orElse(null);
+  if(vehicle==null) return none(vehicleId,"VEHICLE_NOT_FOUND");
+  var relocation=ledger.openRelocations(siteId).stream().filter(r->r.vehicleId()==vehicleId).findFirst().orElse(null);
+  Long zone=vehicle.nodeId()==null?null:zoneOf.get(vehicle.nodeId());
+  if(relocation==null&&zone==null) return none(vehicleId,"NOT_IN_ZONE");
   // A vehicle holding an order leaves with that order; a second movement would cross it.
-  if(assigned.contains(vehicleId)){
+  if(ledger.assignedVehicleIds(siteId).contains(vehicleId)){
    if(relocation!=null) ledger.finishRelocation(relocation.id(),"ORDER_TOOK_OVER");
    return none(vehicleId,"HAS_ORDER");
+  }
+  // Taken out of use, or out of automatic work, by somebody: it is not moved on the controller's
+  // own initiative either. It stays where it is until an operator moves it or turns it back on.
+  if(!vehicle.enabled()||!vehicle.assignmentEnabled()){
+   if(relocation!=null) ledger.finishRelocation(relocation.id(),"VEHICLE_DISABLED");
+   return none(vehicleId,vehicle.enabled()?"ASSIGNMENT_DISABLED":"VEHICLE_DISABLED");
   }
   if(vehicle.nodeId()==null) return none(vehicleId,"POSITION_UNKNOWN");
   if(!vehicle.reportedSince(cutoff)) return none(vehicleId,"POSITION_STALE");
@@ -92,7 +105,7 @@ public class ZoneEvacuation {
 
   var map=topology.getMap(siteId,revisionId);
   if(relocation==null){
-   var place=nearestClearPlace(siteId,map,zoneNodes,vehicle,vehicles);
+   var place=nearestClearPlace(siteId,map,zoneOf.keySet(),vehicle,vehicles);
    if(place==null) return none(vehicleId,"NO_PLACE_OUTSIDE");
    relocation=ledger.startRelocation(siteId,revisionId,vehicleId,zone,place.nodeIds(),place.nodeIds().getLast());
   }

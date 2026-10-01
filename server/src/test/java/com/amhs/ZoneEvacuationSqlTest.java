@@ -148,6 +148,16 @@ class ZoneEvacuationSqlTest {
   assertThat(ledger.relocatingVehicleIds(SITE)).doesNotContain(OHT);
  }
 
+ @Test void aVehicleTakenOutOfUseOrOutOfAutomaticWorkIsNotMovedOut(){
+  finishedInTheBay();
+  jdbc.update("UPDATE fleet.vehicle_profile SET enabled=FALSE WHERE site_id=? AND id=?",SITE,OHT);
+  assertThat(stepOf(OHT).decision()).isEqualTo("VEHICLE_DISABLED");
+  jdbc.update("UPDATE fleet.vehicle_profile SET enabled=TRUE,assignment_enabled=FALSE WHERE site_id=? AND id=?",SITE,OHT);
+  assertThat(stepOf(OHT).decision()).isEqualTo("ASSIGNMENT_DISABLED");
+  assertThat(outbox.unresolvedForVehicle(SITE,OHT)).isEmpty();
+  assertThat(ledger.relocatingVehicleIds(SITE)).doesNotContain(OHT);
+ }
+
  @Test void theSiteSweepMovesItOutAfterOfferingNewWorkFirst(){
   finishedInTheBay();
   var pass=sweep.run(SITE,"test",null);

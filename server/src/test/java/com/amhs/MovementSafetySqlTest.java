@@ -98,6 +98,17 @@ class MovementSafetySqlTest {
   assertThat(held(OHT)).containsExactly(119L);
  }
 
+ @Test void aMoveThatFailsAfterTheCancelIsNotTriedAgain(){
+  standAt(119,true);
+  long id=assigned("OHT-C");
+  var move=outbox.claim(SITE,500,20).stream().filter(c->Long.valueOf(id).equals(c.orderId())).findFirst().orElseThrow();
+  assertThat(orders.cancel(SITE,id,"no longer needed","test",null).status()).isEqualTo(OrderStatus.CANCEL_REQUESTED);
+  // The send that was under way then reports it never reached the vehicle.
+  outbox.settle(move.commandId(),DeviceChannel.Verdict.notDelivered("LINK_DOWN"),java.time.Duration.ZERO);
+  assertThat(outbox.byOrder(SITE,id)).extracting(DeviceCommand::status).containsOnly(CommandStatus.WITHDRAWN);
+  assertThat(outbox.claim(SITE,500,20)).noneMatch(c->Long.valueOf(id).equals(c.orderId()));
+ }
+
  // ---- leaving recovery (R2) ----
 
  @Test void aRepeatedCancelConfirmationDoesNotEndARecovery(){

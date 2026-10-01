@@ -73,6 +73,9 @@ public class TransportAssignment {
     "no vehicle could be assigned",true));
 
   fleet.lockForAssignment(siteId,List.of(proposal.vehicleId()));
+  // A move out of a zone takes the same lock, so what it committed is visible from here on.
+  if(ledger.relocatingVehicleIds(siteId).contains(proposal.vehicleId()))
+   throw new TransportRejected("VEHICLE_RELOCATING","vehicle is being moved out of a zone",true);
   // The proposal was made before the lock, so eligibility is checked again underneath it.
   var vehicle=fleet.find(siteId,order.revisionId(),proposal.vehicleId())
    .orElseThrow(()->new TransportRejected("VEHICLE_NOT_FOUND","assigned vehicle disappeared",true));
