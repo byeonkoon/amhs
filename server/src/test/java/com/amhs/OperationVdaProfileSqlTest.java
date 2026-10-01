@@ -35,16 +35,18 @@ class OperationVdaProfileSqlTest {
  }
  private static final String OPTION_JSON="{\"commType\":\"%s\",\"nodeCount\":20,\"moreEnabled\":true,\"moreType\":\"NODE\","
   +"\"moreRemainingNodes\":3,\"moreRemainingPercent\":25,\"autoDispatch\":false,\"commandMaxAttempts\":5,"
-  +"\"commandRetrySeconds\":15,\"positionStaleSeconds\":10}";
+  +"\"commandRetrySeconds\":15,\"positionStaleSeconds\":10,\"moreMinRemainingNodes\":1,"
+  +"\"moreVehicleSignal\":false,\"mergeControl\":\"CONTROLLER\"}";
  private static OperationOptions opt(String commType,int nodeCount){
-  return new OperationOptions(commType,nodeCount,true,"NODE",3,25,false,5,15,10);
+  return new OperationOptions(commType,nodeCount,true,"NODE",3,25,false,5,15,10,1,false,"CONTROLLER");
  }
  private static OperationOptions more(String moreType,int nodeCount,boolean enabled,int nodes,int percent){
-  return new OperationOptions("PC",nodeCount,enabled,moreType,nodes,percent,false,5,15,10);
+  return new OperationOptions("PC",nodeCount,enabled,moreType,nodes,percent,false,5,15,10,Math.min(1,nodes),false,"CONTROLLER");
  }
  private static OperationOptions with(OperationOptions o,String commType){
   return new OperationOptions(commType,o.nodeCount(),o.moreEnabled(),o.moreType(),o.moreRemainingNodes(),
-   o.moreRemainingPercent(),o.autoDispatch(),o.commandMaxAttempts(),o.commandRetrySeconds(),o.positionStaleSeconds());
+   o.moreRemainingPercent(),o.autoDispatch(),o.commandMaxAttempts(),o.commandRetrySeconds(),o.positionStaleSeconds(),
+   o.moreMinRemainingNodes(),o.moreVehicleSignal(),o.mergeControl());
  }
  private void setComm(String commType){
   options.update(1,options.get(1).version(),with(options.get(1).settings(),commType));
@@ -89,15 +91,27 @@ class OperationVdaProfileSqlTest {
  @Test void commandRetryAndFreshnessBoundsAreEnforced(){
   long v=options.get(1).version();
   var base=opt("PC",20);
-  rejected(()->options.update(1,v,new OperationOptions("PC",20,true,"NODE",3,25,false,0,15,10)),
+  rejected(()->options.update(1,v,new OperationOptions("PC",20,true,"NODE",3,25,false,0,15,10,1,false,"CONTROLLER")),
    422,"INVALID_COMMAND_MAX_ATTEMPTS");
-  rejected(()->options.update(1,v,new OperationOptions("PC",20,true,"NODE",3,25,false,5,0,10)),
+  rejected(()->options.update(1,v,new OperationOptions("PC",20,true,"NODE",3,25,false,5,0,10,1,false,"CONTROLLER")),
    422,"INVALID_COMMAND_RETRY_SECONDS");
-  rejected(()->options.update(1,v,new OperationOptions("PC",20,true,"NODE",3,25,false,5,15,0)),
+  rejected(()->options.update(1,v,new OperationOptions("PC",20,true,"NODE",3,25,false,5,15,0,1,false,"CONTROLLER")),
    422,"INVALID_POSITION_STALE_SECONDS");
-  var tuned=new OperationOptions("PC",20,true,"NODE",3,25,true,3,30,20);
+  var tuned=new OperationOptions("PC",20,true,"NODE",3,25,true,3,30,20,2,true,"VEHICLE_SIGNAL");
   assertThat(options.update(1,v,tuned).settings()).isEqualTo(tuned);
   assertThat(base.autoDispatch()).isFalse();
+ }
+ @Test void moreFloorAndMergeControlAreBounded(){
+  long v=options.get(1).version();
+  rejected(()->options.update(1,v,new OperationOptions("PC",20,true,"NODE",3,25,false,5,15,10,-1,false,"CONTROLLER")),
+   422,"INVALID_MORE_MIN_REMAINING_NODES");
+  // A floor above the trigger would leave no count at which MORE could be sent.
+  rejected(()->options.update(1,v,new OperationOptions("PC",20,true,"NODE",3,25,false,5,15,10,4,false,"CONTROLLER")),
+   422,"MORE_MIN_ABOVE_TRIGGER");
+  rejected(()->options.update(1,v,new OperationOptions("PC",20,true,"NODE",3,25,false,5,15,10,1,false,"LIGHTS")),
+   422,"INVALID_MERGE_CONTROL");
+  var stored=new OperationOptions("PC",20,true,"NODE",3,25,false,5,15,10,3,true,"VEHICLE_SIGNAL");
+  assertThat(options.update(1,v,stored).settings()).isEqualTo(stored);
  }
  @Test void runningSiteRejectsOptionChanges(){
   jdbc.update("UPDATE platform.site_operation SET mode='RUNNING' WHERE site_id=1");

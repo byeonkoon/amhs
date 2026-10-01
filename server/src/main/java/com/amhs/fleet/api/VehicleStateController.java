@@ -28,7 +28,7 @@ class VehicleStateController {
         // Only a device may claim to be a device. Everything entered by hand is marked simulated.
         var source="DEVICE".equals(report.source())?"DEVICE":"SIMULATED";
         var stored=fleet.report(siteId,revisionId,vehicleId,new VehicleReport(report.nodeId(),report.online(),
-            report.remote(),report.idle(),report.carrierPresent(),source));
+            report.remote(),report.idle(),report.carrierPresent(),source,report.destinationChangeEnabled()));
         // An arrival further along is the only thing that frees the nodes behind it, so the
         // release happens here, with the evidence, rather than on a timer somewhere else.
         var progress=stored.nodeId()==null?null:traffic.advanced(siteId,vehicleId,stored.nodeId());

@@ -99,6 +99,26 @@ export function SystemOptionsScreen({ session }: { session: Session }) {
           <input type="number" style={field} value={draft.moreRemainingPercent} min={1} max={99} disabled={!mayChange}
             onChange={e => set({ moreRemainingPercent: Number(e.target.value) })} />
         </Field>
+        <Field label="연장 하한 (노드)"
+          note="허가 끝에서 최종 목적지까지 이 수보다 적게 남으면 연장하지 않고 세웁니다. 정지 노드에서는 하한과 무관하게 섭니다. 0~99, 남은 노드 수 이하.">
+          <input type="number" style={field} value={draft.moreMinRemainingNodes} min={0} max={99} disabled={!mayChange}
+            onChange={e => set({ moreMinRemainingNodes: Number(e.target.value) })} />
+        </Field>
+        <Field label="차량 변경 가능 신호"
+          note="켜면 차량이 목적지 변경 가능 신호를 줄 때만 연장을 보냅니다. 끄면 제어기가 남은 거리만 보고 보냅니다.">
+          <input type="checkbox" checked={draft.moreVehicleSignal} disabled={!mayChange}
+            onChange={e => set({ moreVehicleSignal: e.target.checked })} />
+        </Field>
+      </Panel>
+
+      <Panel id="sys-merge" title="합류" aux="두 길이 만나는 노드에서 누가 먼저 갈지" padded>
+        <Field label="합류 판단"
+          note="CONTROLLER는 제어기가 먼저 요청한 차량을 먼저 보냅니다. VEHICLE_SIGNAL은 신호등 등으로 차량이 판단하는 방식을 위해 남겨 둔 값이며, 이때 제어기는 노드 점유만 봅니다.">
+          <select style={field} value={draft.mergeControl} disabled={!mayChange}
+            onChange={e => set({ mergeControl: e.target.value as OperationOptions['mergeControl'] })}>
+            {['CONTROLLER', 'VEHICLE_SIGNAL'].map(v => <option key={v} value={v}>{v}</option>)}
+          </select>
+        </Field>
       </Panel>
 
       <Panel id="sys-dispatch" title="배차" aux="실행 스윕이 대기 작업을 맡을지" padded>

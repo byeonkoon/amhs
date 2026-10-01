@@ -17,6 +17,15 @@ public interface TransportLedger {
  long assign(long orderId,long vehicleId,java.util.List<Long> routeNodeIds);
  /** The route this order was assigned against, empty when it has none. */
  List<Long> plannedRoute(long orderId);
+ /**
+  * Index of the vehicle's position in the planned route. A route may pass the same node twice
+  * (a lap round a full zone), so the position is found from here forward, never from the start.
+  */
+ int routeCursor(long orderId);
+ /** Moves the cursor forward; never back. */
+ void moveRouteCursor(long orderId,int cursor);
+ /** Replaces what lies ahead in the route, keeping the cursor. */
+ void replaceRoute(long orderId,java.util.List<Long> routeNodeIds);
  Optional<AssignmentView> activeAssignment(long siteId,long orderId);
  /** Every vehicle currently held at this site, with the order holding it. */
  List<AssignmentView> activeAssignments(long siteId);

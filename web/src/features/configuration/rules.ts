@@ -123,6 +123,9 @@ export function explainCode(code: string): string {
     INVALID_MORE_REMAINING_NODES: 'MORE 남은 노드 수는 1~99 사이여야 합니다.',
     MORE_NODES_NOT_BELOW_NODE_COUNT: 'MORE 남은 노드 수는 허가 노드 수보다 작아야 합니다.',
     INVALID_MORE_REMAINING_PERCENT: 'MORE 남은 거리 비율은 1~99% 사이여야 합니다.',
+    INVALID_MORE_MIN_REMAINING_NODES: 'MORE 연장 하한은 0~99 사이여야 합니다.',
+    MORE_MIN_ABOVE_TRIGGER: 'MORE 연장 하한은 남은 노드 수보다 클 수 없습니다.',
+    INVALID_MERGE_CONTROL: '합류 판단은 CONTROLLER 또는 VEHICLE_SIGNAL입니다.',
     SITE_NOT_IN_MAINTENANCE: '유지보수 상태에서만 설정을 변경할 수 있습니다.',
   };
   return map[code] ?? code;

@@ -18,12 +18,14 @@ class JdbcTrafficControl implements TrafficControl {
 
   lockInAscendingIdOrder(siteId,wanted);
   var holders=holdersOf(wanted);
-  var usable=enabledAmong(siteId,revisionId,wanted);
+  var nodes=attributesOf(siteId,revisionId,wanted);
+  boolean controllerDecidesMerges="CONTROLLER".equals(mergeControl(siteId));
 
   var granted=new ArrayList<Long>();
-  Long blockedNode=null,blockedBy=null; String reason=null;
+  Long blockedNode=null,blockedBy=null; String reason=null; boolean stopped=false;
   int sequence=nextSequence(siteId,vehicleId);
-  for(Long node:wanted){
+  for(int i=0;i<wanted.size();i++){
+   Long node=wanted.get(i);
    Long holder=holders.get(node);
    boolean mine=holder!=null&&holder==vehicleId;
    if(holder!=null&&!mine){
@@ -33,20 +35,44 @@ class JdbcTrafficControl implements TrafficControl {
     reason=granted.isEmpty()?"POSITION_HELD_BY_OTHER_VEHICLE":"NODE_HELD_BY_OTHER_VEHICLE";
     break;
    }
-   if(!usable.contains(node)){ blockedNode=node; reason="NODE_NOT_AVAILABLE"; break; }
+   var attributes=nodes.get(node);
+   if(attributes==null||!attributes.enabled()){ blockedNode=node; reason="NODE_NOT_AVAILABLE"; break; }
+   // The node the vehicle stands on, and anything it already holds, is never refused for being a
+   // merge point or inside a zone: refusing what it already has would only strand it.
+   if(i>0&&!mine){
+    var previous=nodes.get(wanted.get(i-1));
+    Long zone=attributes.zoneId();
+    if(zone!=null&&!zone.equals(previous==null?null:previous.zoneId())&&!holdsInZone(vehicleId,zone)){
+     var refusal=zoneRefusal(siteId,zone,vehicleId);
+     if(refusal!=null){ blockedNode=node; reason=refusal; break; }
+    }
+    if(controllerDecidesMerges&&attributes.mergePoint()){
+     Long earlier=earlierWaiter(siteId,node,vehicleId);
+     if(earlier!=null){ blockedNode=node; blockedBy=earlier; reason="MERGE_EARLIER_REQUEST"; break; }
+    }
+   }
    if(!mine){
     jdbc.update("INSERT INTO traffic.node_reservation(site_id,revision_id,node_id,vehicle_id,order_id,sequence)"
      +" VALUES(?,?,?,?,?,?)",siteId,revisionId,node,vehicleId,orderId,sequence++);
    }
    granted.add(node);
+   // A stop node ends the run: the vehicle halts there and is given the rest once it has. The
+   // node it already stands on is the exception, or it could never leave a stop node again.
+   if(i>0&&attributes.stopNode()){ stopped=i<wanted.size()-1; break; }
   }
-  boolean complete=blockedNode==null;
-  if(complete) jdbc.update("DELETE FROM traffic.reservation_wait WHERE site_id=? AND vehicle_id=?",siteId,vehicleId);
-  else jdbc.update("INSERT INTO traffic.reservation_wait(site_id,vehicle_id,wanted_node_id,blocked_by_vehicle_id)"
+  if(blockedNode==null){
+   jdbc.update("DELETE FROM traffic.reservation_wait WHERE site_id=? AND vehicle_id=?",siteId,vehicleId);
+   return new ReservationGrant(vehicleId,granted,!stopped,null,null,stopped?"STOP_NODE":null);
+  }
+  // The first refusal for a node is what "asked first" means. Asking again for the same node
+  // keeps that time; asking for a different node starts a new wait.
+  jdbc.update("INSERT INTO traffic.reservation_wait(site_id,vehicle_id,wanted_node_id,blocked_by_vehicle_id)"
    +" VALUES(?,?,?,?) ON CONFLICT(site_id,vehicle_id) DO UPDATE SET"
-   +" wanted_node_id=EXCLUDED.wanted_node_id,blocked_by_vehicle_id=EXCLUDED.blocked_by_vehicle_id,since=now()",
+   +" since=CASE WHEN traffic.reservation_wait.wanted_node_id=EXCLUDED.wanted_node_id"
+   +"  THEN traffic.reservation_wait.since ELSE now() END,"
+   +" wanted_node_id=EXCLUDED.wanted_node_id,blocked_by_vehicle_id=EXCLUDED.blocked_by_vehicle_id,seen_at=now()",
    siteId,vehicleId,blockedNode,blockedBy);
-  return new ReservationGrant(vehicleId,granted,complete,blockedNode,blockedBy,reason);
+  return new ReservationGrant(vehicleId,granted,false,blockedNode,blockedBy,reason);
  }
 
  @Transactional
@@ -64,6 +90,9 @@ class JdbcTrafficControl implements TrafficControl {
 
  @Transactional
  public int releaseAhead(long siteId,long vehicleId,Long positionNodeId,String reason){
+  // Whatever the vehicle was waiting for, it no longer wants it. A stale wait would keep its place
+  // in the queue at a merge point long after it stopped asking.
+  jdbc.update("DELETE FROM traffic.reservation_wait WHERE site_id=? AND vehicle_id=?",siteId,vehicleId);
   // Nobody knows where it is, so every node in its run is somewhere it might be standing.
   if(positionNodeId==null) return 0;
   var holds=heldBy(siteId,vehicleId);
@@ -82,6 +111,20 @@ class JdbcTrafficControl implements TrafficControl {
  public List<NodeHold> heldBy(long siteId,long vehicleId){
   return jdbc.query(SELECT+" WHERE site_id=? AND vehicle_id=? AND released_at IS NULL ORDER BY sequence",
    MAPPER,siteId,vehicleId);
+ }
+
+ @Transactional(readOnly=true)
+ public List<ZoneOccupancy> zones(long siteId){
+  record Row(long id,long revisionId,String code,int capacity,boolean enabled){}
+  var rows=jdbc.query("SELECT id,revision_id,code,capacity,enabled FROM topology.zone WHERE site_id=? ORDER BY id",
+   (r,n)->new Row(r.getLong(1),r.getLong(2),r.getString(3),r.getInt(4),r.getBoolean(5)),siteId);
+  var out=new ArrayList<ZoneOccupancy>();
+  for(var z:rows){
+   var nodeIds=jdbc.query("SELECT node_id FROM topology.zone_node WHERE zone_id=? ORDER BY node_id",
+    (r,n)->r.getLong(1),z.id());
+   out.add(new ZoneOccupancy(z.id(),z.revisionId(),z.code(),z.capacity(),z.enabled(),nodeIds,vehiclesIn(siteId,z.id(),null)));
+  }
+  return out;
  }
 
  @Transactional(readOnly=true)
@@ -158,12 +201,69 @@ class JdbcTrafficControl implements TrafficControl {
     (r,n)->r.getLong(1),id).forEach(v->out.put(id,v));
   return out;
  }
- private Set<Long> enabledAmong(long siteId,long revisionId,List<Long> nodeIds){
-  var out=new HashSet<Long>();
+
+ private record NodeAttributes(boolean enabled,boolean stopNode,boolean mergePoint,Long zoneId){}
+ /** A node missing from this revision comes back absent, which the caller treats as not available. */
+ private Map<Long,NodeAttributes> attributesOf(long siteId,long revisionId,List<Long> nodeIds){
+  var out=new HashMap<Long,NodeAttributes>();
   for(Long id:nodeIds)
-   out.addAll(jdbc.query("SELECT id FROM topology.node WHERE site_id=? AND revision_id=? AND id=? AND enabled",
-    (r,n)->r.getLong(1),siteId,revisionId,id));
+   jdbc.query("SELECT n.enabled,n.stop_node,n.merge_point,z.id FROM topology.node n"
+    +" LEFT JOIN topology.zone_node zn ON zn.node_id=n.id"
+    +" LEFT JOIN topology.zone z ON z.id=zn.zone_id AND z.enabled"
+    +" WHERE n.site_id=? AND n.revision_id=? AND n.id=?",
+    (r,n)->new NodeAttributes(r.getBoolean(1),r.getBoolean(2),r.getBoolean(3),r.getObject(4)==null?null:r.getLong(4)),
+    siteId,revisionId,id).forEach(a->out.put(id,a));
   return out;
+ }
+ private String mergeControl(long siteId){
+  var rows=jdbc.query("SELECT merge_control FROM platform.site_operation WHERE site_id=?",(r,n)->r.getString(1),siteId);
+  return rows.isEmpty()?"CONTROLLER":rows.getFirst();
+ }
+ /**
+  * Entering a full zone is refused. The zone row is locked first so two vehicles cannot both see
+  * the last free place and both take it. Every request takes node locks before zone locks, so the
+  * two kinds of lock cannot form a cycle between requests.
+  */
+ private String zoneRefusal(long siteId,long zoneId,long vehicleId){
+  var capacity=jdbc.query("SELECT capacity FROM topology.zone WHERE id=? AND site_id=? FOR UPDATE",
+   (r,n)->r.getInt(1),zoneId,siteId);
+  if(capacity.isEmpty()) return null;
+  return vehiclesIn(siteId,zoneId,vehicleId).size()>=capacity.getFirst()?"ZONE_FULL":null;
+ }
+ private boolean holdsInZone(long vehicleId,long zoneId){
+  Integer count=jdbc.queryForObject("SELECT count(*) FROM traffic.node_reservation r"
+   +" JOIN topology.zone_node zn ON zn.node_id=r.node_id"
+   +" WHERE r.vehicle_id=? AND r.released_at IS NULL AND zn.zone_id=?",Integer.class,vehicleId,zoneId);
+  return count!=null&&count>0;
+ }
+ /**
+  * Who counts against the capacity: a vehicle standing in the zone, or one already permitted to
+  * occupy any of its nodes. Counting only positions would let two vehicles be admitted before
+  * either had arrived.
+  */
+ private List<Long> vehiclesIn(long siteId,long zoneId,Long except){
+  return jdbc.query("SELECT DISTINCT v FROM ("
+   +" SELECT r.vehicle_id v FROM traffic.node_reservation r JOIN topology.zone_node zn ON zn.node_id=r.node_id"
+   +"  WHERE r.site_id=? AND r.released_at IS NULL AND zn.zone_id=?"
+   +" UNION SELECT s.vehicle_id FROM fleet.vehicle_state s JOIN topology.zone_node zn ON zn.node_id=s.node_id"
+   +"  WHERE s.site_id=? AND zn.zone_id=?) x WHERE v<>COALESCE(?,-1) ORDER BY v",
+   (r,n)->r.getLong(1),siteId,zoneId,siteId,zoneId,except);
+ }
+ /**
+  * First come first served at a merge point: another vehicle that was refused this node before this
+  * one asked, and is still asking, goes first. A wait nobody has renewed within the site's
+  * freshness window is no longer anyone waiting.
+  */
+ private Long earlierWaiter(long siteId,long nodeId,long vehicleId){
+  var rows=jdbc.query("SELECT w.vehicle_id FROM traffic.reservation_wait w"
+   +" JOIN platform.site_operation o ON o.site_id=w.site_id"
+   +" WHERE w.site_id=? AND w.wanted_node_id=? AND w.vehicle_id<>?"
+   +"  AND w.seen_at>=now()-make_interval(secs=>o.position_stale_seconds)"
+   +"  AND w.since<COALESCE((SELECT m.since FROM traffic.reservation_wait m"
+   +"   WHERE m.site_id=? AND m.vehicle_id=? AND m.wanted_node_id=?),'infinity'::timestamptz)"
+   +" ORDER BY w.since,w.vehicle_id LIMIT 1",
+   (r,n)->r.getLong(1),siteId,nodeId,vehicleId,siteId,vehicleId,nodeId);
+  return rows.isEmpty()?null:rows.getFirst();
  }
  private int nextSequence(long siteId,long vehicleId){
   Integer max=jdbc.queryForObject("SELECT COALESCE(MAX(sequence),0) FROM traffic.node_reservation"

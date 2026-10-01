@@ -140,6 +140,27 @@ class JdbcTransportLedger implements TransportLedger {
  }
 
  @Transactional(readOnly=true)
+ public int routeCursor(long orderId){
+  var rows=jdbc.query("SELECT route_cursor FROM transport.assignment"
+   +" WHERE order_id=? AND released_at IS NULL ORDER BY id DESC LIMIT 1",(r,n)->r.getInt(1),orderId);
+  return rows.isEmpty()?0:rows.getFirst();
+ }
+
+ /** The cursor only moves forward: a report from behind the vehicle's known progress changes nothing. */
+ @Transactional(propagation=Propagation.MANDATORY)
+ public void moveRouteCursor(long orderId,int cursor){
+  jdbc.update("UPDATE transport.assignment SET route_cursor=? WHERE order_id=? AND released_at IS NULL"
+   +" AND route_cursor<?",cursor,orderId,cursor);
+ }
+
+ /** The cursor is kept: a replacement only ever changes what lies ahead of the vehicle. */
+ @Transactional(propagation=Propagation.MANDATORY)
+ public void replaceRoute(long orderId,List<Long> routeNodeIds){
+  jdbc.update("UPDATE transport.assignment SET route_node_ids=? WHERE order_id=? AND released_at IS NULL",
+   routeNodeIds.toArray(Long[]::new),orderId);
+ }
+
+ @Transactional(readOnly=true)
  public Optional<AssignmentView> activeAssignment(long siteId,long orderId){
   var rows=jdbc.query("SELECT a.id,a.order_id,a.vehicle_id,a.assigned_at,a.released_at,a.release_reason"
    +" FROM transport.assignment a JOIN transport.order o ON o.id=a.order_id"

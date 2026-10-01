@@ -6,6 +6,7 @@ import {
   api, cfgApi, freshness, get, getAs, opsApi,
   type AssignmentView, type Cfg, type Deadlock, type DeviceCommand, type MapData, type NodeHold,
   type OperationOptions, type Session, type TransportOrder, type Vehicle, type VehicleSnapshot,
+  type ZoneOccupancy,
 } from './api';
 import { AppShell, type MenuKey, type ServerState } from './shell/AppShell';
 import { Chip, Empty, Failed, Loading } from './shell/States';
@@ -24,7 +25,7 @@ const ANONYMOUS: Session = { authenticated: false, code: 'anonymous', role: 'VIE
 type Loaded = {
   map: MapData; vehicles: Vehicle[]; orders: TransportOrder[]; state: VehicleSnapshot[];
   holds: NodeHold[]; deadlocks: Deadlock[]; inDoubt: DeviceCommand[];
-  assignments: AssignmentView[]; options: OperationOptions | null;
+  assignments: AssignmentView[]; options: OperationOptions | null; zones: ZoneOccupancy[];
 };
 
 /** One failing read must not blank the whole screen, so optional data falls back to empty. */
@@ -55,9 +56,10 @@ function App() {
       softly(get<DeviceCommand[]>(opsApi.inDoubt(), signal), [] as DeviceCommand[]),
       softly(get<AssignmentView[]>(opsApi.assignments(), signal), [] as AssignmentView[]),
       softly(get<Cfg<OperationOptions>>(cfgApi.system(), signal).then(r => r.settings), null),
+      softly(get<ZoneOccupancy[]>(opsApi.zones(), signal), [] as ZoneOccupancy[]),
     ])
-      .then(([map, vehicles, orders, state, holds, deadlocks, inDoubt, assignments, options]) => {
-        setData({ map, vehicles, orders, state, holds, deadlocks, inDoubt, assignments, options });
+      .then(([map, vehicles, orders, state, holds, deadlocks, inDoubt, assignments, options, zones]) => {
+        setData({ map, vehicles, orders, state, holds, deadlocks, inDoubt, assignments, options, zones });
         setLoadedAt(new Date());
       })
       .catch(cause => { if ((cause as Error).name !== 'AbortError') setError(cause); });
@@ -84,7 +86,8 @@ function App() {
                   ? <TransportScreen orders={data.orders} map={data.map} vehicles={data.state}
                       loadedAt={loadedAt} onRetry={retry} />
                   : menu === 'traffic'
-                    ? <TrafficScreen map={data.map} holds={data.holds} deadlocks={data.deadlocks} vehicles={data.state} />
+                    ? <TrafficScreen map={data.map} holds={data.holds} deadlocks={data.deadlocks} vehicles={data.state}
+                        zones={data.zones} />
                     : menu === 'diagnostics'
                       ? <DiagnosticsScreen map={data.map} revisionId={REVISION_ID} vehicles={data.state}
                           inDoubt={data.inDoubt} onChanged={retry} />

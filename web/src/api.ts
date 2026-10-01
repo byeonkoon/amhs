@@ -1,4 +1,11 @@
-export type Node = { id: number; code: string; x: number; y: number; enabled: boolean };
+/**
+ * stopNode: a movement authority ends here and is never renewed past it, so the vehicle halts.
+ * mergePoint: two lines join here and the controller lets the vehicle that asked first go first.
+ */
+export type Node = {
+  id: number; code: string; x: number; y: number; enabled: boolean;
+  stopNode?: boolean; mergePoint?: boolean;
+};
 export type Edge = { id: number; fromNodeId: number; toNodeId: number; cost: number; enabled: boolean };
 export type Port = { id: number; code: string; portType: string; accessVehicleType: 'OHT' | 'AGV'; linkedNodeId: number };
 export type MapData = { siteId: number; revisionId: number; nodes: Node[]; edges: Edge[]; ports: Port[] };
@@ -76,6 +83,12 @@ export type OperationOptions = {
   commType: 'PC' | 'PLC' | 'MQTT'; nodeCount: number;
   moreEnabled: boolean; moreType: 'NODE' | 'DISTANCE'; moreRemainingNodes: number; moreRemainingPercent: number;
   autoDispatch: boolean; commandMaxAttempts: number; commandRetrySeconds: number; positionStaleSeconds: number;
+  /** Below this many nodes left before the end of the route, the vehicle stops instead of being renewed. */
+  moreMinRemainingNodes: number;
+  /** When on, a renewal is sent only while the vehicle says it can accept a changed destination. */
+  moreVehicleSignal: boolean;
+  /** Who decides who goes first at a merge point: this controller, or the vehicle (signal) later on. */
+  mergeControl: 'CONTROLLER' | 'VEHICLE_SIGNAL';
 };
 /** Topic version and JSON version are separate values; actions are sent at the pickup and drop ports. */
 export type VdaProfileSettings = {
@@ -128,6 +141,8 @@ export type VehicleSnapshot = {
   source: 'INITIAL_CONFIGURATION' | 'SIMULATED' | 'DEVICE';
   /** Null until something reports, which is different from having reported a while ago. */
   reportedAt: string | null;
+  /** What the vehicle last said about accepting a new destination; null when it never said. */
+  destinationChangeEnabled?: boolean | null;
 };
 
 /** How current a reported position is, against the site's configured threshold. */
@@ -154,6 +169,11 @@ export type NodeHold = {
 };
 /** A closed chain of vehicles, each waiting for a node the next one holds. */
 export type Deadlock = { vehicleIds: number[]; wantedNodeIds: number[] };
+/** A set of nodes that admits at most `capacity` vehicles; vehicleIds are those counted inside it now. */
+export type ZoneOccupancy = {
+  id: number; revisionId: number; code: string; capacity: number; enabled: boolean;
+  nodeIds: number[]; vehicleIds: number[];
+};
 
 export type CommandStatus = 'PENDING' | 'DISPATCHING' | 'SENT' | 'ACCEPTED' | 'FAILED';
 export type DeviceCommand = {
@@ -179,12 +199,13 @@ export const opsApi = {
   reservations: (vehicleId?: number) =>
     `/api/v1/sites/${SITE_ID}/traffic/reservations${vehicleId === undefined ? '' : `?vehicleId=${vehicleId}`}`,
   deadlocks: () => `/api/v1/sites/${SITE_ID}/traffic/deadlocks`,
+  zones: () => `/api/v1/sites/${SITE_ID}/traffic/zones`,
   inDoubt: (limit = 50) => `/api/v1/sites/${SITE_ID}/device-commands/in-doubt?limit=${limit}`,
   orderCommands: (orderId: number) => `/api/v1/sites/${SITE_ID}/transport-orders/${orderId}/device-commands`,
   orders: () => `/api/v1/sites/${SITE_ID}/transport-orders`,
   assign: (orderId: number) => `/api/v1/sites/${SITE_ID}/transport-orders/${orderId}/assignment`,
   cancel: (orderId: number) => `/api/v1/sites/${SITE_ID}/transport-orders/${orderId}/cancel`,
-  extendAll: () => `/api/v1/sites//movement-authority`,
+  extendAll: () => `/api/v1/sites/${SITE_ID}/movement-authority`,
   publish: () => `/api/v1/sites/${SITE_ID}/device-commands/publish`,
   sweep: () => `/api/v1/sites/${SITE_ID}/operation-sweep`,
   nodes: (revisionId: number) => `/api/v1/sites/${SITE_ID}/configuration/topology/${revisionId}/nodes`,
@@ -198,7 +219,9 @@ export const opsApi = {
 };
 
 /** A node's editable parameters. Its revision and the segments reaching it are structure, not these. */
-export type NodeSettings = { code: string; xMm: number; yMm: number; enabled: boolean };
+export type NodeSettings = {
+  code: string; xMm: number; yMm: number; enabled: boolean; stopNode: boolean; mergePoint: boolean;
+};
 /** A segment's editable parameters. Endpoints are what the segment is, so they are read-only here. */
 export type EdgeSettings = { fromNodeId: number; toNodeId: number; cost: number; enabled: boolean };
 
@@ -225,6 +248,8 @@ export const ROLE_LABEL: Record<Role, string> = {
 export type Publication = { claimed: number; delivered: number; notDelivered: number; inDoubt: number };
 export type SweepResult = {
   autoDispatch: boolean; assigned: number[]; skipped: { orderId: number; reason: string }[];
+  /** Vehicles that had halted at the end of their authority and were sent the next stretch. */
+  resumed: Extension[];
   extended: Extension[]; published: Publication;
 };
 
@@ -258,6 +283,17 @@ export function explainDecision(decision: string): string {
     NODE_HELD_BY_OTHER_VEHICLE: '다음 노드를 다른 차량이 점유하고 있습니다.',
     POSITION_HELD_BY_OTHER_VEHICLE: '차량이 선 노드를 다른 차량이 점유하고 있습니다. 점유 기록과 현장이 어긋납니다.',
     NODE_NOT_AVAILABLE: '다음 노드가 사용 금지 상태입니다.',
+    ZONE_FULL: '진입하려는 Zone의 정원이 찼습니다. 본선을 한 바퀴 돌아 다시 진입을 시도합니다.',
+    MERGE_EARLIER_REQUEST: '합류 지점에서 먼저 요청한 차량이 있어 그 차량이 먼저 지나갑니다.',
+    STOP_NODE: '정지 노드에서 허가가 끝났습니다. 차량이 멈춘 뒤 다음 구간을 보냅니다.',
+    STOP_NODE_AHEAD: '허가 끝이 정지 노드라 연장하지 않고 정지시킵니다.',
+    BELOW_MORE_FLOOR: '남은 경로가 연장 하한보다 짧아 연장하지 않고 정지시킵니다.',
+    VEHICLE_NOT_ACCEPTING_CHANGE: '차량이 목적지 변경 가능 신호를 주지 않아 연장을 보내지 않았습니다.',
+    RESUMED: '허가 끝에서 멈춘 차량에 다음 구간 이동을 보냈습니다.',
+    VEHICLE_MOVING: '차량이 아직 움직이고 있어 새 이동 명령을 보내지 않았습니다.',
+    COMMAND_OUTSTANDING: '앞선 이동 명령의 결과를 아직 몰라 새 명령을 보내지 않았습니다.',
+    AUTHORITY_NOT_USED: '받은 허가를 아직 다 쓰지 않았습니다.',
+    AT_ROUTE_END: '이미 경로 끝에 있습니다.',
     NO_AVAILABLE_VEHICLE: '조건에 맞는 차량이 없습니다.',
     APPROACH_ROUTE_START_UNKNOWN: '차량 위치를 몰라 인수 지점까지 경로를 낼 수 없습니다.',
     APPROACH_ROUTE_NO_PATH: '모든 차량이 인수 지점에 도달할 수 없습니다.',

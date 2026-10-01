@@ -12,6 +12,13 @@ import java.util.Set;
  * authorized nodes remain; DISTANCE when the remaining authorized distance is at most
  * moreRemainingPercent of one full authority along the route ahead.
  *
+ * <p>moreMinRemainingNodes is the floor under MORE: with fewer authorized nodes than this left, the
+ * vehicle is already slowing for its stop and a renewal could not be acted on, so none is sent.
+ * moreVehicleSignal makes MORE also wait for the vehicle to report that it can accept a changed
+ * destination. mergeControl says who decides entry at a merge point: CONTROLLER grants it in
+ * request order; VEHICLE_SIGNAL leaves that order to the vehicles (signal lights read on board)
+ * and the controller only keeps one vehicle per node.
+ *
  * <p>Every option here changes behaviour that exists. autoDispatch decides whether a site sweep
  * assigns queued work or only extends what is already running; the command values decide how a
  * send that provably failed is retried; positionStaleSeconds decides when a position that stopped
@@ -19,9 +26,11 @@ import java.util.Set;
  */
 public record OperationOptions(String commType,int nodeCount,boolean moreEnabled,String moreType,
  int moreRemainingNodes,int moreRemainingPercent,
- boolean autoDispatch,int commandMaxAttempts,int commandRetrySeconds,int positionStaleSeconds){
+ boolean autoDispatch,int commandMaxAttempts,int commandRetrySeconds,int positionStaleSeconds,
+ int moreMinRemainingNodes,boolean moreVehicleSignal,String mergeControl){
  public static final Set<String> COMM_TYPES=Set.of("PC","PLC","MQTT");
  public static final Set<String> MORE_TYPES=Set.of("NODE","DISTANCE");
+ public static final Set<String> MERGE_CONTROLS=Set.of("CONTROLLER","VEHICLE_SIGNAL");
  public boolean usesVda(){return "MQTT".equals(commType);}
  public void validate(){
   ConfigurationException.require(COMM_TYPES.contains(commType==null?"":commType),"INVALID_COMM_TYPE");
@@ -34,5 +43,9 @@ public record OperationOptions(String commType,int nodeCount,boolean moreEnabled
   ConfigurationException.require(commandMaxAttempts>=1&&commandMaxAttempts<=20,"INVALID_COMMAND_MAX_ATTEMPTS");
   ConfigurationException.require(commandRetrySeconds>=1&&commandRetrySeconds<=3600,"INVALID_COMMAND_RETRY_SECONDS");
   ConfigurationException.require(positionStaleSeconds>=1&&positionStaleSeconds<=3600,"INVALID_POSITION_STALE_SECONDS");
+  ConfigurationException.require(moreMinRemainingNodes>=0&&moreMinRemainingNodes<=99,"INVALID_MORE_MIN_REMAINING_NODES");
+  // A floor above the trigger would leave no node count at which MORE could ever be sent.
+  ConfigurationException.require(moreMinRemainingNodes<=moreRemainingNodes,"MORE_MIN_ABOVE_TRIGGER");
+  ConfigurationException.require(MERGE_CONTROLS.contains(mergeControl==null?"":mergeControl),"INVALID_MERGE_CONTROL");
  }
 }

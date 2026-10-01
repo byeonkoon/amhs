@@ -1,5 +1,5 @@
 import React from 'react';
-import { type Deadlock, type MapData, type NodeHold, type VehicleSnapshot } from '../../api';
+import { type Deadlock, type MapData, type NodeHold, type VehicleSnapshot, type ZoneOccupancy } from '../../api';
 import { Chip, Empty } from '../../shell/States';
 
 /**
@@ -10,6 +10,7 @@ import { Chip, Empty } from '../../shell/States';
  */
 export function TrafficScreen(props: {
   map: MapData; holds: NodeHold[]; deadlocks: Deadlock[]; vehicles: VehicleSnapshot[];
+  zones: ZoneOccupancy[];
 }) {
   const nodeCode = (id: number) => props.map.nodes.find(n => n.id === id)?.code ?? String(id);
   const vehicleCode = (id: number) => props.vehicles.find(v => v.id === id)?.code ?? `#${id}`;
@@ -65,6 +66,43 @@ export function TrafficScreen(props: {
               ))}
             </div>
           )}
+      </section>
+
+      <section className="card">
+        <div className="ch">
+          <h2>Zone 정원</h2>
+          <span className="aux">정원이 찬 Zone에는 들어가지 않고, 진입하려던 차량은 본선을 돌며 자리가 나기를 기다립니다</span>
+        </div>
+        {props.zones.length === 0
+          ? <Empty title="정의된 Zone이 없습니다" hint="Zone은 진입 대수를 제한할 노드 묶음입니다." />
+          : (
+            <div className="tbl-scroll">
+              <table className="t">
+                <thead>
+                  <tr><th>Zone</th><th>상태</th><th>안의 차량 / 정원</th><th>노드</th><th>안의 차량</th></tr>
+                </thead>
+                <tbody>
+                  {props.zones.map(z => (
+                    <tr key={z.id}>
+                      <td className="mono">{z.code}</td>
+                      <td>
+                        {!z.enabled
+                          ? <Chip tone="id">사용 안 함</Chip>
+                          : z.vehicleIds.length >= z.capacity ? <Chip tone="wr">만석</Chip> : <Chip tone="ok">진입 가능</Chip>}
+                      </td>
+                      <td className="mono">{z.vehicleIds.length} / {z.capacity}</td>
+                      <td className="mono">{z.nodeIds.map(nodeCode).join(', ')}</td>
+                      <td className="mono">{z.vehicleIds.length ? z.vehicleIds.map(vehicleCode).join(', ') : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        <p className="hint" style={{ padding: '0 15px 14px' }}>
+          안의 차량은 Zone 노드를 점유 허가로 쥐고 있거나 그 노드에 서 있다고 보고한 차량입니다. 이미 안에 있는
+          차량이 Zone 안에서 움직이거나 빠져나가는 것은 막지 않습니다.
+        </p>
       </section>
 
       <section className="card">

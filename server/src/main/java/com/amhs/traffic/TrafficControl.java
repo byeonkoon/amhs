@@ -22,6 +22,12 @@ public interface TrafficControl {
      * blocked node would hand the vehicle permission for somewhere it cannot legally reach, which
      * reads to the device as a clear path straight through whatever is in the way.
      *
+     * <p>Beyond the node it stands on, a node cannot be had when another vehicle holds it, when it
+     * is out of service, when it is the first node of a zone that is already full
+     * ({@code ZONE_FULL}), or, while the controller decides merges, when it is a merge point another
+     * vehicle asked for earlier and is still asking for ({@code MERGE_EARLIER_REQUEST}). A stop node
+     * is granted and then ends the run ({@code STOP_NODE}): the vehicle halts there first.
+     *
      * @param routeNodeIds the remaining route, starting with the node the vehicle occupies now
      */
     ReservationGrant request(long siteId, long revisionId, long vehicleId, Long orderId, List<Long> routeNodeIds);
@@ -42,6 +48,8 @@ public interface TrafficControl {
     int releaseAhead(long siteId, long vehicleId, Long positionNodeId, String reason);
 
     List<NodeHold> held(long siteId);
+    /** Every zone at this site with the vehicles counting against its capacity. */
+    List<ZoneOccupancy> zones(long siteId);
     List<NodeHold> heldBy(long siteId, long vehicleId);
     /** The chain of waits starting at this vehicle, if it closes back on itself. */
     Optional<Deadlock> deadlock(long siteId, long vehicleId);

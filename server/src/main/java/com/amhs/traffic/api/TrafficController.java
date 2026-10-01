@@ -12,6 +12,9 @@ class TrafficController {
     List<NodeHold> held(@PathVariable long siteId,@RequestParam(required=false) Long vehicleId) {
         return vehicleId==null?traffic.held(siteId):traffic.heldBy(siteId,vehicleId);
     }
+    /** Capacity and the vehicles inside or already admitted, so a full bay is visible before it blocks anyone. */
+    @GetMapping("/zones")
+    List<ZoneOccupancy> zones(@PathVariable long siteId) { return traffic.zones(siteId); }
     /** Reported, never resolved here: backing a vehicle out is a movement with its own command. */
     @GetMapping("/deadlocks")
     List<Deadlock> deadlocks(@PathVariable long siteId) { return traffic.deadlocks(siteId); }

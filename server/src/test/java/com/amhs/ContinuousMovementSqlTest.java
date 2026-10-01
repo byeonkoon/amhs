@@ -39,17 +39,30 @@ class ContinuousMovementSqlTest {
   jdbc.update("DELETE FROM traffic.reservation_wait WHERE site_id=?",SITE);
   jdbc.update("DELETE FROM traffic.node_reservation WHERE site_id=?",SITE);
   jdbc.update("UPDATE fleet.vehicle_profile SET assignment_enabled=TRUE WHERE site_id=? AND revision_id=?",SITE,REVISION);
-  jdbc.update("UPDATE platform.site_operation SET more_enabled=TRUE,more_type='NODE',"
-   +"more_remaining_nodes=1,node_count=2 WHERE site_id=?",SITE);
+  // A floor of zero keeps these cases about the trigger alone; the floor has its own tests.
+  jdbc.update("UPDATE platform.site_operation SET more_enabled=TRUE,more_type='NODE',more_min_remaining_nodes=0,"
+   +"more_remaining_nodes=1,node_count=2,more_vehicle_signal=FALSE,merge_control='CONTROLLER' WHERE site_id=?",SITE);
+  jdbc.update("UPDATE topology.node SET stop_node=FALSE WHERE site_id=? AND revision_id=?",SITE,REVISION);
   report(START,true,true,true);
  }
  @AfterEach void restore(){
   jdbc.update("UPDATE fleet.vehicle_profile SET assignment_enabled=FALSE WHERE site_id=? AND revision_id=?",SITE,REVISION);
-  jdbc.update("UPDATE platform.site_operation SET more_remaining_nodes=3,node_count=20,more_type='NODE' WHERE site_id=?",SITE);
+  jdbc.update("UPDATE platform.site_operation SET more_remaining_nodes=3,node_count=20,more_type='NODE',"
+   +"more_min_remaining_nodes=1,more_vehicle_signal=FALSE WHERE site_id=?",SITE);
+  jdbc.update("UPDATE topology.node SET stop_node=FALSE WHERE site_id=? AND revision_id=?",SITE,REVISION);
  }
  private void report(Long node,boolean online,boolean remote,boolean idle){
   tx.execute(s->fleet.report(SITE,REVISION,OHT,new VehicleReport(node,online,remote,idle,false,"SIMULATED")));
  }
+ /** A position report the way the state endpoint handles it: arrival further along frees what is behind. */
+ private void arrive(long node,boolean idle){
+  report(node,true,true,idle);
+  tx.execute(s->traffic.advanced(SITE,OHT,node));
+ }
+ private void signal(Boolean destinationChangeEnabled){
+  tx.execute(s->fleet.report(SITE,REVISION,OHT,new VehicleReport(NEXT,true,true,false,false,"SIMULATED",destinationChangeEnabled)));
+ }
+ private ContinuousMovement.Extension resume(long orderId){ return tx.execute(s->movement.resume(SITE,orderId)); }
  private long assignedOrder(String key){
   long id=tx.execute(s->orders.accept(SITE,new OrderRequest("TEST",run+"-"+key,"OHT-A","OHT-C",run+"-"+key,50),
    "tester","trace").order().id());
@@ -161,5 +174,59 @@ class ContinuousMovementSqlTest {
   report(NEXT,true,true,false);
   var all=tx.execute(s->movement.extendAll(SITE));
   assertThat(all).extracting(ContinuousMovement.Extension::orderId).contains(id);
+ }
+
+ @Test void aRenewalTooCloseToTheStopIsNotSent(){
+  jdbc.update("UPDATE platform.site_operation SET more_min_remaining_nodes=1 WHERE site_id=?",SITE);
+  long id=assignedOrder("floor");
+  // At the last authorized node nothing is left ahead, which is below a floor of one: the vehicle
+  // is already braking, so it stops and is started again instead.
+  report(NEXT,true,true,false);
+  assertThat(extend(id).decision()).isEqualTo("BELOW_MORE_FLOOR");
+  assertThat(outbox.byOrder(SITE,id).stream().filter(c->c.commandType().equals("MORE"))).isEmpty();
+ }
+
+ @Test void whenTheSiteWaitsForTheVehicleSignalSilenceMeansNo(){
+  jdbc.update("UPDATE platform.site_operation SET more_vehicle_signal=TRUE WHERE site_id=?",SITE);
+  long id=assignedOrder("signal");
+  signal(null);
+  assertThat(extend(id).decision()).isEqualTo("VEHICLE_NOT_ACCEPTING_CHANGE");
+  signal(false);
+  assertThat(extend(id).decision()).isEqualTo("VEHICLE_NOT_ACCEPTING_CHANGE");
+  signal(true);
+  assertThat(extend(id).decision()).isEqualTo("EXTENDED");
+ }
+
+ @Test void aStopNodeEndsTheAuthorityAndTheVehicleIsRestartedAfterHalting(){
+  jdbc.update("UPDATE platform.site_operation SET node_count=20,more_remaining_nodes=3 WHERE site_id=?",SITE);
+  jdbc.update("UPDATE topology.node SET stop_node=TRUE WHERE site_id=? AND id=?",SITE,NEXT);
+  long id=assignedOrder("stop");
+  // The run ends at the stop node even though the route and the node limit go further.
+  assertThat(heldNodes()).containsExactly(START,NEXT);
+  report(START,true,true,false);
+  assertThat(extend(id).decision()).isEqualTo("STOP_NODE_AHEAD");
+  acknowledgeAll(id);
+  // Halted on the stop node with nothing ahead: the next run is a fresh movement past it.
+  arrive(NEXT,true);
+  var resumed=resume(id);
+  assertThat(resumed.decision()).isEqualTo("RESUMED");
+  assertThat(resumed.addedNodeIds()).isNotEmpty().doesNotContain(NEXT);
+  assertThat(outbox.byOrder(SITE,id).stream().filter(c->c.commandType().equals("MOVE"))).hasSize(2);
+ }
+
+ @Test void aVehicleIsOnlyRestartedOnceItHasUsedItsAuthority(){
+  long id=assignedOrder("resume");
+  // Told to go and still standing at the start: that MOVE is not finished, so no second one.
+  assertThat(resume(id).decision()).isEqualTo("COMMAND_OUTSTANDING");
+  acknowledgeAll(id);
+  assertThat(resume(id).decision()).isEqualTo("AUTHORITY_NOT_USED");
+  arrive(NEXT,true);
+  var resumed=resume(id);
+  assertThat(resumed.decision()).isEqualTo("RESUMED");
+  assertThat(resumed.commandId()).contains("resume");
+  // A moving vehicle is extended, not restarted.
+  acknowledgeAll(id);
+  report(NEXT,true,true,false);
+  assertThat(resume(id).decision()).isEqualTo("VEHICLE_MOVING");
  }
 }

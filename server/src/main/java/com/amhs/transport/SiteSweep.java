@@ -6,12 +6,14 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * One pass of the site's execution loop: take on waiting work, lengthen what is already running,
- * then put whatever that produced on the wire.
+ * One pass of the site's execution loop: take on waiting work, restart vehicles that have stopped
+ * at the end of their authority, lengthen what is already running, then put whatever that produced
+ * on the wire.
  *
  * <p>The order matters. Assigning first means a newly assigned order's command is published in the
  * same pass instead of waiting for the next one, and extending before publishing means a MORE and
- * the movement it extends are never sent out of sequence.
+ * the movement it extends are never sent out of sequence. Resuming comes before extending because a
+ * vehicle that was just restarted is not yet moving and has nothing to extend.
  *
  * <p>Nothing here runs on a timer yet. A caller decides when a pass happens, so a site that is not
  * being watched does not quietly command vehicles.
@@ -29,8 +31,12 @@ public class SiteSweep {
 
  /** What one pass did. {@code skipped} explains each order the pass could not take on. */
  public record Sweep(boolean autoDispatch,List<Long> assigned,List<Skipped> skipped,
-                     List<ContinuousMovement.Extension> extended,DeviceGateway.Publication published){
-  public Sweep { assigned=List.copyOf(assigned); skipped=List.copyOf(skipped); extended=List.copyOf(extended); }
+                     List<ContinuousMovement.Extension> resumed,List<ContinuousMovement.Extension> extended,
+                     DeviceGateway.Publication published){
+  public Sweep {
+   assigned=List.copyOf(assigned); skipped=List.copyOf(skipped);
+   resumed=List.copyOf(resumed); extended=List.copyOf(extended);
+  }
  }
  public record Skipped(long orderId,String reason){}
 
@@ -49,8 +55,9 @@ public class SiteSweep {
     }
    }
   }
+  var resumed=movement.resumeAll(siteId);
   var extended=movement.extendAll(siteId);
   var published=gateway.publishPending(siteId);
-  return new Sweep(autoDispatch,assigned,skipped,extended,published);
+  return new Sweep(autoDispatch,assigned,skipped,resumed,extended,published);
  }
 }

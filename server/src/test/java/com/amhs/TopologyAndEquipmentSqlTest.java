@@ -52,14 +52,14 @@ class TopologyAndEquipmentSqlTest {
    +" VALUES(?,?,?,?,1)",SITE,REVISION,101,9001);
   // A vehicle is permitted to stand there, so closing it would route somebody else into it.
   rejected(()->topology.updateNode(SITE,REVISION,101,before.version(),
-   new NodeSettings(before.settings().code(),before.settings().xMm(),before.settings().yMm(),false)),
+   new NodeSettings(before.settings().code(),before.settings().xMm(),before.settings().yMm(),false,before.settings().stopNode(),before.settings().mergePoint())),
    409,"NODE_IN_USE");
   jdbc.update("DELETE FROM traffic.node_reservation WHERE site_id=? AND node_id=?",SITE,101);
   var closed=topology.updateNode(SITE,REVISION,101,before.version(),
-   new NodeSettings(before.settings().code(),before.settings().xMm(),before.settings().yMm(),false));
+   new NodeSettings(before.settings().code(),before.settings().xMm(),before.settings().yMm(),false,before.settings().stopNode(),before.settings().mergePoint()));
   assertThat(closed.settings().enabled()).isFalse();
   topology.updateNode(SITE,REVISION,101,closed.version(),
-   new NodeSettings(before.settings().code(),before.settings().xMm(),before.settings().yMm(),true));
+   new NodeSettings(before.settings().code(),before.settings().xMm(),before.settings().yMm(),true,before.settings().stopNode(),before.settings().mergePoint()));
  }
 
  @Test void aSegmentWhoseEndIsHeldCannotBeClosedAndItsEndsCannotMove(){
@@ -84,9 +84,9 @@ class TopologyAndEquipmentSqlTest {
  @Test void twoPeopleChangingTheSameNodeDoNotSilentlyMerge(){
   var before=node(102);
   var s=before.settings();
-  topology.updateNode(SITE,REVISION,102,before.version(),new NodeSettings(s.code(),s.xMm(),s.yMm()+10,s.enabled()));
+  topology.updateNode(SITE,REVISION,102,before.version(),new NodeSettings(s.code(),s.xMm(),s.yMm()+10,s.enabled(),s.stopNode(),s.mergePoint()));
   rejected(()->topology.updateNode(SITE,REVISION,102,before.version(),
-   new NodeSettings(s.code(),s.xMm(),s.yMm()+20,s.enabled())),409,"VERSION_CONFLICT");
+   new NodeSettings(s.code(),s.xMm(),s.yMm()+20,s.enabled(),s.stopNode(),s.mergePoint())),409,"VERSION_CONFLICT");
  }
 
  @Test void aRacksCellsAreGeneratedFromItsSizeAndKeepWhatWasDecidedAboutThem(){
@@ -127,7 +127,7 @@ class TopologyAndEquipmentSqlTest {
   var before=node(103);
   var s=before.settings();
   rejected(()->topology.updateNode(SITE,REVISION,103,before.version(),
-   new NodeSettings(s.code(),s.xMm(),s.yMm(),s.enabled())),409,"SITE_NOT_IN_MAINTENANCE");
+   new NodeSettings(s.code(),s.xMm(),s.yMm(),s.enabled(),s.stopNode(),s.mergePoint())),409,"SITE_NOT_IN_MAINTENANCE");
   rejected(()->equipment.createUnit(SITE,new EquipmentSettings(REVISION,run+"-RUN","x","BUFFER",true)),
    409,"SITE_NOT_IN_MAINTENANCE");
  }

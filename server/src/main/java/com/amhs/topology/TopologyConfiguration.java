@@ -30,7 +30,7 @@ public class TopologyConfiguration {
  @Transactional(readOnly=true)
  public List<ConfigurationRecord<NodeSettings>> nodes(long site,long revision){
   guard.requireSite(site);
-  return jdbc.query("SELECT id,version,code,x_mm,y_mm,enabled FROM topology.node"
+  return jdbc.query("SELECT id,version,code,x_mm,y_mm,enabled,stop_node,merge_point FROM topology.node"
    +" WHERE site_id=? AND revision_id=? ORDER BY id",NODE,site,revision);
  }
  @Transactional(readOnly=true)
@@ -52,9 +52,9 @@ public class TopologyConfiguration {
   int clash=jdbc.queryForObject("SELECT count(*) FROM topology.node"
    +" WHERE site_id=? AND revision_id=? AND code=? AND id<>?",Integer.class,site,revision,s.code(),id);
   if(clash>0) throw new ConfigurationException(409,"NODE_CODE_IN_USE");
-  guard.changed(jdbc.update("UPDATE topology.node SET code=?,x_mm=?,y_mm=?,enabled=?,version=version+1"
+  guard.changed(jdbc.update("UPDATE topology.node SET code=?,x_mm=?,y_mm=?,enabled=?,stop_node=?,merge_point=?,version=version+1"
    +" WHERE site_id=? AND revision_id=? AND id=? AND version=?",
-   s.code(),s.xMm(),s.yMm(),s.enabled(),site,revision,id,expectedVersion));
+   s.code(),s.xMm(),s.yMm(),s.enabled(),s.stopNode(),s.mergePoint(),site,revision,id,expectedVersion));
   return node(site,revision,id);
  }
 
@@ -83,7 +83,7 @@ public class TopologyConfiguration {
   return traffic.held(site).stream().map(h -> h.nodeId()).collect(Collectors.toSet());
  }
  private ConfigurationRecord<NodeSettings> node(long site,long revision,long id){
-  var rows=jdbc.query("SELECT id,version,code,x_mm,y_mm,enabled FROM topology.node"
+  var rows=jdbc.query("SELECT id,version,code,x_mm,y_mm,enabled,stop_node,merge_point FROM topology.node"
    +" WHERE site_id=? AND revision_id=? AND id=?",NODE,site,revision,id);
   if(rows.isEmpty())throw new ConfigurationException(404,"NODE_NOT_FOUND");
   return rows.getFirst();
@@ -95,7 +95,8 @@ public class TopologyConfiguration {
   return rows.getFirst();
  }
  private static final RowMapper<ConfigurationRecord<NodeSettings>> NODE=(r,n)->new ConfigurationRecord<>(
-  r.getLong(1),r.getLong(2),new NodeSettings(r.getString(3),r.getLong(4),r.getLong(5),r.getBoolean(6)));
+  r.getLong(1),r.getLong(2),new NodeSettings(r.getString(3),r.getLong(4),r.getLong(5),r.getBoolean(6),
+   r.getBoolean(7),r.getBoolean(8)));
  private static final RowMapper<ConfigurationRecord<EdgeSettings>> EDGE=(r,n)->new ConfigurationRecord<>(
   r.getLong(1),r.getLong(2),new EdgeSettings(r.getLong(3),r.getLong(4),r.getLong(5),r.getBoolean(6)));
 }

@@ -27,10 +27,12 @@ public class TransportAssignment {
  private final TransportLedger ledger; private final TopologyQuery topology;
  private final FleetState fleet; private final DispatchEvaluator evaluator;
  private final CommandOutbox outbox; private final ObjectMapper json; private final TrafficControl traffic;
+ private final ZoneDetour detour;
  public TransportAssignment(TransportLedger ledger,TopologyQuery topology,FleetState fleet,
-                            CommandOutbox outbox,ObjectMapper json,TrafficControl traffic){
+                            CommandOutbox outbox,ObjectMapper json,TrafficControl traffic,ZoneDetour detour){
   this.ledger=ledger; this.topology=topology; this.fleet=fleet;
   this.evaluator=new DispatchEvaluator(); this.outbox=outbox; this.json=json; this.traffic=traffic;
+  this.detour=detour;
  }
 
  public record Assigned(TransportOrder order,AssignmentView assignment,String commandId,boolean created){}
@@ -76,6 +78,8 @@ public class TransportAssignment {
   // actually granted, so a congested aisle produces a shorter movement rather than a vehicle
   // driving into nodes somebody else is standing on.
   var grant=traffic.request(siteId,order.revisionId(),proposal.vehicleId(),orderId,route);
+  // Heading into a bay that is already full: go round the loop instead of stopping at the branch.
+  grant=detour.aroundFullZone(siteId,order.revisionId(),proposal.vehicleId(),orderId,0,grant);
   if(grant.stalled())
    // The vehicle is held and the order is assigned; it simply cannot start yet. Emitting no
    // command is the point, and the recorded wait says what it is waiting for.

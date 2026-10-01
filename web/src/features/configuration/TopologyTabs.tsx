@@ -72,7 +72,7 @@ function TrackTab({ session, revisionId, kind }: { session: Session; revisionId:
     <div>
       {banner}
       {nodes.length === 0 ? <Empty title="이 지도 revision에 노드가 없습니다" /> : (
-        <Grid cols="80px 1fr 90px 90px 96px" head={['코드', '', 'X (mm)', 'Y (mm)', '사용']}>
+        <Grid cols="80px 1fr 90px 90px 96px 96px 96px" head={['코드', '', 'X (mm)', 'Y (mm)', '사용', '정지 노드', '합류 지점']}>
           {nodes.map(n => (
             <Row key={n.id}>
               <span className="mono">{n.settings.code}</span>
@@ -86,13 +86,28 @@ function TrackTab({ session, revisionId, kind }: { session: Session; revisionId:
                   {n.settings.enabled ? '사용' : '사용 금지'}
                 </button>
               </span>
+              <span>
+                <button type="button" disabled={!mayEdit || busy} style={flagStyle(n.settings.stopNode)}
+                  onClick={() => change(`${opsApi.nodes(revisionId)}/${n.id}`, n.version,
+                    { ...n.settings, stopNode: !n.settings.stopNode }, '정지 노드 지정 변경')}>
+                  {n.settings.stopNode ? '정지' : '—'}
+                </button>
+              </span>
+              <span>
+                <button type="button" disabled={!mayEdit || busy} style={flagStyle(n.settings.mergePoint)}
+                  onClick={() => change(`${opsApi.nodes(revisionId)}/${n.id}`, n.version,
+                    { ...n.settings, mergePoint: !n.settings.mergePoint }, '합류 지점 지정 변경')}>
+                  {n.settings.mergePoint ? '합류' : '—'}
+                </button>
+              </span>
             </Row>
           ))}
         </Grid>
       )}
       <p className="hint" style={{ marginTop: 9 }}>
         차량이 점유 중인 노드는 사용 금지로 바꿀 수 없습니다. 그 자리에 있어도 된다고 허가받은 차량이 있는데
-        닫으면, 다른 차량을 그리로 보내게 됩니다.
+        닫으면, 다른 차량을 그리로 보내게 됩니다. 정지 노드에서는 이동 허가가 끝나고 연장 없이 차량이 섭니다.
+        합류 지점에서는 먼저 요청한 차량이 먼저 지나갑니다.
       </p>
     </div>
   );
@@ -157,6 +172,15 @@ function toggleStyle(on: boolean): React.CSSProperties {
     border: `1px solid ${on ? 'var(--ln2)' : 'var(--warn)'}`,
     background: on ? 'var(--srf)' : '#FBF0DA',
     color: on ? 'var(--ink2)' : '#8A5C05',
+    borderRadius: 4, padding: '2px 8px', fontSize: 10.5, cursor: 'pointer', width: '100%',
+  };
+}
+
+function flagStyle(on: boolean): React.CSSProperties {
+  return {
+    border: `1px solid ${on ? 'var(--acc)' : 'var(--ln2)'}`,
+    background: on ? 'var(--acc)' : 'var(--srf)',
+    color: on ? '#fff' : 'var(--mut)',
     borderRadius: 4, padding: '2px 8px', fontSize: 10.5, cursor: 'pointer', width: '100%',
   };
 }
