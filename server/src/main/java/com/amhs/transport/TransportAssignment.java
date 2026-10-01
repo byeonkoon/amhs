@@ -56,8 +56,10 @@ public class TransportAssignment {
 
   var map=topology.getMap(siteId,order.revisionId());
   // A vehicle already holding a job is not a candidate. The unique index still settles a race,
-  // but filtering here lets a second order pick a different vehicle instead of just failing.
-  var busy=ledger.assignedVehicleIds(siteId);
+  // but filtering here lets a second order pick a different vehicle instead of just failing. One
+  // being moved out of a zone is busy too: its own move would cross the new one.
+  var busy=new java.util.HashSet<>(ledger.assignedVehicleIds(siteId));
+  busy.addAll(ledger.relocatingVehicleIds(siteId));
   var free=fleet.snapshot(siteId,order.revisionId()).stream().filter(v->!busy.contains(v.id())).toList();
   // A state nobody has confirmed lately is not a state to dispatch on: the vehicle that said it
   // was idle and online a day ago may be anywhere now. The same line is drawn again under the lock.

@@ -13,7 +13,9 @@ import java.util.List;
  * <p>The order matters. Assigning first means a newly assigned order's command is published in the
  * same pass instead of waiting for the next one, and extending before publishing means a MORE and
  * the movement it extends are never sent out of sequence. Resuming comes before extending because a
- * vehicle that was just restarted is not yet moving and has nothing to extend.
+ * vehicle that was just restarted is not yet moving and has nothing to extend. Moving idle vehicles
+ * out of zones comes after assigning, so a vehicle that new work can use leaves with that work
+ * instead of being sent somewhere first.
  *
  * <p>Nothing here runs on a timer yet. A caller decides when a pass happens, so a site that is not
  * being watched does not quietly command vehicles.
@@ -22,20 +24,20 @@ import java.util.List;
 public class SiteSweep {
  private final TransportOrders orders; private final TransportAssignment assignment;
  private final ContinuousMovement movement; private final DeviceGateway gateway;
- private final OperationOptionConfiguration options;
+ private final OperationOptionConfiguration options; private final ZoneEvacuation evacuation;
  public SiteSweep(TransportOrders orders,TransportAssignment assignment,ContinuousMovement movement,
-                  DeviceGateway gateway,OperationOptionConfiguration options){
+                  DeviceGateway gateway,OperationOptionConfiguration options,ZoneEvacuation evacuation){
   this.orders=orders; this.assignment=assignment; this.movement=movement;
-  this.gateway=gateway; this.options=options;
+  this.gateway=gateway; this.options=options; this.evacuation=evacuation;
  }
 
  /** What one pass did. {@code skipped} explains each order the pass could not take on. */
  public record Sweep(boolean autoDispatch,List<Long> assigned,List<Skipped> skipped,
                      List<ContinuousMovement.Extension> resumed,List<ContinuousMovement.Extension> extended,
-                     DeviceGateway.Publication published){
+                     List<ZoneEvacuation.Step> evacuated,DeviceGateway.Publication published){
   public Sweep {
    assigned=List.copyOf(assigned); skipped=List.copyOf(skipped);
-   resumed=List.copyOf(resumed); extended=List.copyOf(extended);
+   resumed=List.copyOf(resumed); extended=List.copyOf(extended); evacuated=List.copyOf(evacuated);
   }
  }
  public record Skipped(long orderId,String reason){}
@@ -57,7 +59,8 @@ public class SiteSweep {
   }
   var resumed=movement.resumeAll(siteId);
   var extended=movement.extendAll(siteId);
+  var evacuated=evacuation.evacuateAll(siteId);
   var published=gateway.publishPending(siteId);
-  return new Sweep(autoDispatch,assigned,skipped,resumed,extended,published);
+  return new Sweep(autoDispatch,assigned,skipped,resumed,extended,evacuated,published);
  }
 }

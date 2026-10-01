@@ -77,7 +77,7 @@ function InDoubtCommands({ commands, onChanged }: { commands: DeviceCommand[]; o
                   return (
                     <tr key={c.id}>
                       <td className="mono">{c.commandId}</td>
-                      <td className="mono">#{c.orderId}</td>
+                      <td className="mono">{c.orderId === null ? 'Zone 퇴출' : `#${c.orderId}`}</td>
                       <td className="mono">{c.commandType}</td>
                       <td><Chip tone={s.tone}>{s.label}</Chip></td>
                       <td className="mono">{c.attempt}</td>

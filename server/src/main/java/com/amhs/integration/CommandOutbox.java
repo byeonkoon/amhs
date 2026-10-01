@@ -14,6 +14,11 @@ public interface CommandOutbox {
      */
     DeviceCommand enqueue(long orderId, long vehicleId, String commandId, String commandType, String payload);
     /**
+     * A command that belongs to no transport order: it moves the vehicle for the site's own reasons.
+     * Same transaction rule and same per-vehicle ordering as {@link #enqueue}.
+     */
+    DeviceCommand enqueueForVehicle(long siteId, long vehicleId, String commandId, String commandType, String payload);
+    /**
      * Marks this site's rows DISPATCHING and hands them over, oldest first. Concurrent workers never
      * claim the same row, and a command is not claimed while an earlier command for the same vehicle
      * is still waiting to leave, waiting to be retried, or out with an unknown outcome.
@@ -36,6 +41,8 @@ public interface CommandOutbox {
     List<DeviceCommand> byOrder(long siteId, long orderId);
     /** Commands of this type that the device has not acknowledged yet. */
     List<DeviceCommand> unresolved(long siteId, long orderId, String commandType);
+    /** Every command for this vehicle, with or without an order, that is not settled yet. */
+    List<DeviceCommand> unresolvedForVehicle(long siteId, long vehicleId);
     /** Commands nobody can settle automatically, oldest first. */
     List<DeviceCommand> inDoubt(long siteId, int limit);
 }

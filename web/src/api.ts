@@ -176,8 +176,9 @@ export type ZoneOccupancy = {
 };
 
 export type CommandStatus = 'PENDING' | 'DISPATCHING' | 'SENT' | 'ACCEPTED' | 'FAILED' | 'WITHDRAWN';
+/** orderId is null for a movement that belongs to no order, such as leaving a zone after the work is done. */
 export type DeviceCommand = {
-  id: number; orderId: number; commandId: string; commandType: string; payload: string;
+  id: number; orderId: number | null; commandId: string; commandType: string; payload: string;
   status: CommandStatus; attempt: number;
   lastOutcome: string | null; lastError: string | null;
   createdAt: string; publishedAt: string | null; settledAt: string | null;
@@ -253,6 +254,8 @@ export type SweepResult = {
   autoDispatch: boolean; assigned: number[]; skipped: { orderId: number; reason: string }[];
   /** Vehicles that had halted at the end of their authority and were sent the next stretch. */
   resumed: Extension[];
+  /** Idle vehicles with no order being moved out of a zone, and why each one was or was not. */
+  evacuated: { vehicleId: number; decision: string; addedNodeIds: number[]; commandId: string | null }[];
   extended: Extension[]; published: Publication;
 };
 
@@ -310,6 +313,11 @@ export function explainDecision(decision: string): string {
     RECOVERY_LOCATION_REQUIRED: '화물이 출발지에 있는지 목적지에 있는지 지정해야 합니다.',
     RECOVERY_REASON_REQUIRED: '화물 위치를 어떻게 확인했는지 적어야 합니다.',
     ORDER_NOT_IN_RECOVERY: '복구 대기 중인 작업이 아닙니다.',
+    EVACUATING: '작업을 마치고 Zone 안에 남은 차량을 Zone 밖으로 보냈습니다.',
+    ARRIVED: 'Zone 밖 목적지에 도착해 이동을 마쳤습니다.',
+    HAS_ORDER: '작업을 가진 차량은 그 작업으로 Zone을 나갑니다.',
+    NO_PLACE_OUTSIDE: 'Zone 밖에 비어 있는 갈 곳이 없습니다.',
+    NO_PATH: '목적지까지 경로가 없어 이동을 멈췄습니다.',
     NO_AVAILABLE_VEHICLE: '조건에 맞는 차량이 없습니다.',
     APPROACH_ROUTE_START_UNKNOWN: '차량 위치를 몰라 인수 지점까지 경로를 낼 수 없습니다.',
     APPROACH_ROUTE_NO_PATH: '모든 차량이 인수 지점에 도달할 수 없습니다.',

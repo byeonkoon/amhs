@@ -238,6 +238,43 @@ class JdbcTransportLedger implements TransportLedger {
   return rows.isEmpty()?null:rows.getFirst();
  }
 
+ private static final String RELOCATION_COLS=
+  "id,site_id,revision_id,vehicle_id,zone_id,route_node_ids,target_node_id,started_at";
+ private static final org.springframework.jdbc.core.RowMapper<Relocation> RELOCATION=(r,n)->new Relocation(
+  r.getLong(1),r.getLong(2),r.getLong(3),r.getLong(4),r.getLong(5),
+  List.of((Long[])r.getArray(6).getArray()),r.getLong(7),r.getObject(8,OffsetDateTime.class));
+
+ @Transactional(readOnly=true)
+ public List<Relocation> openRelocations(long siteId){
+  return jdbc.query("SELECT "+RELOCATION_COLS+" FROM transport.relocation WHERE site_id=? AND finished_at IS NULL"
+   +" ORDER BY id",RELOCATION,siteId);
+ }
+ @Transactional(readOnly=true)
+ public List<Long> relocatingVehicleIds(long siteId){
+  return jdbc.query("SELECT vehicle_id FROM transport.relocation WHERE site_id=? AND finished_at IS NULL",
+   (r,n)->r.getLong(1),siteId);
+ }
+ @Transactional(propagation=Propagation.MANDATORY)
+ public Relocation startRelocation(long siteId,long revisionId,long vehicleId,long zoneId,List<Long> routeNodeIds,long targetNodeId){
+  try{
+   return jdbc.queryForObject("INSERT INTO transport.relocation(site_id,revision_id,vehicle_id,zone_id,route_node_ids,target_node_id)"
+    +" VALUES(?,?,?,?,?,?) RETURNING "+RELOCATION_COLS,RELOCATION,
+    siteId,revisionId,vehicleId,zoneId,routeNodeIds.toArray(Long[]::new),targetNodeId);
+  }catch(DuplicateKeyException e){
+   throw new TransportRejected("RELOCATION_CONFLICT","vehicle is already being moved",true);
+  }
+ }
+ @Transactional(propagation=Propagation.MANDATORY)
+ public void replaceRelocationRoute(long relocationId,List<Long> routeNodeIds){
+  jdbc.update("UPDATE transport.relocation SET route_node_ids=? WHERE id=? AND finished_at IS NULL",
+   routeNodeIds.toArray(Long[]::new),relocationId);
+ }
+ @Transactional(propagation=Propagation.MANDATORY)
+ public void finishRelocation(long relocationId,String reason){
+  jdbc.update("UPDATE transport.relocation SET finished_at=now(),finish_reason=? WHERE id=? AND finished_at IS NULL",
+   reason==null?null:reason.length()<=32?reason:reason.substring(0,32),relocationId);
+ }
+
  private Optional<TransportOrder> one(String sql,Object... args){
   var rows=jdbc.query(sql,MAPPER,args);
   return rows.isEmpty()?Optional.empty():Optional.of(rows.get(0));

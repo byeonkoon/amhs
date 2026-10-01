@@ -101,7 +101,8 @@ export function TrafficScreen(props: {
           )}
         <p className="hint" style={{ padding: '0 15px 14px' }}>
           안의 차량은 Zone 노드를 점유 허가로 쥐고 있거나 그 노드에 서 있다고 보고한 차량입니다. 이미 안에 있는
-          차량이 Zone 안에서 움직이거나 빠져나가는 것은 막지 않습니다.
+          차량이 Zone 안에서 움직이거나 빠져나가는 것은 막지 않습니다. 작업을 마치고 남은 차량은 실행 스윕이 Zone
+          밖의 가장 가까운 빈 노드(합류 지점·포트 제외)로 보냅니다.
         </p>
       </section>
 

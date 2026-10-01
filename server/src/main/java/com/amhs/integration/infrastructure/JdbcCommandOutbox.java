@@ -21,10 +21,20 @@ class JdbcCommandOutbox implements CommandOutbox {
   */
  @Transactional(propagation=Propagation.MANDATORY)
  public DeviceCommand enqueue(long orderId,long vehicleId,String commandId,String commandType,String payload){
-  jdbc.update("INSERT INTO integration.command_outbox(order_id,vehicle_id,command_id,command_type,payload,status)"
-   +" VALUES(?,?,?,?,?,'PENDING') ON CONFLICT(command_id) DO NOTHING",orderId,vehicleId,commandId,commandType,payload);
+  jdbc.update("INSERT INTO integration.command_outbox(order_id,site_id,vehicle_id,command_id,command_type,payload,status)"
+   +" SELECT ?,o.site_id,?,?,?,?,'PENDING' FROM transport.order o WHERE o.id=?"
+   +" ON CONFLICT(command_id) DO NOTHING",orderId,vehicleId,commandId,commandType,payload,orderId);
   // A caller that retries its own transaction reuses the command id and must get the first row
   // back rather than a second command for the same decision.
+  var written=byCommandId(commandId);
+  if(written==null) throw new IllegalStateException("ORDER_NOT_FOUND");
+  return written;
+ }
+
+ @Transactional(propagation=Propagation.MANDATORY)
+ public DeviceCommand enqueueForVehicle(long siteId,long vehicleId,String commandId,String commandType,String payload){
+  jdbc.update("INSERT INTO integration.command_outbox(order_id,site_id,vehicle_id,command_id,command_type,payload,status)"
+   +" VALUES(NULL,?,?,?,?,?,'PENDING') ON CONFLICT(command_id) DO NOTHING",siteId,vehicleId,commandId,commandType,payload);
   return byCommandId(commandId);
  }
 
@@ -44,7 +54,7 @@ class JdbcCommandOutbox implements CommandOutbox {
   var claimed=jdbc.query("UPDATE integration.command_outbox SET status='DISPATCHING',attempt=attempt+1,last_error=NULL"
    +" WHERE id IN (SELECT c.id FROM integration.command_outbox c"
    +"  WHERE c.status IN ('PENDING','FAILED') AND c.available_at<=now() AND c.attempt<?"
-   +"   AND c.order_id IN (SELECT id FROM transport.order WHERE site_id=?)"
+   +"   AND c.site_id=?"
    +"   AND NOT EXISTS (SELECT 1 FROM integration.command_outbox p WHERE p.id<c.id"
    +"    AND p.status IN ('PENDING','DISPATCHING','FAILED')"
    +"    AND (p.vehicle_id=c.vehicle_id OR (c.vehicle_id IS NULL AND p.order_id=c.order_id)))"
@@ -115,14 +125,20 @@ class JdbcCommandOutbox implements CommandOutbox {
  }
 
  @Transactional(readOnly=true)
+ public List<DeviceCommand> unresolvedForVehicle(long siteId,long vehicleId){
+  return jdbc.query("SELECT "+COLS+" FROM integration.command_outbox WHERE site_id=? AND vehicle_id=?"
+   +" AND status NOT IN ('ACCEPTED','WITHDRAWN') ORDER BY id",MAPPER,siteId,vehicleId);
+ }
+
+ @Transactional(readOnly=true)
  public List<DeviceCommand> byOrder(long siteId,long orderId){
   return jdbc.query("SELECT "+JOINED+" FROM integration.command_outbox c JOIN transport.order o ON o.id=c.order_id"
    +" WHERE o.site_id=? AND c.order_id=? ORDER BY c.id",MAPPER,siteId,orderId);
  }
  @Transactional(readOnly=true)
  public List<DeviceCommand> inDoubt(long siteId,int limit){
-  return jdbc.query("SELECT "+JOINED+" FROM integration.command_outbox c JOIN transport.order o ON o.id=c.order_id"
-   +" WHERE o.site_id=? AND c.status IN ('DISPATCHING','SENT') ORDER BY c.created_at,c.id LIMIT ?",
+  return jdbc.query("SELECT "+COLS+" FROM integration.command_outbox"
+   +" WHERE site_id=? AND status IN ('DISPATCHING','SENT') ORDER BY created_at,id LIMIT ?",
    MAPPER,siteId,Math.min(Math.max(limit,1),200));
  }
 
@@ -136,7 +152,7 @@ class JdbcCommandOutbox implements CommandOutbox {
   +"last_outcome,last_error,created_at,published_at,settled_at,vehicle_id";
  private static final String JOINED=JOINED_PREFIX+COLS.replace(",",","+JOINED_PREFIX);
  private static final RowMapper<DeviceCommand> MAPPER=(r,n)->new DeviceCommand(
-  r.getLong(1),r.getLong(2),r.getString(3),r.getString(4),r.getString(5),
+  r.getLong(1),r.getObject(2)==null?null:r.getLong(2),r.getString(3),r.getString(4),r.getString(5),
   CommandStatus.valueOf(r.getString(6)),r.getInt(7),r.getString(8),r.getString(9),
   r.getObject(10,OffsetDateTime.class),r.getObject(11,OffsetDateTime.class),r.getObject(12,OffsetDateTime.class),
   r.getObject(13)==null?null:r.getLong(13));

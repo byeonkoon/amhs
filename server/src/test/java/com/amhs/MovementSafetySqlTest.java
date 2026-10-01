@@ -78,7 +78,7 @@ class MovementSafetySqlTest {
   var cancelled=orders.cancel(SITE,id,"no longer needed","test",null);
   assertThat(cancelled.status()).isEqualTo(OrderStatus.CANCELLED);
   assertThat(outbox.byOrder(SITE,id)).extracting(DeviceCommand::status).containsOnly(CommandStatus.WITHDRAWN);
-  assertThat(outbox.claim(SITE,500,20)).noneMatch(c->c.orderId()==id);
+  assertThat(outbox.claim(SITE,500,20)).noneMatch(c->Long.valueOf(id).equals(c.orderId()));
   assertThat(assignment.active(SITE)).noneMatch(a->a.orderId()==id);
  }
 
@@ -87,7 +87,7 @@ class MovementSafetySqlTest {
   long id=assigned("OHT-C");
   assertThat(held(OHT)).containsExactly(119L,120L,SOURCE);
   // The publisher has the MOVE: the vehicle may be driving on it from here on.
-  assertThat(outbox.claim(SITE,500,20)).anyMatch(c->c.orderId()==id);
+  assertThat(outbox.claim(SITE,500,20)).anyMatch(c->Long.valueOf(id).equals(c.orderId()));
   var requested=orders.cancel(SITE,id,"no longer needed","test",null);
   assertThat(requested.status()).isEqualTo(OrderStatus.CANCEL_REQUESTED);
   assertThat(assignment.active(SITE)).anyMatch(a->a.orderId()==id);

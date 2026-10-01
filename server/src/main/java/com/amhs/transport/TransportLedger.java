@@ -46,6 +46,16 @@ public interface TransportLedger {
  List<Long> assignedOrderIds(long siteId);
  /** The vehicle of the order's latest assignment, released or not; null when it never had one. */
  Long assignedVehicleOf(long orderId);
+ /** Open moves out of zones at this site, one per vehicle at most. */
+ List<Relocation> openRelocations(long siteId);
+ /** Vehicles currently being moved out of a zone, which are not offered to dispatch meanwhile. */
+ List<Long> relocatingVehicleIds(long siteId);
+ /** Opens a move out of a zone. A second open one for the same vehicle is refused by the database. */
+ Relocation startRelocation(long siteId,long revisionId,long vehicleId,long zoneId,List<Long> routeNodeIds,long targetNodeId);
+ /** Replaces the route of an open move, for a vehicle that is no longer on it. */
+ void replaceRelocationRoute(long relocationId,List<Long> routeNodeIds);
+ /** Closes a move, saying why: arrived, or abandoned because it could no longer be carried out. */
+ void finishRelocation(long relocationId,String reason);
  /** Applies a checked transition and appends the matching event in one transaction. */
  TransportOrder transition(long siteId,long orderId,OrderStatus target,String reason,String actorCode,String traceId);
 }
