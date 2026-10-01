@@ -28,10 +28,13 @@ import java.util.Set;
 public record OperationOptions(String commType,int nodeCount,boolean moreEnabled,String moreType,
  int moreRemainingNodes,int moreRemainingPercent,
  boolean autoDispatch,int commandMaxAttempts,int commandRetrySeconds,int positionStaleSeconds,
- int moreMinRemainingNodes,boolean moreVehicleSignal,String mergeControl,int transferMaxAttempts){
+ int moreMinRemainingNodes,boolean moreVehicleSignal,String mergeControl,int transferMaxAttempts,String runMode){
  public static final Set<String> COMM_TYPES=Set.of("PC","PLC","MQTT");
  public static final Set<String> MORE_TYPES=Set.of("NODE","DISTANCE");
  public static final Set<String> MERGE_CONTROLS=Set.of("CONTROLLER","VEHICLE_SIGNAL");
+ /** SIMULATION: vehicles simulated inside the server carry out every movement and transfer. OPERATION: real devices. */
+ public static final Set<String> RUN_MODES=Set.of("SIMULATION","OPERATION");
+ public boolean simulated(){return "SIMULATION".equals(runMode);}
  public boolean usesVda(){return "MQTT".equals(commType);}
  public void validate(){
   ConfigurationException.require(COMM_TYPES.contains(commType==null?"":commType),"INVALID_COMM_TYPE");
@@ -49,5 +52,6 @@ public record OperationOptions(String commType,int nodeCount,boolean moreEnabled
   ConfigurationException.require(moreMinRemainingNodes<=moreRemainingNodes,"MORE_MIN_ABOVE_TRIGGER");
   ConfigurationException.require(MERGE_CONTROLS.contains(mergeControl==null?"":mergeControl),"INVALID_MERGE_CONTROL");
   ConfigurationException.require(transferMaxAttempts>=1&&transferMaxAttempts<=10,"INVALID_TRANSFER_MAX_ATTEMPTS");
+  ConfigurationException.require(RUN_MODES.contains(runMode==null?"":runMode),"INVALID_RUN_MODE");
  }
 }

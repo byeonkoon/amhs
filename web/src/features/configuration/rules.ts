@@ -127,6 +127,7 @@ export function explainCode(code: string): string {
     MORE_MIN_ABOVE_TRIGGER: 'MORE 연장 하한은 남은 노드 수보다 클 수 없습니다.',
     INVALID_MERGE_CONTROL: '합류 판단은 CONTROLLER 또는 VEHICLE_SIGNAL입니다.',
     INVALID_TRANSFER_MAX_ATTEMPTS: '이적재 재시도 상한은 1~10 사이여야 합니다.',
+    INVALID_RUN_MODE: '운전 모드는 SIMULATION 또는 OPERATION입니다.',
     SITE_NOT_IN_MAINTENANCE: '유지보수 상태에서만 설정을 변경할 수 있습니다.',
   };
   return map[code] ?? code;

@@ -179,11 +179,11 @@ class JdbcCommandOutbox implements CommandOutbox {
  // The join queries need every column qualified; deriving them keeps one list.
  private static final String JOINED_PREFIX="c.";
  private static final String COLS="id,order_id,command_id,command_type,payload,status,attempt,"
-  +"last_outcome,last_error,created_at,published_at,settled_at,vehicle_id";
+  +"last_outcome,last_error,created_at,published_at,settled_at,vehicle_id,site_id";
  private static final String JOINED=JOINED_PREFIX+COLS.replace(",",","+JOINED_PREFIX);
  private static final RowMapper<DeviceCommand> MAPPER=(r,n)->new DeviceCommand(
   r.getLong(1),r.getObject(2)==null?null:r.getLong(2),r.getString(3),r.getString(4),r.getString(5),
   CommandStatus.valueOf(r.getString(6)),r.getInt(7),r.getString(8),r.getString(9),
   r.getObject(10,OffsetDateTime.class),r.getObject(11,OffsetDateTime.class),r.getObject(12,OffsetDateTime.class),
-  r.getObject(13)==null?null:r.getLong(13));
+  r.getObject(13)==null?null:r.getLong(13),r.getLong(14));
 }

@@ -97,6 +97,8 @@ export type OperationOptions = {
   mergeControl: 'CONTROLLER' | 'VEHICLE_SIGNAL';
   /** How often a pickup or drop shown not to have happened is tried again before recovery. */
   transferMaxAttempts: number;
+  /** SIMULATION: vehicles simulated in the server carry out the work. OPERATION: real devices. */
+  runMode: 'SIMULATION' | 'OPERATION';
 };
 /** Topic version and JSON version are separate values; actions are sent at the pickup and drop ports. */
 export type VdaProfileSettings = {
@@ -342,6 +344,10 @@ export function explainDecision(decision: string): string {
     RECOVERY_LOCATION_REQUIRED: '화물이 출발지에 있는지 목적지에 있는지 지정해야 합니다.',
     RECOVERY_REASON_REQUIRED: '화물 위치를 어떻게 확인했는지 적어야 합니다.',
     ORDER_NOT_IN_RECOVERY: '복구 대기 중인 작업이 아닙니다.',
+    PRINCIPAL_REQUIRED: '토큰이 없거나 맞지 않습니다. 오른쪽 위 계정 메뉴의 토큰 입력에서 토큰을 다시 넣어 주세요.',
+    ROLE_OPERATOR_REQUIRED: '운전자 이상 권한이 필요합니다.',
+    ROLE_ENGINEER_REQUIRED: '설비 설정 권한이 필요합니다.',
+    ROLE_ADMIN_REQUIRED: '관리자 권한이 필요합니다.',
     PICKUP_EVIDENCE_REQUIRED: '화물이 차량에 실렸다는 증거가 있어야 반송 단계로 넘어갑니다.',
     DROP_EVIDENCE_REQUIRED: '화물이 목적지에 내려졌다는 증거가 있어야 완료됩니다.',
     RETRY_EVIDENCE_REQUIRED: '이적재가 일어나지 않았다는 증거가 있어야 다시 시도합니다.',

@@ -47,6 +47,8 @@ export function AppShell(props: {
   subtitle: string;
   server: ServerState;
   session: Session;
+  /** The site's run mode as stored, so the frame never claims simulation for a site on real devices. */
+  runMode?: 'SIMULATION' | 'OPERATION' | null;
   onAccount: (item: 'system' | 'accounts' | 'signin') => void;
   children: React.ReactNode;
 }) {
@@ -85,7 +87,7 @@ export function AppShell(props: {
               <span className="mono">{serverText}</span>
             </span>
           </div>
-          <div className="row"><span>Build</span><span className="mono">v0.1.0 · SIM</span></div>
+          <div className="row"><span>Build</span><span className="mono">v0.1.0 · {props.runMode === 'SIMULATION' ? 'SIM' : props.runMode === 'OPERATION' ? 'OPR' : '—'}</span></div>
         </div>
       </aside>
 
@@ -111,14 +113,14 @@ export function AppShell(props: {
             <h1>{props.title}</h1>
             <div className="sub">{props.subtitle}</div>
           </div>
-          <div className="simbadge">시뮬레이션 화면 예시</div>
+          <div className="simbadge">{props.runMode === 'SIMULATION' ? '시뮬레이션 운전 중' : props.runMode === 'OPERATION' ? '실제 장비 운전' : '운전 모드 확인 중'}</div>
         </div>
 
         <div className="body">{props.children}</div>
 
         <div className="appfoot">
           <span>AMHS Operations · <span className="mono">v0.1.0</span></span>
-          <span className="r"><span>관제시스템</span><span className="mono">가상 데이터 · 시뮬레이션 모드</span></span>
+          <span className="r"><span>관제시스템</span><span className="mono">{props.runMode === 'SIMULATION' ? '가상 차량 · 시뮬레이션 모드' : props.runMode === 'OPERATION' ? '실제 장비 · 오퍼레이션 모드' : '—'}</span></span>
         </div>
       </div>
     </div>

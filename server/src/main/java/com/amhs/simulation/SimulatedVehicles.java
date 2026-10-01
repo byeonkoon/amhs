@@ -53,6 +53,26 @@ public class SimulatedVehicles {
  public boolean isSimulated(long vehicleId){ return vehicles.containsKey(vehicleId); }
  /** Takes every vehicle out of the simulation. Their last reported state stays as it was. */
  public void clear(){ vehicles.clear(); }
+ /** Stops simulating vehicles of sites that are no longer in simulation. */
+ public void clearExcept(java.util.Set<Long> sites){ vehicles.values().removeIf(v->!sites.contains(v.siteId())); }
+
+ /**
+  * Puts every vehicle in use at the site on the track that is not simulated yet: where it last
+  * reported if anyone did, otherwise at its configured initial node.
+  */
+ public void placeAll(long siteId,com.amhs.fleet.VehicleConfiguration configuration){
+  long revisionId=ledger.activeRevision(siteId);
+  var reported=new HashMap<Long,VehicleSnapshot>();
+  for(var v:fleet.snapshot(siteId,revisionId)) reported.put(v.id(),v);
+  for(var record:configuration.list(siteId)){
+   var settings=record.settings();
+   if(!settings.enabled()||settings.revisionId()!=revisionId||vehicles.containsKey(record.id())) continue;
+   var last=reported.get(record.id());
+   long node=last!=null&&last.nodeId()!=null?last.nodeId():settings.initialNodeId();
+   vehicles.put(record.id(),new Sim(siteId,record.id(),List.of(),last!=null&&last.carrierPresent(),false));
+   report(siteId,record.id(),node,"IDLE",last!=null&&last.carrierPresent());
+  }
+ }
  public Set<Long> placed(){ return Set.copyOf(vehicles.keySet()); }
  /** The next pickup or drop this vehicle attempts does not happen; the sensor says so. */
  public void failNextTransfer(long vehicleId){ vehicles.computeIfPresent(vehicleId,(id,s)->s.failing(true)); }

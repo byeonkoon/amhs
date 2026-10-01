@@ -1,6 +1,6 @@
 import React from 'react';
 import {
-  ApiError, cfgApi, get, send, setWriteToken, hasWriteToken,
+  ApiError, cfgApi, get, getAs, opsApi, send, setWriteToken, hasWriteToken,
   ROLE_LABEL, type Cfg, type OperationOptions, type Session,
 } from '../../api';
 import { Chip, Empty } from '../../shell/States';
@@ -66,6 +66,18 @@ export function SystemOptionsScreen({ session }: { session: Session }) {
           </p>
         </div></div>
       )}
+
+      <h3 style={category}>운전 <span className="hint" style={{ fontWeight: 400 }}>실제 장비로 돌릴지, 서버 안의 가상 차량으로 돌릴지</span></h3>
+      <Panel id="sys-run" title="운전 모드" aux="저장하면 다음 주기부터 적용됩니다" defaultOpen padded>
+        <Field label="운전 모드"
+          note="SIMULATION은 서버 안의 가상 차량이 이동·적재·하역을 모두 처리합니다. 사용 중인 차량을 마지막 보고 위치(없으면 설정의 초기 노드)에 자동 배치하고 1.5초마다 한 단계씩 진행합니다. OPERATION은 실제 장비 어댑터로 명령을 보내며, 아직 어댑터가 없어 명령은 나가지 않습니다.">
+          <select style={field} value={draft.runMode} disabled={!mayChange}
+            onChange={e => set({ runMode: e.target.value as OperationOptions['runMode'] })}>
+            <option value="SIMULATION">SIMULATION · 시뮬레이션</option>
+            <option value="OPERATION">OPERATION · 실제 장비</option>
+          </select>
+        </Field>
+      </Panel>
 
       <h3 style={category}>통신 <span className="hint" style={{ fontWeight: 400 }}>차량과 주고받는 방식과, 회선에 나가지 못한 명령의 재전송</span></h3>
       <Panel id="sys-comm" title="통신 방식" aux="사이트의 모든 차량에 적용됩니다" defaultOpen padded>
@@ -171,7 +183,26 @@ export function SystemOptionsScreen({ session }: { session: Session }) {
 /** Token entry. The value is held in memory for the session and never stored or shown back. */
 export function SignInScreen({ onChanged }: { onChanged: () => void }) {
   const [value, setValue] = React.useState('');
+  const [result, setResult] = React.useState<{ tone: string; text: string } | null>(null);
   const present = hasWriteToken();
+  // A token is kept only if the server recognises it, so a wrong one is said at once instead of
+  // surfacing later as every command being refused.
+  async function apply() {
+    setWriteToken(value); setValue('');
+    try {
+      const session = await getAs<Session>(opsApi.session());
+      if (!session.authenticated) {
+        setWriteToken(null);
+        setResult({ tone: 'er', text: '토큰이 맞지 않습니다. 계정에 발급된 토큰을 넣어 주세요(비밀번호가 아닙니다).' });
+      } else {
+        setResult({ tone: 'ok', text: `${session.code} · ${ROLE_LABEL[session.role]} 권한으로 접속했습니다.` });
+      }
+    } catch {
+      setWriteToken(null);
+      setResult({ tone: 'er', text: '서버에 확인하지 못했습니다.' });
+    }
+    onChanged();
+  }
   return (
     <section className="card">
       <div className="ch"><h2>접속 토큰</h2><span className="aux">조회는 토큰 없이 됩니다</span></div>
@@ -183,14 +214,14 @@ export function SignInScreen({ onChanged }: { onChanged: () => void }) {
         <input type="password" style={{ ...field, width: '100%' }} value={value} placeholder={present ? '새 토큰을 입력하면 교체됩니다' : '토큰'}
           onChange={e => setValue(e.target.value)} autoComplete="off" />
         <div style={{ display: 'flex', gap: 8 }}>
-          <button type="button" style={primary} disabled={!value.trim()}
-            onClick={() => { setWriteToken(value); setValue(''); onChanged(); }}>적용</button>
+          <button type="button" style={primary} disabled={!value.trim()} onClick={apply}>적용</button>
           <button type="button" style={ghost} disabled={!present}
             onClick={() => { setWriteToken(null); setValue(''); onChanged(); }}>해제</button>
         </div>
         <p className="hint" style={{ margin: 0 }}>
-          현재 상태: <b>{present ? '토큰 있음' : '토큰 없음'}</b>
+          현재 상태: <b>{present ? '토큰 있음' : '토큰 없음'}</b> · 토큰은 브라우저마다, 새로고침할 때마다 다시 넣어야 합니다.
         </p>
+        {result && <p style={{ margin: 0, fontSize: 12 }}><Chip tone={result.tone}>{result.tone === 'er' ? '거부' : '완료'}</Chip> {result.text}</p>}
       </div>
     </section>
   );

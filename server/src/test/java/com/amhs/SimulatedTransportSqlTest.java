@@ -17,11 +17,11 @@ import static org.assertj.core.api.Assertions.*;
  */
 @SpringBootTest(properties={
  "spring.datasource.url=${AMHS_TEST_DB_URL:jdbc:postgresql://127.0.0.1:5432/amhs_test}",
- "amhs.configuration.writes-enabled=true","amhs.simulation.enabled=true"})
+ "amhs.configuration.writes-enabled=true"})
 @EnabledIfEnvironmentVariable(named="AMHS_SQL_TEST",matches="true")
 class SimulatedTransportSqlTest {
  @Autowired SimulatedVehicles simulator; @Autowired SiteSweep sweep; @Autowired TransportOrders orders;
- @Autowired TrafficControl traffic; @Autowired JdbcTemplate jdbc; @Autowired com.amhs.fleet.FleetState fleet;
+ @Autowired TrafficControl traffic; @Autowired JdbcTemplate jdbc; @Autowired com.amhs.fleet.FleetState fleet; @Autowired com.amhs.fleet.VehicleConfiguration configuration;
  private static final long SITE=1, OHT=1;
 
  @BeforeEach @AfterEach void clean(){
@@ -39,11 +39,12 @@ class SimulatedTransportSqlTest {
  }
  @BeforeEach void options(){
   jdbc.update("UPDATE platform.site_operation SET auto_dispatch=TRUE,node_count=4,more_enabled=TRUE,more_type='NODE',"
-   +"more_remaining_nodes=1,more_min_remaining_nodes=0,more_vehicle_signal=FALSE,transfer_max_attempts=3 WHERE site_id=?",SITE);
+   +"more_remaining_nodes=1,more_min_remaining_nodes=0,more_vehicle_signal=FALSE,transfer_max_attempts=3,run_mode='SIMULATION'"
+   +" WHERE site_id=?",SITE);
  }
  @AfterEach void restore(){
   jdbc.update("UPDATE platform.site_operation SET auto_dispatch=FALSE,node_count=20,more_remaining_nodes=3,"
-   +"more_min_remaining_nodes=1 WHERE site_id=?",SITE);
+   +"more_min_remaining_nodes=1,run_mode='OPERATION' WHERE site_id=?",SITE);
   jdbc.update("UPDATE fleet.vehicle_profile SET assignment_enabled=FALSE WHERE site_id=?",SITE);
  }
 
@@ -97,5 +98,25 @@ class SimulatedTransportSqlTest {
   var pass=sweep.run(SITE,"test",null);
   assertThat(pass.assigned()).contains(id);
   assertThat(pass.published().notDelivered()).isPositive();
+ }
+
+ @Test void aSiteOnRealDevicesSendsNothingToSimulatedVehicles(){
+  simulator.place(SITE,OHT,101L);
+  jdbc.update("UPDATE platform.site_operation SET run_mode='OPERATION' WHERE site_id=?",SITE);
+  long id=accept("OHT-C");
+  var pass=sweep.run(SITE,"test",null);
+  assertThat(pass.assigned()).contains(id);
+  assertThat(pass.published().notDelivered()).isPositive();
+  assertThat(jdbc.queryForObject("SELECT last_error FROM integration.command_outbox WHERE order_id=? ORDER BY id LIMIT 1",
+   String.class,id)).isEqualTo("ADAPTER_NOT_IMPLEMENTED");
+ }
+
+ @Test void enteringSimulationPutsTheVehiclesInUseOnTheTrack(){
+  jdbc.update("UPDATE fleet.vehicle_profile SET enabled=TRUE WHERE site_id=?",SITE);
+  simulator.placeAll(SITE,configuration);
+  assertThat(simulator.isSimulated(OHT)).isTrue();
+  assertThat(fleet.find(SITE,1,OHT).orElseThrow().source()).isEqualTo("SIMULATED");
+  simulator.clearExcept(java.util.Set.of());
+  assertThat(simulator.isSimulated(OHT)).isFalse();
  }
 }

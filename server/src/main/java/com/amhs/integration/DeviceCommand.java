@@ -8,4 +8,4 @@ import java.time.OffsetDateTime;
 public record DeviceCommand(long id, Long orderId, String commandId, String commandType, String payload,
                             CommandStatus status, int attempt, String lastOutcome, String lastError,
                             OffsetDateTime createdAt, OffsetDateTime publishedAt, OffsetDateTime settledAt,
-                            Long vehicleId) {}
+                            Long vehicleId, long siteId) {}

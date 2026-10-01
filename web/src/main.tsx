@@ -83,7 +83,7 @@ function App() {
     <AppShell active={menu === 'system' || menu === 'signin' ? 'overview' : menu}
       onSelect={k => { setMenu(k); setSelected(null); }}
       onAccount={item => setMenu(item === 'accounts' ? 'system' : item)}
-      session={session}
+      session={session} runMode={data?.options?.runMode ?? null}
       crumb={['Home', page.crumb, page.title]} title={page.title} subtitle={page.subtitle} server={server}>
       {menu === 'signin' ? <SignInScreen onChanged={retry} />
         : error ? <div className="card"><Failed error={error} onRetry={retry} /></div>
