@@ -141,6 +141,10 @@ public class TransportOrders {
 
  public Optional<TransportOrder> find(long siteId,long orderId){return ledger.find(siteId,orderId);}
  public List<TransportOrder> list(long siteId,OrderStatus status,int limit){return ledger.list(siteId,status,Math.min(Math.max(limit,1),200));}
+ /** Orders still being worked on. Finished ones belong to the history, not to the work list. */
+ public List<TransportOrder> listActive(long siteId,int limit){return ledger.listActive(siteId,Math.min(Math.max(limit,1),500));}
+ /** Finished orders, newest first, for the history. */
+ public List<TransportOrder> listFinished(long siteId,int limit){return ledger.listFinished(siteId,Math.min(Math.max(limit,1),500));}
  public List<OrderEventView> events(long siteId,long orderId){
   if(ledger.find(siteId,orderId).isEmpty())throw reject("ORDER_NOT_FOUND","unknown order");
   return ledger.events(siteId,orderId);

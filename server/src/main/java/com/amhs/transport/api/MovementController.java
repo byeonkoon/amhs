@@ -1,8 +1,13 @@
 package com.amhs.transport.api;
 import com.amhs.transport.ContinuousMovement;
 import com.amhs.transport.SiteSweep;
+import com.amhs.transport.TransportRejected;
+import com.amhs.transport.ZoneEvacuation;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 /**
  * Extends movement authority for work already under way. Asking and being told nothing was
@@ -11,8 +16,10 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/api/v1/sites/{siteId}")
 class MovementController {
-    private final ContinuousMovement movement; private final SiteSweep sweep;
-    MovementController(ContinuousMovement movement,SiteSweep sweep) { this.movement=movement; this.sweep=sweep; }
+    private final ContinuousMovement movement; private final SiteSweep sweep; private final ZoneEvacuation moves;
+    MovementController(ContinuousMovement movement,SiteSweep sweep,ZoneEvacuation moves) {
+        this.movement=movement; this.sweep=sweep; this.moves=moves;
+    }
     @PostMapping("/movement-authority")
     List<ContinuousMovement.Extension> extendAll(@PathVariable long siteId) { return movement.extendAll(siteId); }
     @PostMapping("/movement-authority/{orderId}")
@@ -23,5 +30,22 @@ class MovementController {
     @PostMapping("/operation-sweep")
     SiteSweep.Sweep sweep(@PathVariable long siteId) {
         return sweep.run(siteId,"api",UUID.randomUUID().toString());
+    }
+
+    /**
+     * An operator sends a vehicle to a node. Refused unless the vehicle is in use, under remote
+     * control, idle and free of any order or other move; the first stretch is commanded at once.
+     */
+    @PostMapping("/vehicles/{vehicleId}/move")
+    ZoneEvacuation.Step move(@PathVariable long siteId,@PathVariable long vehicleId,@RequestBody Map<String,Object> body) {
+        if(!(body.get("targetNodeId") instanceof Number target))
+            throw new TransportRejected("TARGET_NODE_INVALID","targetNodeId is required",false);
+        return moves.moveTo(siteId,vehicleId,target.longValue());
+    }
+    @ExceptionHandler(TransportRejected.class)
+    ResponseEntity<Map<String,String>> rejected(TransportRejected ex) {
+        var status="VEHICLE_NOT_FOUND".equals(ex.code())?HttpStatus.NOT_FOUND
+            :ex.isConflict()?HttpStatus.CONFLICT:HttpStatus.UNPROCESSABLE_ENTITY;
+        return ResponseEntity.status(status).body(Map.of("code",ex.code(),"message",ex.getMessage()));
     }
 }

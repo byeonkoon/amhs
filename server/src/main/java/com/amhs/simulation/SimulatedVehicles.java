@@ -48,7 +48,7 @@ public class SimulatedVehicles {
  /** Puts a vehicle on the track: online, under remote control, idle, empty. */
  public VehicleSnapshot place(long siteId,long vehicleId,long nodeId){
   vehicles.put(vehicleId,new Sim(siteId,vehicleId,List.of(),false,false));
-  return report(siteId,vehicleId,nodeId,true,false);
+  return report(siteId,vehicleId,nodeId,"IDLE",false);
  }
  public boolean isSimulated(long vehicleId){ return vehicles.containsKey(vehicleId); }
  /** Takes every vehicle out of the simulation. Their last reported state stays as it was. */
@@ -103,20 +103,23 @@ public class SimulatedVehicles {
   if(i>=0&&i<sim.authority().size()-1){
    long next=sim.authority().get(i+1);
    boolean last=i+1==sim.authority().size()-1;
-   report(siteId,sim.vehicleId(),next,last,sim.carrier());
+   report(siteId,sim.vehicleId(),next,last?"IDLE":"MOVING",sim.carrier());
    traffic.advanced(siteId,sim.vehicleId(),next);
    // Moving for an order that was only assigned means it is on its way to the pickup.
    if(order!=null&&order.status()==OrderStatus.ASSIGNED) move(siteId,order,OrderStatus.TO_SOURCE,TransitionEvidence.system());
    return new Step(sim.vehicleId(),"MOVED",next);
   }
   // Standing at the end of what it may drive: idle. Keep the report fresh.
-  report(siteId,sim.vehicleId(),at,true,sim.carrier());
+  String standing=order==null?"IDLE":order.status()==OrderStatus.LOADING?"LOADING"
+   :order.status()==OrderStatus.UNLOADING?"UNLOADING":"IDLE";
+  report(siteId,sim.vehicleId(),at,standing,sim.carrier());
   if(order==null) return new Step(sim.vehicleId(),"IDLE",at);
   Long source=portNode.get(order.sourcePortId()), destination=portNode.get(order.destinationPortId());
   switch(order.status()){
    case ASSIGNED -> { if(source!=null&&at==source){ move(siteId,order,OrderStatus.TO_SOURCE,TransitionEvidence.system());
     return new Step(sim.vehicleId(),"ARRIVED_AT_PICKUP",at);} }
-   case TO_SOURCE -> { if(source!=null&&at==source){ move(siteId,order,OrderStatus.LOADING,TransitionEvidence.system());
+   case TO_SOURCE -> { if(source!=null&&at==source){ report(siteId,sim.vehicleId(),at,"LOADING",sim.carrier());
+    move(siteId,order,OrderStatus.LOADING,TransitionEvidence.system());
     return new Step(sim.vehicleId(),"PICKUP_STARTED",at);} }
    case LOADING -> {
     if(sim.failNextTransfer()){
@@ -125,11 +128,12 @@ public class SimulatedVehicles {
      return new Step(sim.vehicleId(),"PICKUP_NOT_DONE",at);
     }
     vehicles.put(sim.vehicleId(),sim.withCarrier(true));
-    report(siteId,sim.vehicleId(),at,true,true);
+    report(siteId,sim.vehicleId(),at,"IDLE",true);
     move(siteId,order,OrderStatus.TO_DESTINATION,TransitionEvidence.sensor(CarrierLocation.VEHICLE));
     return new Step(sim.vehicleId(),"PICKED_UP",at);
    }
-   case TO_DESTINATION -> { if(destination!=null&&at==destination){ move(siteId,order,OrderStatus.UNLOADING,TransitionEvidence.system());
+   case TO_DESTINATION -> { if(destination!=null&&at==destination){ report(siteId,sim.vehicleId(),at,"UNLOADING",sim.carrier());
+    move(siteId,order,OrderStatus.UNLOADING,TransitionEvidence.system());
     return new Step(sim.vehicleId(),"DROP_STARTED",at);} }
    case UNLOADING -> {
     if(sim.failNextTransfer()){
@@ -138,7 +142,7 @@ public class SimulatedVehicles {
      return new Step(sim.vehicleId(),"DROP_NOT_DONE",at);
     }
     vehicles.put(sim.vehicleId(),sim.withCarrier(false));
-    report(siteId,sim.vehicleId(),at,true,false);
+    report(siteId,sim.vehicleId(),at,"IDLE",false);
     move(siteId,order,OrderStatus.COMPLETED,TransitionEvidence.sensor(CarrierLocation.DESTINATION));
     return new Step(sim.vehicleId(),"DROPPED",at);
    }
@@ -150,8 +154,10 @@ public class SimulatedVehicles {
  private void move(long siteId,TransportOrder order,OrderStatus to,TransitionEvidence evidence){
   orders.advance(siteId,order.id(),to,"simulated vehicle",ACTOR,null,evidence);
  }
- private VehicleSnapshot report(long siteId,long vehicleId,long nodeId,boolean idle,boolean carrier){
+ /** Reports the way a vehicle does: remote mode, a status on its own axis, and whether it carries. */
+ private VehicleSnapshot report(long siteId,long vehicleId,long nodeId,String status,boolean carrier){
   long revisionId=ledger.activeRevision(siteId);
-  return fleet.report(siteId,revisionId,vehicleId,new VehicleReport(nodeId,true,true,idle,carrier,"SIMULATED"));
+  return fleet.report(siteId,revisionId,vehicleId,
+   new VehicleReport(nodeId,true,true,false,carrier,"SIMULATED",null,"REMOTE",status));
  }
 }

@@ -28,6 +28,10 @@ import java.util.*;
  * place outside where it is not in the way: in no zone, not a merge point, not a port, not where
  * another vehicle stands or holds.
  *
+ * <p>The same machinery carries an operator's move: a vehicle sent to a chosen node by hand
+ * ({@link #moveTo}). It is opened only for a vehicle that is in use, under remote control, idle and
+ * holding no order, the conditions the existing system checks before a manual move.
+ *
  * <p>The move carries no transport order, so its command belongs to the vehicle alone. While it is
  * open the vehicle is not offered to dispatch. It is continued past congestion the way an order's
  * route is: only once the vehicle has used what it was given, and never while an earlier command
@@ -90,7 +94,9 @@ public class ZoneEvacuation {
   }
   // Taken out of use, or out of automatic work, by somebody: it is not moved on the controller's
   // own initiative either. It stays where it is until an operator moves it or turns it back on.
-  if(!vehicle.enabled()||!vehicle.assignmentEnabled()){
+  // An operator's own move is the operator deciding, so only taking it out of use stops that.
+  boolean manual=relocation!=null&&Relocation.MANUAL.equals(relocation.purpose());
+  if(!vehicle.enabled()||(!manual&&!vehicle.assignmentEnabled())){
    if(relocation!=null) ledger.finishRelocation(relocation.id(),"VEHICLE_DISABLED");
    return none(vehicleId,vehicle.enabled()?"ASSIGNMENT_DISABLED":"VEHICLE_DISABLED");
   }
@@ -107,7 +113,8 @@ public class ZoneEvacuation {
   if(relocation==null){
    var place=nearestClearPlace(siteId,map,zoneOf.keySet(),vehicle,vehicles);
    if(place==null) return none(vehicleId,"NO_PLACE_OUTSIDE");
-   relocation=ledger.startRelocation(siteId,revisionId,vehicleId,zone,place.nodeIds(),place.nodeIds().getLast());
+   relocation=ledger.startRelocation(siteId,revisionId,vehicleId,zone,place.nodeIds(),place.nodeIds().getLast(),
+    Relocation.ZONE_EVACUATION);
   }
   var route=relocation.routeNodeIds();
   int at=route.indexOf(vehicle.nodeId());
@@ -131,7 +138,45 @@ public class ZoneEvacuation {
   var added=new ArrayList<>(grant.nodeIds()); added.remove(vehicle.nodeId());
   String commandId="relocation-"+relocation.id()+"-seq-"+traffic.heldBy(siteId,vehicleId).getLast().sequence();
   outbox.enqueueForVehicle(siteId,vehicleId,commandId,"MOVE",payload(vehicle,relocation,grant,added));
-  return new Step(vehicleId,"EVACUATING",added,commandId);
+  return new Step(vehicleId,Relocation.MANUAL.equals(relocation.purpose())?"MOVING_TO_TARGET":"EVACUATING",added,commandId);
+ }
+
+ /**
+  * An operator sends a vehicle to a node. Refused unless the vehicle is in use, reporting lately,
+  * under remote control, idle, holds no order, has no move open and no command unsettled, and the
+  * node is on the map, usable and reachable. The first stretch is granted and commanded at once; the
+  * rest follows on later sweeps like any move out of a zone.
+  */
+ @Transactional
+ public Step moveTo(long siteId,long vehicleId,long targetNodeId){
+  long revisionId=ledger.activeRevision(siteId);
+  fleet.lockForAssignment(siteId,List.of(vehicleId));
+  var vehicle=fleet.find(siteId,revisionId,vehicleId)
+   .orElseThrow(()->new TransportRejected("VEHICLE_NOT_FOUND","unknown vehicle",false));
+  var cutoff=OffsetDateTime.now().minusSeconds(operations.get(siteId).settings().positionStaleSeconds());
+  if(!vehicle.enabled()) throw new TransportRejected("VEHICLE_DISABLED","vehicle is not in use",false);
+  if(ledger.assignedVehicleIds(siteId).contains(vehicleId))
+   throw new TransportRejected("VEHICLE_HAS_ORDER","vehicle is carrying out an order",true);
+  if(ledger.relocatingVehicleIds(siteId).contains(vehicleId))
+   throw new TransportRejected("VEHICLE_ALREADY_MOVING","vehicle already has a move under way",true);
+  if(vehicle.nodeId()==null) throw new TransportRejected("POSITION_UNKNOWN","nobody has reported where it is",true);
+  if(!vehicle.reportedSince(cutoff)) throw new TransportRejected("POSITION_STALE","no recent report from the vehicle",true);
+  if(!vehicle.online()||!vehicle.remote()) throw new TransportRejected("VEHICLE_NOT_REMOTE","vehicle is not under remote control",true);
+  if(!vehicle.idle()) throw new TransportRejected("VEHICLE_NOT_IDLE","vehicle is not idle",true);
+  if(!outbox.unresolvedForVehicle(siteId,vehicleId).isEmpty())
+   throw new TransportRejected("COMMAND_OUTSTANDING","an earlier command is not settled yet",true);
+  var map=topology.getMap(siteId,revisionId);
+  var target=map.nodes().stream().filter(n->n.id()==targetNodeId).findFirst()
+   .orElseThrow(()->new TransportRejected("TARGET_NODE_INVALID","node is not on the active map",false));
+  if(!target.enabled()) throw new TransportRejected("TARGET_NODE_INVALID","node is out of service",false);
+  if(targetNodeId==vehicle.nodeId()) throw new TransportRejected("ALREADY_AT_TARGET","vehicle already stands there",false);
+  var route=planner.find(map,vehicle.nodeId(),targetNodeId);
+  if(route.status()!=RouteResult.Status.FOUND) throw new TransportRejected("NO_PATH","no route from where it stands",false);
+  ledger.startRelocation(siteId,revisionId,vehicleId,null,route.nodeIds(),targetNodeId,Relocation.MANUAL);
+  var zoneOf=new HashMap<Long,Long>();
+  for(ZoneOccupancy zone:traffic.zones(siteId))
+   if(zone.enabled()&&zone.revisionId()==revisionId) for(Long node:zone.nodeIds()) zoneOf.put(node,zone.id());
+  return step(siteId,revisionId,vehicleId,zoneOf,fleet.snapshot(siteId,revisionId),cutoff);
  }
 
  /**
@@ -175,7 +220,7 @@ public class ZoneEvacuation {
  private String payload(VehicleSnapshot vehicle,Relocation relocation,ReservationGrant grant,List<Long> added){
   var body=new LinkedHashMap<String,Object>();
   body.put("vehicleId",vehicle.id()); body.put("vehicleCode",vehicle.code());
-  body.put("purpose","ZONE_EVACUATION");
+  body.put("purpose",Relocation.MANUAL.equals(relocation.purpose())?"MANUAL_MOVE":"ZONE_EVACUATION");
   body.put("fromNodeId",vehicle.nodeId());
   body.put("targetNodeId",relocation.targetNodeId());
   body.put("authorizedNodeIds",grant.nodeIds());

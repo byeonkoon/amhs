@@ -21,7 +21,7 @@ const MENU: Entry[] = [
   { key: 'equipment', label: 'Equipment', sub: 'EQP / Rack / Slot', ready: true },
   { key: 'inventory', label: 'Inventory', sub: 'Carrier / Stocker', ready: false },
   { key: 'alarms', label: 'Alarms', sub: 'Event / Notification', ready: false },
-  { key: 'history', label: 'History', sub: 'Log / Trace', ready: false },
+  { key: 'history', label: 'History', sub: 'Log / Trace', ready: true },
   { key: 'diagnostics', label: 'Diagnostics', sub: 'Health / Recovery', ready: true },
 ];
 

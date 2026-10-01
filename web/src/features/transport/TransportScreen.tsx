@@ -7,7 +7,8 @@ import {
 import { Chip, Empty } from '../../shell/States';
 
 /**
- * Transport work as it is actually driven: accept, assign, extend, cancel.
+ * Transport work as it is actually driven: create, assign, extend, cancel. Only work still going
+ * on is listed here; finished orders are read in the history.
  *
  * Each action reports what it did in the system's own terms. Waiting for a vehicle, or for a
  * road to clear, is an ordinary answer here and is worded as one rather than as a failure.
@@ -59,6 +60,15 @@ export function TransportScreen(props: {
     });
   };
 
+  const create = (draft: { source: string; destination: string; carrier: string; priority: number }) => act(async () => {
+    // A fresh key per press: pressing again is a new order, a retry of the same press is not.
+    const res = await send<TransportOrder>(opsApi.orders(), 'POST',
+      { sourcePortCode: draft.source, destinationPortCode: draft.destination,
+        carrierCode: draft.carrier || null, priority: draft.priority },
+      '운전자 작업 생성', { 'Idempotency-Key': crypto.randomUUID() });
+    return { tone: 'ok', text: `작업 #${res.id}를 접수했습니다 (${draft.source} → ${draft.destination}). 배차를 기다립니다.` };
+  });
+
   const extendAll = () => act(async () => {
     const res = await send<Extension[]>(opsApi.extendAll(), 'POST', undefined, '이동 허가 연장');
     const extended = res.filter(e => e.decision === 'EXTENDED');
@@ -97,8 +107,10 @@ export function TransportScreen(props: {
           </div>
         )}
 
+        <CreateOrder map={props.map} busy={busy} onCreate={create} />
+
         {props.orders.length === 0
-          ? <Empty title="접수된 반송 작업이 없습니다" hint="작업이 접수되면 대기 상태로 이 목록에 나타납니다." />
+          ? <Empty title="진행 중인 반송 작업이 없습니다" hint="위에서 작업을 만들면 대기 상태로 나타납니다. 끝난 작업은 History에서 봅니다." />
           : (
             <div className="tbl-scroll">
               <table className="t">
@@ -143,6 +155,44 @@ export function TransportScreen(props: {
 
       {selected !== null && <OrderDetail orderId={selected} map={props.map} vehicles={props.vehicles} />}
     </>
+  );
+}
+
+/**
+ * A new order from the screen. Ports are offered by access vehicle type: a destination is offered
+ * only when the same kind of vehicle can reach it, which is what the server would insist on anyway.
+ */
+function CreateOrder(props: {
+  map: MapData; busy: boolean;
+  onCreate: (draft: { source: string; destination: string; carrier: string; priority: number }) => void;
+}) {
+  const [source, setSource] = React.useState('');
+  const [destination, setDestination] = React.useState('');
+  const [carrier, setCarrier] = React.useState('');
+  const [priority, setPriority] = React.useState(50);
+  const sourcePort = props.map.ports.find(p => p.code === source);
+  const destinations = props.map.ports.filter(p => p.code !== source && (!sourcePort || p.accessVehicleType === sourcePort.accessVehicleType));
+  const ready = source && destination && hasWriteToken() && priority >= 0 && priority <= 100;
+  const field: React.CSSProperties = { border: '1px solid var(--ln2)', borderRadius: 5, padding: '3px 6px', fontSize: 12, background: 'var(--srf)', color: 'var(--ink)' };
+  return (
+    <div className="cb" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', borderBottom: '1px solid var(--ln)', fontSize: 12 }}>
+      <b>작업 생성</b>
+      <label>출발 <select style={field} value={source} onChange={e => { setSource(e.target.value); setDestination(''); }}>
+        <option value="">선택</option>
+        {props.map.ports.map(p => <option key={p.id} value={p.code}>{p.code} · {p.accessVehicleType}</option>)}
+      </select></label>
+      <label>도착 <select style={field} value={destination} onChange={e => setDestination(e.target.value)} disabled={!source}>
+        <option value="">선택</option>
+        {destinations.map(p => <option key={p.id} value={p.code}>{p.code} · {p.accessVehicleType}</option>)}
+      </select></label>
+      <label>캐리어 <input style={{ ...field, width: 110 }} value={carrier} placeholder="선택 입력" onChange={e => setCarrier(e.target.value)} /></label>
+      <label>우선순위 <input type="number" min={0} max={100} style={{ ...field, width: 60 }} value={priority}
+        onChange={e => setPriority(Number(e.target.value))} /></label>
+      <button type="button" disabled={props.busy || !ready} onClick={() => props.onCreate({ source, destination, carrier, priority })}
+        style={{ border: '1px solid var(--acc)', background: ready ? 'var(--acc)' : 'var(--srf)', color: ready ? '#fff' : 'var(--mut)',
+          borderRadius: 5, padding: '3px 14px', fontSize: 12, cursor: ready ? 'pointer' : 'default' }}>생성</button>
+      {!hasWriteToken() && <span className="hint">토큰을 입력해야 만들 수 있습니다.</span>}
+    </div>
   );
 }
 

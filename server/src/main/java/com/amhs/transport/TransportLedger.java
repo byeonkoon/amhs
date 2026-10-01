@@ -47,11 +47,16 @@ public interface TransportLedger {
  /** Vehicles currently being moved out of a zone, which are not offered to dispatch meanwhile. */
  List<Long> relocatingVehicleIds(long siteId);
  /** Opens a move out of a zone. A second open one for the same vehicle is refused by the database. */
- Relocation startRelocation(long siteId,long revisionId,long vehicleId,long zoneId,List<Long> routeNodeIds,long targetNodeId);
+ Relocation startRelocation(long siteId,long revisionId,long vehicleId,Long zoneId,List<Long> routeNodeIds,long targetNodeId,
+                            String purpose);
  /** Replaces the route of an open move, for a vehicle that is no longer on it. */
  void replaceRelocationRoute(long relocationId,List<Long> routeNodeIds);
  /** Closes a move, saying why: arrived, or abandoned because it could no longer be carried out. */
  void finishRelocation(long relocationId,String reason);
+ /** Orders that are still being worked on, newest first. Finished ones are history. */
+ List<TransportOrder> listActive(long siteId,int limit);
+ /** Orders that have finished (completed, cancelled or failed), newest first. */
+ List<TransportOrder> listFinished(long siteId,int limit);
  /** Applies a checked transition resting on the system's own bookkeeping. */
  default TransportOrder transition(long siteId,long orderId,OrderStatus target,String reason,String actorCode,String traceId){
   return transition(siteId,orderId,target,reason,actorCode,traceId,TransitionEvidence.system());

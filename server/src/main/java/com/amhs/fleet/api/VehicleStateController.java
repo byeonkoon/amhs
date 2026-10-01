@@ -24,11 +24,12 @@ class VehicleStateController {
     }
     @PutMapping("/{vehicleId}")
     Map<String,Object> report(@PathVariable long siteId,@PathVariable long revisionId,@PathVariable long vehicleId,
-                              @RequestBody VehicleReport report) {
+                              @RequestBody Body report) {
         // Only a device may claim to be a device. Everything entered by hand is marked simulated.
         var source="DEVICE".equals(report.source())?"DEVICE":"SIMULATED";
         var stored=fleet.report(siteId,revisionId,vehicleId,new VehicleReport(report.nodeId(),report.online(),
-            report.remote(),report.idle(),report.carrierPresent(),source,report.destinationChangeEnabled()));
+            report.remote(),report.idle(),report.carrierPresent(),source,report.destinationChangeEnabled(),
+            report.mode(),report.status()));
         // An arrival further along is the only thing that frees the nodes behind it, so the
         // release happens here, with the evidence, rather than on a timer somewhere else.
         var progress=stored.nodeId()==null?null:traffic.advanced(siteId,vehicleId,stored.nodeId());
@@ -37,6 +38,9 @@ class VehicleStateController {
         if(progress!=null) body.put("traffic",progress);
         return body;
     }
+    /** The report as sent. It becomes a VehicleReport here, so a bad mode or status is a 422, not a parse error. */
+    record Body(Long nodeId,boolean online,boolean remote,boolean idle,boolean carrierPresent,String source,
+                Boolean destinationChangeEnabled,String mode,String status) {}
     @ExceptionHandler(IllegalArgumentException.class)
     ResponseEntity<Map<String,String>> rejected(IllegalArgumentException ex) {
         var status="VEHICLE_NOT_FOUND".equals(ex.getMessage())?HttpStatus.NOT_FOUND:HttpStatus.UNPROCESSABLE_ENTITY;

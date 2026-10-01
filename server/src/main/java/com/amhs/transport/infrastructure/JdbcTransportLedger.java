@@ -39,6 +39,16 @@ class JdbcTransportLedger implements TransportLedger {
   return one("SELECT "+COLS+" FROM transport.order WHERE site_id=? AND id=?",siteId,orderId);
  }
  @Transactional(readOnly=true)
+ public List<TransportOrder> listActive(long siteId,int limit){
+  return jdbc.query("SELECT "+COLS+" FROM transport.order WHERE site_id=? AND status NOT IN ('COMPLETED','CANCELLED','FAILED')"
+   +" ORDER BY id DESC LIMIT ?",MAPPER,siteId,limit);
+ }
+ @Transactional(readOnly=true)
+ public List<TransportOrder> listFinished(long siteId,int limit){
+  return jdbc.query("SELECT "+COLS+" FROM transport.order WHERE site_id=? AND status IN ('COMPLETED','CANCELLED','FAILED')"
+   +" ORDER BY id DESC LIMIT ?",MAPPER,siteId,limit);
+ }
+ @Transactional(readOnly=true)
  public List<TransportOrder> list(long siteId,OrderStatus status,int limit){
   return status==null
    ?jdbc.query("SELECT "+COLS+" FROM transport.order WHERE site_id=? ORDER BY id DESC LIMIT ?",MAPPER,siteId,limit)
@@ -281,10 +291,10 @@ class JdbcTransportLedger implements TransportLedger {
  }
 
  private static final String RELOCATION_COLS=
-  "id,site_id,revision_id,vehicle_id,zone_id,route_node_ids,target_node_id,started_at";
+  "id,site_id,revision_id,vehicle_id,zone_id,route_node_ids,target_node_id,started_at,purpose";
  private static final org.springframework.jdbc.core.RowMapper<Relocation> RELOCATION=(r,n)->new Relocation(
-  r.getLong(1),r.getLong(2),r.getLong(3),r.getLong(4),r.getLong(5),
-  List.of((Long[])r.getArray(6).getArray()),r.getLong(7),r.getObject(8,OffsetDateTime.class));
+  r.getLong(1),r.getLong(2),r.getLong(3),r.getLong(4),r.getObject(5)==null?null:r.getLong(5),
+  List.of((Long[])r.getArray(6).getArray()),r.getLong(7),r.getObject(8,OffsetDateTime.class),r.getString(9));
 
  @Transactional(readOnly=true)
  public List<Relocation> openRelocations(long siteId){
@@ -297,11 +307,12 @@ class JdbcTransportLedger implements TransportLedger {
    (r,n)->r.getLong(1),siteId);
  }
  @Transactional(propagation=Propagation.MANDATORY)
- public Relocation startRelocation(long siteId,long revisionId,long vehicleId,long zoneId,List<Long> routeNodeIds,long targetNodeId){
+ public Relocation startRelocation(long siteId,long revisionId,long vehicleId,Long zoneId,List<Long> routeNodeIds,long targetNodeId,
+                                   String purpose){
   try{
-   return jdbc.queryForObject("INSERT INTO transport.relocation(site_id,revision_id,vehicle_id,zone_id,route_node_ids,target_node_id)"
-    +" VALUES(?,?,?,?,?,?) RETURNING "+RELOCATION_COLS,RELOCATION,
-    siteId,revisionId,vehicleId,zoneId,routeNodeIds.toArray(Long[]::new),targetNodeId);
+   return jdbc.queryForObject("INSERT INTO transport.relocation(site_id,revision_id,vehicle_id,zone_id,route_node_ids,target_node_id,purpose)"
+    +" VALUES(?,?,?,CAST(? AS BIGINT),?,?,?) RETURNING "+RELOCATION_COLS,RELOCATION,
+    siteId,revisionId,vehicleId,zoneId,routeNodeIds.toArray(Long[]::new),targetNodeId,purpose);
   }catch(DuplicateKeyException e){
    throw new TransportRejected("RELOCATION_CONFLICT","vehicle is already being moved",true);
   }

@@ -26,9 +26,16 @@ class TransportOrderController {
   var accepted=orders.accept(siteId,request,actor(),traceId());
   return ResponseEntity.status(accepted.created()?HttpStatus.CREATED:HttpStatus.OK).body(accepted.order());
  }
+ /**
+  * {@code scope=active} lists the work still going on, {@code scope=finished} the history.
+  * Without a scope, or with a single {@code status}, it lists as before.
+  */
  @GetMapping
  List<TransportOrder> list(@PathVariable long siteId,
-  @RequestParam(required=false) String status,@RequestParam(defaultValue="50") int limit){
+  @RequestParam(required=false) String status,@RequestParam(required=false) String scope,
+  @RequestParam(defaultValue="50") int limit){
+  if("active".equals(scope)) return orders.listActive(siteId,limit);
+  if("finished".equals(scope)) return orders.listFinished(siteId,limit);
   return orders.list(siteId,status==null?null:parseStatus(status),limit);
  }
  @GetMapping("/{orderId}")

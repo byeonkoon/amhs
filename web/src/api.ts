@@ -19,6 +19,8 @@ export type TransportOrder = {
   id: number; status: string; sourcePortId: number; destinationPortId: number;
   vehicleType: 'OHT' | 'AGV'; carrierCode?: string | null; priority: number;
   createdAt: string; startedAt?: string | null; terminalAt?: string | null;
+  /** SOURCE, VEHICLE, DESTINATION or UNKNOWN, as established by evidence. */
+  carrierLocation?: string;
 };
 
 /** Thrown with the HTTP status so screens can explain 404 and 503 differently. */
@@ -52,6 +54,10 @@ export const api = {
   vehicles: (revisionId?: number) => `/api/v1/sites/${SITE_ID}/vehicles${revisionId === undefined ? '' : `?revisionId=${revisionId}`}`,
   health: () => '/actuator/health',
   transportOrders: (limit = 20) => `/api/v1/sites/${SITE_ID}/transport-orders?limit=${limit}`,
+  /** Work still going on; finished orders are history. */
+  activeOrders: (limit = 200) => `/api/v1/sites/${SITE_ID}/transport-orders?scope=active&limit=${limit}`,
+  finishedOrders: (limit = 200) => `/api/v1/sites/${SITE_ID}/transport-orders?scope=finished&limit=${limit}`,
+  orderEvents: (orderId: number) => `/api/v1/sites/${SITE_ID}/transport-orders/${orderId}/events`,
 };
 
 // ---- 설정 (A19 계약) ----
@@ -113,7 +119,8 @@ let writeToken: string | null = null;
 export const setWriteToken = (v: string | null) => { writeToken = v && v.trim() ? v.trim() : null; };
 export const hasWriteToken = () => writeToken !== null;
 
-export async function send<T>(url: string, method: 'POST' | 'PUT', body: unknown, reason?: string): Promise<T> {
+export async function send<T>(url: string, method: 'POST' | 'PUT', body: unknown, reason?: string,
+  extraHeaders?: Record<string, string>): Promise<T> {
   if (!writeToken) throw new ApiError(401, url, '설정 변경 토큰이 없습니다. 먼저 토큰을 입력해 주세요.');
   const res = await fetch(url, {
     method,
@@ -122,6 +129,7 @@ export async function send<T>(url: string, method: 'POST' | 'PUT', body: unknown
       Authorization: `Bearer ${writeToken}`,
       // Header values must be ISO-8859-1, so a Korean reason travels percent-encoded as UTF-8.
       ...(reason ? { 'X-Amhs-Reason': encodeURIComponent(reason) } : {}),
+      ...(extraHeaders ?? {}),
     },
     body: JSON.stringify(body),
   });
@@ -148,6 +156,20 @@ export type VehicleSnapshot = {
   destinationChangeEnabled?: boolean | null;
   /** Configured home node; a vehicle leaving a zone goes there first when it can. */
   homeNodeId?: number | null;
+  /** Who drives it: MANUAL, SEMI_AUTO or REMOTE. Null until something reports. */
+  mode?: string | null;
+  /** What it is doing: IDLE, MOVING, ERROR, PAUSED, CHARGING, LOADING, UNLOADING or RESET. */
+  status?: string | null;
+};
+
+/** The vehicle's mode and status as the existing system names them. */
+export const MODE_LABEL: Record<string, string> = { MANUAL: '수동', SEMI_AUTO: '반자동', REMOTE: '원격' };
+export const STATUS_LABEL: Record<string, string> = {
+  IDLE: '대기', MOVING: '이동', ERROR: '에러', PAUSED: '일시정지', CHARGING: '충전',
+  LOADING: '적재', UNLOADING: '하역', RESET: '리셋',
+};
+export type OrderEvent = {
+  seq: number; oldStatus: string | null; newStatus: string; reason: string | null; actorCode: string | null; occurredAt: string;
 };
 
 /** How current a reported position is, against the site's configured threshold. */
@@ -224,6 +246,8 @@ export const opsApi = {
   slots: (unitId: number, rackId: number) =>
     `/api/v1/sites/${SITE_ID}/configuration/equipment/${unitId}/racks/${rackId}/slots`,
   assignments: () => `/api/v1/sites/${SITE_ID}/transport-orders/assignments`,
+  /** An operator sends a vehicle to a node. */
+  moveVehicle: (vehicleId: number) => `/api/v1/sites/${SITE_ID}/vehicles/${vehicleId}/move`,
   session: () => `/api/v1/session`,
 };
 
@@ -323,6 +347,18 @@ export function explainDecision(decision: string): string {
     RETRY_EVIDENCE_REQUIRED: '이적재가 일어나지 않았다는 증거가 있어야 다시 시도합니다.',
     EVIDENCE_NEEDS_PRINCIPAL: '사람의 확인·결정은 로그인한 사용자만 기록할 수 있습니다.',
     EVACUATING: '작업을 마치고 Zone 안에 남은 차량을 Zone 밖으로 보냈습니다.',
+    MOVING_TO_TARGET: '차량을 목표 노드로 보냈습니다.',
+    VEHICLE_HAS_ORDER: '작업을 수행 중인 차량은 수동으로 이동할 수 없습니다.',
+    VEHICLE_ALREADY_MOVING: '이미 이동 중인 수동·퇴출 이동이 있습니다.',
+    VEHICLE_NOT_REMOTE: '원격 모드가 아닌 차량은 이동 명령을 받지 않습니다.',
+    VEHICLE_NOT_IDLE: '대기 상태가 아닌 차량은 이동 명령을 받지 않습니다.',
+    TARGET_NODE_INVALID: '목표 노드가 지도에 없거나 사용 금지입니다.',
+    ALREADY_AT_TARGET: '차량이 이미 그 노드에 있습니다.',
+    SOURCE_PORT_NOT_FOUND: '출발 포트가 없습니다.',
+    DESTINATION_PORT_NOT_FOUND: '도착 포트가 없습니다.',
+    SAME_SOURCE_AND_DESTINATION: '출발과 도착 포트가 같습니다.',
+    ACCESS_VEHICLE_TYPE_MISMATCH: '출발·도착 포트의 접근 차종이 다릅니다.',
+    ORDER_ALREADY_TERMINAL: '이미 끝났거나 취소 확인을 기다리는 작업입니다.',
     ARRIVED: 'Zone 밖 목적지에 도착해 이동을 마쳤습니다.',
     HAS_ORDER: '작업을 가진 차량은 그 작업으로 Zone을 나갑니다.',
     NO_PLACE_OUTSIDE: 'Zone 밖에 비어 있는 갈 곳이 없습니다.',

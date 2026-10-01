@@ -39,13 +39,13 @@ class JdbcFleetState implements FleetState {
    if(onMap==0) throw new IllegalArgumentException("NODE_NOT_IN_REVISION");
   }
   jdbc.update("INSERT INTO fleet.vehicle_state(site_id,vehicle_id,revision_id,node_id,online,remote,idle,carrier_present,"
-   +"source,destination_change_enabled) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(site_id,vehicle_id) DO UPDATE SET"
+   +"source,destination_change_enabled,mode,status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(site_id,vehicle_id) DO UPDATE SET"
    +" revision_id=EXCLUDED.revision_id,node_id=EXCLUDED.node_id,online=EXCLUDED.online,remote=EXCLUDED.remote,"
    +" idle=EXCLUDED.idle,carrier_present=EXCLUDED.carrier_present,source=EXCLUDED.source,"
-   +" destination_change_enabled=EXCLUDED.destination_change_enabled,"
+   +" destination_change_enabled=EXCLUDED.destination_change_enabled,mode=EXCLUDED.mode,status=EXCLUDED.status,"
    +" reported_at=now(),version=fleet.vehicle_state.version+1",
    siteId,vehicleId,revisionId,report.nodeId(),report.online(),report.remote(),report.idle(),
-   report.carrierPresent(),report.source(),report.destinationChangeEnabled());
+   report.carrierPresent(),report.source(),report.destinationChangeEnabled(),report.mode(),report.status());
   return find(siteId,revisionId,vehicleId).orElseThrow();
  }
 
@@ -64,7 +64,7 @@ class JdbcFleetState implements FleetState {
 
  private static final String SELECT="SELECT p.id,p.code,p.v_type,s.node_id,p.enabled,p.assignment_enabled,"
   +"COALESCE(s.online,FALSE),COALESCE(s.remote,FALSE),COALESCE(s.idle,FALSE),COALESCE(s.carrier_present,FALSE),"
-  +"COALESCE(s.source,'INITIAL_CONFIGURATION'),s.reported_at,s.destination_change_enabled,p.home_node_id"
+  +"COALESCE(s.source,'INITIAL_CONFIGURATION'),s.reported_at,s.destination_change_enabled,p.home_node_id,s.mode,s.status"
   +" FROM fleet.vehicle_profile p LEFT JOIN fleet.vehicle_state s ON s.site_id=p.site_id AND s.vehicle_id=p.id"
   +" WHERE p.site_id=? AND p.revision_id=?";
  // reported_at stays null until something reports, so a screen can tell "never" from "a while ago".
@@ -72,5 +72,6 @@ class JdbcFleetState implements FleetState {
   r.getLong(1),r.getString(2),VehicleType.valueOf(r.getString(3)),
   r.getObject(4)==null?null:r.getLong(4),
   r.getBoolean(5),r.getBoolean(6),r.getBoolean(7),r.getBoolean(8),r.getBoolean(9),r.getBoolean(10),r.getString(11),
-  r.getObject(12,java.time.OffsetDateTime.class),r.getObject(13,Boolean.class),r.getObject(14,Long.class));
+  r.getObject(12,java.time.OffsetDateTime.class),r.getObject(13,Boolean.class),r.getObject(14,Long.class),
+  r.getString(15),r.getString(16));
 }
