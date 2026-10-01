@@ -12,6 +12,7 @@
 - dispatch: DispatchEvaluator.evaluate는 후보 제안 또는 사유를 반환한다. 할당 원장은 변경하지 않는다.
 - transport: **현재 구현**: 작업 접수·상태 머신·할당·경로 저장·이동 시작/연장·취소·복구 종료, 작업을 마치고 Zone에 남은 차량의 퇴출 이동(작업 없는 이동). Carrier 위치는 복구 종료 때 사람이 확인한 값으로만 기록한다. 목적지 slot 선점은 **미구현**.
 - traffic: **현재 구현**: 노드 점유 원장, 연속 구간 허가(request), 도착 보고에 따른 반납(advanced), 작업 종료 시 앞쪽 반납(releaseAhead), 대기 기록과 교착 탐지, Zone 정원, 합류 순서. 경로 계산만으로 이동을 허가하지 않는다.
+- simulation: **현재 구현**: 설정으로만 켜지는 서버 내장 시뮬레이터(공통 명령·증거 계약 사용). 실제 규격 시뮬레이터는 미구현.
 - alarm/realtime: **미구현**. 알람 원장 / 확정된 snapshot·delta 전달.
 모듈 루트의 public 타입이 공개 API다. 하위 infrastructure/api는 모듈 내부이며 Modulith.verify로 경계를 검사한다.
 의존성: dispatch → routing/topology/platform, routing → topology, topology/fleet → platform. infrastructure 역참조는 금지한다.
