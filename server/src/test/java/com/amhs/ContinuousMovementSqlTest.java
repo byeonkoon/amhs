@@ -38,6 +38,8 @@ class ContinuousMovementSqlTest {
   jdbc.update("UPDATE transport.assignment SET released_at=now() WHERE released_at IS NULL");
   jdbc.update("DELETE FROM traffic.reservation_wait WHERE site_id=?",SITE);
   jdbc.update("DELETE FROM traffic.node_reservation WHERE site_id=?",SITE);
+  // Commands go out one vehicle at a time, so anything earlier cases left open would hold this one's back.
+  jdbc.update("UPDATE integration.command_outbox SET status='WITHDRAWN' WHERE status IN ('PENDING','DISPATCHING','FAILED')");
   jdbc.update("UPDATE fleet.vehicle_profile SET assignment_enabled=TRUE WHERE site_id=? AND revision_id=?",SITE,REVISION);
   // A floor of zero keeps these cases about the trigger alone; the floor has its own tests.
   jdbc.update("UPDATE platform.site_operation SET more_enabled=TRUE,more_type='NODE',more_min_remaining_nodes=0,"
@@ -63,19 +65,35 @@ class ContinuousMovementSqlTest {
   tx.execute(s->fleet.report(SITE,REVISION,OHT,new VehicleReport(NEXT,true,true,false,false,"SIMULATED",destinationChangeEnabled)));
  }
  private ContinuousMovement.Extension resume(long orderId){ return tx.execute(s->movement.resume(SITE,orderId)); }
- private long assignedOrder(String key){
+ /** Assigned and still before the pickup: the vehicle stands on the source and may go no further. */
+ private long pickupOrder(String key){
   long id=tx.execute(s->orders.accept(SITE,new OrderRequest("TEST",run+"-"+key,"OHT-A","OHT-C",run+"-"+key,50),
    "tester","trace").order().id());
   tx.execute(s->assignment.assign(SITE,id,"tester","trace"));
   return id;
  }
+ /**
+  * Picked up and given the delivery leg. The vehicle starts on the source, so the first movement
+  * authorises nothing past it; once the pickup is reported the delivery is a fresh MOVE.
+  */
+ private long assignedOrder(String key){
+  long id=pickupOrder(key);
+  for(var stage:List.of(OrderStatus.TO_SOURCE,OrderStatus.LOADING,OrderStatus.TO_DESTINATION))
+   tx.execute(s->orders.advance(SITE,id,stage,"test","tester","trace"));
+  assertThat(resume(id).decision()).isEqualTo("RESUMED");
+  return id;
+ }
  private ContinuousMovement.Extension extend(long orderId){ return tx.execute(s->movement.extend(SITE,orderId)); }
  private void acknowledgeAll(long orderId){
-  // Acknowledgement only means something for a command that was actually attempted. The outbox
-  // is shared and one sweep is capped, so publishing repeats until this order has been reached.
-  for(int pass=0;pass<40&&outbox.byOrder(SITE,orderId).stream().anyMatch(c->c.status()==CommandStatus.PENDING);pass++)
+  // Acknowledgement only means something for a command that was actually attempted. Commands for
+  // one vehicle leave one at a time, so each is acknowledged before the next one can be published.
+  for(int pass=0;pass<40;pass++){
    gateway.publishPending(SITE);
-  for(var c:outbox.byOrder(SITE,orderId)) tx.execute(s->outbox.acknowledge(c.commandId()));
+   for(var c:outbox.byOrder(SITE,orderId))
+    if(c.status()!=CommandStatus.PENDING&&c.status()!=CommandStatus.WITHDRAWN&&c.status()!=CommandStatus.ACCEPTED)
+     tx.execute(s->outbox.acknowledge(c.commandId()));
+   if(outbox.byOrder(SITE,orderId).stream().noneMatch(c->c.status()==CommandStatus.PENDING)) return;
+  }
  }
  private List<Long> heldNodes(){ return traffic.heldBy(SITE,OHT).stream().map(NodeHold::nodeId).toList(); }
 
@@ -149,7 +167,7 @@ class ContinuousMovementSqlTest {
  }
 
  @Test void aFinishedOrderIsNotExtended(){
-  long id=assignedOrder("finished");
+  long id=pickupOrder("finished");
   tx.execute(s->orders.cancel(SITE,id,"operator stopped it","tester","trace"));
   report(START,true,true,false);
   assertThat(extend(id).decision()).isEqualTo("ORDER_FINISHED");
@@ -211,7 +229,15 @@ class ContinuousMovementSqlTest {
   var resumed=resume(id);
   assertThat(resumed.decision()).isEqualTo("RESUMED");
   assertThat(resumed.addedNodeIds()).isNotEmpty().doesNotContain(NEXT);
-  assertThat(outbox.byOrder(SITE,id).stream().filter(c->c.commandType().equals("MOVE"))).hasSize(2);
+  assertThat(outbox.byOrder(SITE,id).stream()
+   .filter(c->c.commandType().equals("MOVE")&&c.status()!=CommandStatus.WITHDRAWN)).hasSize(2);
+ }
+
+ @Test void beforeThePickupNothingPastTheSourceIsAuthorised(){
+  long id=pickupOrder("pickup");
+  assertThat(heldNodes()).containsExactly(START);
+  report(START,true,true,false);
+  assertThat(extend(id).decision()).isEqualTo("AUTHORIZED_TO_PICKUP");
  }
 
  @Test void aVehicleIsOnlyRestartedOnceItHasUsedItsAuthority(){

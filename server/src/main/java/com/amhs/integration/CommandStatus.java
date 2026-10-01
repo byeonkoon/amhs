@@ -10,7 +10,9 @@ public enum CommandStatus {
     /** The device acknowledged receipt. This is receipt, not execution completion. */
     ACCEPTED,
     /** The send provably did not reach the device, so repeating it cannot duplicate anything. */
-    FAILED;
+    FAILED,
+    /** Never left, and its order stopped moving before it could. It is kept as a record and never sent. */
+    WITHDRAWN;
     /** Only outcomes that prove nothing reached the device may be repeated. */
     public boolean retryable() { return this==PENDING||this==FAILED; }
     /** An outcome nobody can settle automatically; an operator has to decide. */

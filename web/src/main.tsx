@@ -285,7 +285,7 @@ const STEP: Record<string, { label: string; note: string }> = {
   TO_DESTINATION: { label: '반송', note: '목적지로 이동 중' },
   UNLOADING: { label: '인계', note: '화물을 내리는 중' },
   COMPLETED: { label: '완료', note: '반송이 끝났습니다' },
-  CANCEL_REQUESTED: { label: '취소 요청', note: '화물을 실은 뒤라 장비 확인을 기다리는 중' },
+  CANCEL_REQUESTED: { label: '취소 요청', note: '차량이 명령을 받았거나 화물을 실은 뒤라 장비 확인을 기다리는 중' },
   CANCELLED: { label: '취소', note: '취소되었습니다' },
   FAILED: { label: '실패', note: '수행하지 못했습니다' },
   RECOVERY_REQUIRED: { label: '복구 필요', note: '화물 위치를 확인해야 합니다' },

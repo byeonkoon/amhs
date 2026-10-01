@@ -2,6 +2,7 @@ package com.amhs.transport;
 import com.amhs.platform.VehicleType;
 import com.amhs.fleet.FleetState;
 import com.amhs.fleet.VehicleSnapshot;
+import com.amhs.integration.CommandOutbox;
 import com.amhs.traffic.TrafficControl;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.stereotype.Service;
@@ -18,8 +19,9 @@ import java.util.*;
 @Service
 public class TransportOrders {
  private final TransportLedger ledger; private final FleetState fleet; private final TrafficControl traffic;
- public TransportOrders(TransportLedger ledger,FleetState fleet,TrafficControl traffic){
-  this.ledger=ledger; this.fleet=fleet; this.traffic=traffic;
+ private final CommandOutbox outbox;
+ public TransportOrders(TransportLedger ledger,FleetState fleet,TrafficControl traffic,CommandOutbox outbox){
+  this.ledger=ledger; this.fleet=fleet; this.traffic=traffic; this.outbox=outbox;
  }
 
  public record Accepted(TransportOrder order,boolean created){}
@@ -58,18 +60,52 @@ public class TransportOrders {
   return new Accepted(ledger.create(draft,fingerprint,actorCode,traceId),true);
  }
 
- /** Cancel before pickup ends the order; after pickup it waits for the device to confirm. */
+ /**
+  * Cancel before pickup ends the order; after pickup it waits for the device to confirm.
+  *
+  * <p>A cancel before pickup also waits when a movement command has already left for the vehicle:
+  * it may be driving on it, and ending the order would give its road away while it is still on it.
+  * The order's commands are locked before deciding, the same rows the publisher claims, so a send
+  * cannot slip in between the decision and the withdrawal of what has not left.
+  */
  @Transactional
  public TransportOrder cancel(long siteId,long orderId,String reason,String actorCode,String traceId){
-  var order=ledger.find(siteId,orderId).orElseThrow(()->reject("ORDER_NOT_FOUND","unknown order"));
+  var order=ledger.lock(siteId,orderId).orElseThrow(()->reject("ORDER_NOT_FOUND","unknown order"));
   var target=order.status().cancelTarget();
   if(target==null)throw new TransportRejected("ORDER_ALREADY_TERMINAL","order is already finished",true);
+  var withdrawal=outbox.withdraw(orderId,"ORDER_CANCEL");
+  if(target==OrderStatus.CANCELLED&&withdrawal.anyLeft()) target=OrderStatus.CANCEL_REQUESTED;
   return settle(siteId,orderId,ledger.transition(siteId,orderId,target,reason,actorCode,traceId));
  }
 
  @Transactional
  public TransportOrder advance(long siteId,long orderId,OrderStatus target,String reason,String actorCode,String traceId){
-  return settle(siteId,orderId,ledger.transition(siteId,orderId,target,reason,actorCode,traceId));
+  var after=ledger.transition(siteId,orderId,target,reason,actorCode,traceId);
+  // A stage in which the vehicle is not meant to drive takes back whatever movement has not left:
+  // a command written for the previous stage would otherwise go out after the stage had ended.
+  if(!after.status().movable()) outbox.withdraw(orderId,"ORDER_"+after.status());
+  return settle(siteId,orderId,after);
+ }
+
+ /**
+  * Ends a recovery once somebody has established where the carrier is. A carrier at the
+  * destination completes the order, one back at the source cancels it. Still on the vehicle, or
+  * not known, is not an answer: the order stays in recovery and keeps what it holds.
+  */
+ @Transactional
+ public TransportOrder resolveRecovery(long siteId,long orderId,CarrierLocation location,String reason,
+                                       String actorCode,String traceId){
+  var order=ledger.lock(siteId,orderId).orElseThrow(()->reject("ORDER_NOT_FOUND","unknown order"));
+  if(order.status()!=OrderStatus.RECOVERY_REQUIRED)
+   throw new TransportRejected("ORDER_NOT_IN_RECOVERY",order.status()+" is not waiting for recovery",true);
+  if(location!=CarrierLocation.SOURCE&&location!=CarrierLocation.DESTINATION)
+   throw reject("RECOVERY_LOCATION_REQUIRED","the carrier must be found at the source or at the destination");
+  if(reason==null||reason.isBlank())
+   throw reject("RECOVERY_REASON_REQUIRED","say how the carrier location was established");
+  ledger.recordCarrierLocation(siteId,orderId,location);
+  var target=location==CarrierLocation.DESTINATION?OrderStatus.COMPLETED:OrderStatus.CANCELLED;
+  outbox.withdraw(orderId,"ORDER_RECOVERED");
+  return settle(siteId,orderId,ledger.transition(siteId,orderId,target,"RECOVERED: "+reason,actorCode,traceId));
  }
 
  /**

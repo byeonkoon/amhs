@@ -3,6 +3,7 @@ import com.amhs.dispatch.DispatchEvaluator;
 import com.amhs.fleet.FleetState;
 import com.amhs.fleet.VehicleSnapshot;
 import com.amhs.integration.CommandOutbox;
+import com.amhs.platform.OperationOptionConfiguration;
 import com.amhs.topology.TopologyQuery;
 import com.amhs.traffic.ReservationGrant;
 import com.amhs.traffic.TrafficControl;
@@ -10,6 +11,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 
@@ -27,12 +29,13 @@ public class TransportAssignment {
  private final TransportLedger ledger; private final TopologyQuery topology;
  private final FleetState fleet; private final DispatchEvaluator evaluator;
  private final CommandOutbox outbox; private final ObjectMapper json; private final TrafficControl traffic;
- private final ZoneDetour detour;
+ private final ZoneDetour detour; private final OperationOptionConfiguration operations;
  public TransportAssignment(TransportLedger ledger,TopologyQuery topology,FleetState fleet,
-                            CommandOutbox outbox,ObjectMapper json,TrafficControl traffic,ZoneDetour detour){
+                            CommandOutbox outbox,ObjectMapper json,TrafficControl traffic,ZoneDetour detour,
+                            OperationOptionConfiguration operations){
   this.ledger=ledger; this.topology=topology; this.fleet=fleet;
   this.evaluator=new DispatchEvaluator(); this.outbox=outbox; this.json=json; this.traffic=traffic;
-  this.detour=detour;
+  this.detour=detour; this.operations=operations;
  }
 
  public record Assigned(TransportOrder order,AssignmentView assignment,String commandId,boolean created){}
@@ -55,38 +58,50 @@ public class TransportAssignment {
   // A vehicle already holding a job is not a candidate. The unique index still settles a race,
   // but filtering here lets a second order pick a different vehicle instead of just failing.
   var busy=ledger.assignedVehicleIds(siteId);
-  var candidates=fleet.snapshot(siteId,order.revisionId()).stream()
-   .filter(v->!busy.contains(v.id())).map(TransportAssignment::candidate).toList();
-  var evaluated=evaluator.evaluate(map,order.sourcePortId(),order.destinationPortId(),candidates);
+  var free=fleet.snapshot(siteId,order.revisionId()).stream().filter(v->!busy.contains(v.id())).toList();
+  // A state nobody has confirmed lately is not a state to dispatch on: the vehicle that said it
+  // was idle and online a day ago may be anywhere now. The same line is drawn again under the lock.
+  var cutoff=staleBefore(siteId);
+  var current=free.stream().filter(v->v.reportedSince(cutoff)).toList();
+  var evaluated=evaluator.evaluate(map,order.sourcePortId(),order.destinationPortId(),
+   current.stream().map(TransportAssignment::candidate).toList());
   // Waiting for a vehicle is not a rejection of the request, so these stay retryable.
   var proposal=evaluated.proposal()
-   .orElseThrow(()->new TransportRejected(evaluated.reason(),"no vehicle could be assigned",true));
+   .orElseThrow(()->new TransportRejected(current.isEmpty()&&!free.isEmpty()?"VEHICLE_STATE_STALE":evaluated.reason(),
+    "no vehicle could be assigned",true));
 
   fleet.lockForAssignment(siteId,List.of(proposal.vehicleId()));
   // The proposal was made before the lock, so eligibility is checked again underneath it.
   var vehicle=fleet.find(siteId,order.revisionId(),proposal.vehicleId())
    .orElseThrow(()->new TransportRejected("VEHICLE_NOT_FOUND","assigned vehicle disappeared",true));
-  if(!eligible(vehicle))
+  if(!eligible(vehicle)||!vehicle.reportedSince(cutoff))
    throw new TransportRejected("VEHICLE_NO_LONGER_ELIGIBLE","vehicle changed state before it was held",true);
+  // The route was costed from where the vehicle stood when it was proposed. If it has moved since,
+  // that route starts somewhere it no longer is.
+  if(!vehicle.nodeId().equals(proposal.toSource().nodeIds().getFirst()))
+   throw new TransportRejected("VEHICLE_MOVED","vehicle moved after the route was planned",true);
 
   var route=fullRoute(proposal);
-  long assignmentId=ledger.assign(orderId,proposal.vehicleId(),route);
+  // The pickup is the last node of the approach leg; nothing past it is authorised until the
+  // pickup has been reported.
+  int pickupIndex=proposal.toSource().nodeIds().size()-1;
+  long assignmentId=ledger.assign(orderId,proposal.vehicleId(),route,pickupIndex);
   var assigned=ledger.transition(siteId,orderId,OrderStatus.ASSIGNED,
    "assigned to "+vehicle.code(),actorCode,traceId);
 
   // Holding the vehicle is not permission to move it. The command may only carry the run traffic
   // actually granted, so a congested aisle produces a shorter movement rather than a vehicle
-  // driving into nodes somebody else is standing on.
-  var grant=traffic.request(siteId,order.revisionId(),proposal.vehicleId(),orderId,route);
+  // driving into nodes somebody else is standing on. Before the pickup that run ends at the source.
+  var grant=traffic.request(siteId,order.revisionId(),proposal.vehicleId(),orderId,route.subList(0,pickupIndex+1));
   // Heading into a bay that is already full: go round the loop instead of stopping at the branch.
-  grant=detour.aroundFullZone(siteId,order.revisionId(),proposal.vehicleId(),orderId,0,grant);
+  grant=detour.aroundFullZone(siteId,order.revisionId(),proposal.vehicleId(),orderId,assigned.status(),0,grant);
   if(grant.stalled())
    // The vehicle is held and the order is assigned; it simply cannot start yet. Emitting no
    // command is the point, and the recorded wait says what it is waiting for.
    return new Assigned(assigned,ledger.activeAssignment(siteId,orderId).orElseThrow(),null,true);
 
   String commandId="order-"+orderId+"-assignment-"+assignmentId+"-MOVE";
-  outbox.enqueue(orderId,commandId,"MOVE",payload(proposal,vehicle,grant));
+  outbox.enqueue(orderId,proposal.vehicleId(),commandId,"MOVE",payload(proposal,vehicle,grant));
   return new Assigned(assigned,ledger.activeAssignment(siteId,orderId).orElseThrow(),commandId,true);
  }
 
@@ -103,6 +118,9 @@ public class TransportAssignment {
   var delivery=proposal.toDestination().nodeIds();
   route.addAll(delivery.subList(Math.min(1,delivery.size()),delivery.size()));
   return route;
+ }
+ private OffsetDateTime staleBefore(long siteId){
+  return OffsetDateTime.now().minusSeconds(operations.get(siteId).settings().positionStaleSeconds());
  }
  private static boolean eligible(VehicleSnapshot v){
   return v.enabled()&&v.assignmentEnabled()&&v.online()&&v.remote()&&v.idle()&&v.nodeId()!=null;

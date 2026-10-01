@@ -100,7 +100,7 @@ export function SystemOptionsScreen({ session }: { session: Session }) {
             onChange={e => set({ moreRemainingPercent: Number(e.target.value) })} />
         </Field>
         <Field label="연장 하한 (노드)"
-          note="허가 끝에서 최종 목적지까지 이 수보다 적게 남으면 연장하지 않고 세웁니다. 정지 노드에서는 하한과 무관하게 섭니다. 0~99, 남은 노드 수 이하.">
+          note="차량 앞에 남은 허가 노드가 이 수보다 적으면 이미 정지 준비 중으로 보고 연장하지 않습니다. 차량은 허가 끝에서 선 뒤 다시 출발합니다. 허가 끝이 정지 노드여도 연장하지 않습니다. 0~99, 남은 노드 수 이하.">
           <input type="number" style={field} value={draft.moreMinRemainingNodes} min={0} max={99} disabled={!mayChange}
             onChange={e => set({ moreMinRemainingNodes: Number(e.target.value) })} />
         </Field>

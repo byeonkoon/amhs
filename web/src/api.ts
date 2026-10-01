@@ -175,12 +175,14 @@ export type ZoneOccupancy = {
   nodeIds: number[]; vehicleIds: number[];
 };
 
-export type CommandStatus = 'PENDING' | 'DISPATCHING' | 'SENT' | 'ACCEPTED' | 'FAILED';
+export type CommandStatus = 'PENDING' | 'DISPATCHING' | 'SENT' | 'ACCEPTED' | 'FAILED' | 'WITHDRAWN';
 export type DeviceCommand = {
   id: number; orderId: number; commandId: string; commandType: string; payload: string;
   status: CommandStatus; attempt: number;
   lastOutcome: string | null; lastError: string | null;
   createdAt: string; publishedAt: string | null; settledAt: string | null;
+  /** The vehicle it moves. Commands for one vehicle leave one at a time, in the order written. */
+  vehicleId?: number | null;
 };
 
 export type AssignmentView = {
@@ -205,6 +207,7 @@ export const opsApi = {
   orders: () => `/api/v1/sites/${SITE_ID}/transport-orders`,
   assign: (orderId: number) => `/api/v1/sites/${SITE_ID}/transport-orders/${orderId}/assignment`,
   cancel: (orderId: number) => `/api/v1/sites/${SITE_ID}/transport-orders/${orderId}/cancel`,
+  recovery: (orderId: number) => `/api/v1/sites/${SITE_ID}/transport-orders/${orderId}/recovery`,
   extendAll: () => `/api/v1/sites/${SITE_ID}/movement-authority`,
   publish: () => `/api/v1/sites/${SITE_ID}/device-commands/publish`,
   sweep: () => `/api/v1/sites/${SITE_ID}/operation-sweep`,
@@ -294,6 +297,19 @@ export function explainDecision(decision: string): string {
     COMMAND_OUTSTANDING: '앞선 이동 명령의 결과를 아직 몰라 새 명령을 보내지 않았습니다.',
     AUTHORITY_NOT_USED: '받은 허가를 아직 다 쓰지 않았습니다.',
     AT_ROUTE_END: '이미 경로 끝에 있습니다.',
+    AT_PICKUP: '출발지에 도착했습니다. 적재 완료가 보고되면 목적지 구간을 보냅니다.',
+    AUTHORIZED_TO_PICKUP: '출발지까지는 이미 확보했습니다. 목적지 구간은 적재 완료 보고 뒤에 받습니다.',
+    ORDER_NOT_MOVABLE: '작업이 이동 단계가 아닙니다(적재·하역·취소 요청·복구 대기). 이동을 더 주지 않습니다.',
+    POSITION_STALE: '차량 상태 보고가 끊긴 지 오래돼 그 상태로는 이동을 주지 않습니다.',
+    NODE_OCCUPIED_BY_OTHER_VEHICLE: '다음 노드에 다른 차량이 서 있다고 보고했습니다. 허가가 없어도 실제 위치가 우선합니다.',
+    VEHICLE_STATE_STALE: '배차할 수 있는 차량의 상태 보고가 모두 오래됐습니다. 최근 보고가 있어야 배차합니다.',
+    VEHICLE_MOVED: '경로를 계산한 뒤 차량 위치가 바뀌었습니다. 다시 배차해 주세요.',
+    VEHICLE_NO_LONGER_ELIGIBLE: '차량을 잡기 직전에 상태가 바뀌어 배차하지 않았습니다.',
+    RECOVERY_EVIDENCE_REQUIRED: '화물 위치를 먼저 확인해 기록해야 복구를 끝낼 수 있습니다.',
+    RECOVERY_LOCATION_MISMATCH: '기록된 화물 위치와 끝내려는 방식이 맞지 않습니다.',
+    RECOVERY_LOCATION_REQUIRED: '화물이 출발지에 있는지 목적지에 있는지 지정해야 합니다.',
+    RECOVERY_REASON_REQUIRED: '화물 위치를 어떻게 확인했는지 적어야 합니다.',
+    ORDER_NOT_IN_RECOVERY: '복구 대기 중인 작업이 아닙니다.',
     NO_AVAILABLE_VEHICLE: '조건에 맞는 차량이 없습니다.',
     APPROACH_ROUTE_START_UNKNOWN: '차량 위치를 몰라 인수 지점까지 경로를 낼 수 없습니다.',
     APPROACH_ROUTE_NO_PATH: '모든 차량이 인수 지점에 도달할 수 없습니다.',

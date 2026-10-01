@@ -44,6 +44,7 @@ class StopMergeZoneSqlTest {
   jdbc.update("UPDATE transport.assignment SET released_at=now() WHERE released_at IS NULL");
   jdbc.update("DELETE FROM traffic.reservation_wait WHERE site_id=?",SITE);
   jdbc.update("DELETE FROM traffic.node_reservation WHERE site_id=?",SITE);
+  jdbc.update("UPDATE integration.command_outbox SET status='WITHDRAWN' WHERE status IN ('PENDING','DISPATCHING','FAILED')");
   jdbc.update("DELETE FROM fleet.vehicle_state WHERE site_id=? AND vehicle_id IN (?,?,?,?)",SITE,ONE,TWO,THREE,PHANTOM);
   jdbc.update("UPDATE topology.node SET stop_node=FALSE,merge_point=FALSE WHERE site_id=? AND revision_id=?",SITE,DRAFT);
   jdbc.update("UPDATE topology.node SET stop_node=FALSE WHERE site_id=? AND revision_id=?",SITE,ACTIVE);
@@ -192,10 +193,14 @@ class StopMergeZoneSqlTest {
   report(node,idle);
   tx.execute(s->traffic.advanced(SITE,OHT,node));
  }
+ /** Picked up at the ring start and sent on the delivery leg, which is the one that enters the bay. */
  private long orderIntoTheBay(String key){
   long id=tx.execute(s->orders.accept(SITE,new OrderRequest("TEST",run+"-"+key,"OHT-A","OHT-E",run+"-"+key,50),
    "tester","trace").order().id());
   tx.execute(s->assignment.assign(SITE,id,"tester","trace"));
+  for(var stage:List.of(OrderStatus.TO_SOURCE,OrderStatus.LOADING,OrderStatus.TO_DESTINATION))
+   tx.execute(s->orders.advance(SITE,id,stage,"test","tester","trace"));
+  tx.execute(s->movement.resume(SITE,id));
   return id;
  }
  private void occupyTheBay(){
@@ -203,9 +208,15 @@ class StopMergeZoneSqlTest {
    SITE,ACTIVE,BAY_PORT_NODE,PHANTOM);
  }
  private void acknowledgeAll(long orderId){
-  for(int pass=0;pass<40&&outbox.byOrder(SITE,orderId).stream().anyMatch(c->c.status()==CommandStatus.PENDING);pass++)
+  // Acknowledgement only means something for a command that was actually attempted. Commands for
+  // one vehicle leave one at a time, so each is acknowledged before the next one can be published.
+  for(int pass=0;pass<40;pass++){
    gateway.publishPending(SITE);
-  for(var c:outbox.byOrder(SITE,orderId)) tx.execute(s->outbox.acknowledge(c.commandId()));
+   for(var c:outbox.byOrder(SITE,orderId))
+    if(c.status()!=CommandStatus.PENDING&&c.status()!=CommandStatus.WITHDRAWN&&c.status()!=CommandStatus.ACCEPTED)
+     tx.execute(s->outbox.acknowledge(c.commandId()));
+   if(outbox.byOrder(SITE,orderId).stream().noneMatch(c->c.status()==CommandStatus.PENDING)) return;
+  }
  }
 
  @Test void aVehicleHeadingIntoAFullBayGoesRoundTheRingInsteadOfStoppingAtTheBranch(){
@@ -218,7 +229,8 @@ class StopMergeZoneSqlTest {
   assertThat(route.getLast()).isEqualTo(BAY_PORT_NODE);
   // The vehicle runs on past the branch round the ring and holds nothing in the bay.
   assertThat(held(OHT)).contains(BRANCH,109L,120L).doesNotContain(BAY_ENTRY);
-  assertThat(outbox.byOrder(SITE,id).stream().filter(c->c.commandType().equals("MOVE"))).hasSize(1);
+  assertThat(outbox.byOrder(SITE,id).stream()
+   .filter(c->c.commandType().equals("MOVE")&&c.status()!=CommandStatus.WITHDRAWN)).hasSize(1);
  }
 
  @Test void onTheNextLapTheVehicleEntersOnceTheBayHasRoom(){

@@ -34,11 +34,14 @@ class ZoneDetour {
   * again from the same position. Otherwise, or when no lap exists, returns {@code grant} unchanged
   * and the vehicle waits at the entrance.
   *
+  * @param status the order's stage, which decides how far the re-asked run may reach
   * @param cursor index of the vehicle's position in the stored route
   */
- ReservationGrant aroundFullZone(long siteId,long revisionId,long vehicleId,long orderId,int cursor,ReservationGrant grant){
+ ReservationGrant aroundFullZone(long siteId,long revisionId,long vehicleId,long orderId,OrderStatus status,
+                                 int cursor,ReservationGrant grant){
   if(!"ZONE_FULL".equals(grant.reason())||grant.nodeIds().isEmpty()) return grant;
   var route=ledger.plannedRoute(orderId);
+  int pickup=ledger.pickupIndex(orderId);
   int branch=cursor+grant.nodeIds().size()-1;
   if(branch<0||branch>=route.size()-1) return grant;
   var zoneNodes=new HashSet<Long>();
@@ -48,8 +51,12 @@ class ZoneDetour {
   var detoured=new ArrayList<Long>(route.subList(0,branch+1));
   detoured.addAll(lap.get());
   detoured.addAll(route.subList(branch+1,route.size()));
-  ledger.replaceRoute(orderId,detoured);
-  return traffic.request(siteId,revisionId,vehicleId,orderId,detoured.subList(cursor,detoured.size()));
+  // The lap goes in after the branch, so a pickup still ahead of it moves back by the lap's length.
+  int movedPickup=pickup>branch?pickup+lap.get().size():pickup;
+  ledger.replaceRoute(orderId,detoured,movedPickup);
+  int last=MovementPhase.lastIndex(status,movedPickup,detoured.size());
+  if(last<cursor) return grant;
+  return traffic.request(siteId,revisionId,vehicleId,orderId,detoured.subList(cursor,last+1));
  }
 
  /**

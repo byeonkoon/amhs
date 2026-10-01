@@ -43,9 +43,21 @@ export function TransportScreen(props: {
   const cancel = (orderId: number) => act(async () => {
     const res = await send<TransportOrder>(opsApi.cancel(orderId), 'POST', undefined, '운전자 취소');
     return res.status === 'CANCEL_REQUESTED'
-      ? { tone: 'wr', text: `작업 #${orderId} 취소를 요청했습니다. 화물을 실은 뒤이므로 장비 확인까지 끝난 것이 아닙니다.` }
-      : { tone: 'ok', text: `작업 #${orderId}를 취소했습니다.` };
+      ? { tone: 'wr', text: `작업 #${orderId} 취소를 요청했습니다. 이동 명령이 이미 나갔거나 화물을 실은 뒤라 장비가 멈춘 것을 확인해야 끝납니다.` }
+      : { tone: 'ok', text: `작업 #${orderId}를 취소했습니다. 나가지 않은 이동 명령은 거둬들였습니다.` };
   });
+
+  // Ending a recovery is a statement about where the carrier is, so it asks for that and for how
+  // it was established; neither is guessed from the state the order was in.
+  const recover = (orderId: number, carrierLocation: 'SOURCE' | 'DESTINATION') => {
+    const where = carrierLocation === 'SOURCE' ? '출발지' : '목적지';
+    const reason = window.prompt(`화물이 ${where}에 있음을 어떻게 확인했는지 적어 주세요.`);
+    if (reason === null) return;
+    void act(async () => {
+      const res = await send<TransportOrder>(opsApi.recovery(orderId), 'POST', { carrierLocation, reason }, '복구 처리');
+      return { tone: 'ok', text: `작업 #${orderId} 복구를 끝냈습니다 — 화물 ${where}, ${res.status === 'COMPLETED' ? '완료' : '취소'} 처리.` };
+    });
+  };
 
   const extendAll = () => act(async () => {
     const res = await send<Extension[]>(opsApi.extendAll(), 'POST', undefined, '이동 허가 연장');
@@ -111,6 +123,14 @@ export function TransportScreen(props: {
                           <button type="button" style={ghost} disabled={busy || !hasWriteToken() || TERMINAL.has(o.status)}
                             title={TERMINAL.has(o.status) ? '이미 끝난 작업입니다.' : undefined}
                             onClick={() => cancel(o.id)}>취소</button>
+                          {o.status === 'RECOVERY_REQUIRED' && <>
+                            <button type="button" style={ghost} disabled={busy || !hasWriteToken()}
+                              title="화물이 출발지에 있음을 확인했으면 작업을 취소로 끝냅니다."
+                              onClick={() => recover(o.id, 'SOURCE')}>출발지 확인</button>
+                            <button type="button" style={ghost} disabled={busy || !hasWriteToken()}
+                              title="화물이 목적지에 있음을 확인했으면 작업을 완료로 끝냅니다."
+                              onClick={() => recover(o.id, 'DESTINATION')}>목적지 확인</button>
+                          </>}
                         </span>
                       </td>
                     </tr>
@@ -191,7 +211,7 @@ function nodeCode(map: MapData, id: number) { return map.nodes.find(n => n.id ==
 function statusTone(s: string) {
   if (s === 'ACCEPTED') return 'ok';
   if (s === 'FAILED') return 'er';
-  if (s === 'PENDING') return 'id';
+  if (s === 'PENDING' || s === 'WITHDRAWN') return 'id';
   return 'wr';
 }
 function toneOf(status: string): string {

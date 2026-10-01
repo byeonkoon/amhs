@@ -47,6 +47,18 @@ class TransportOrderController {
  }
 
  /**
+  * Ends a recovery with where the carrier was found: SOURCE cancels the order, DESTINATION completes
+  * it. The reason is required because it is the only record of how that was established.
+  */
+ @PostMapping("/{orderId}/recovery")
+ TransportOrder recover(@PathVariable long siteId,@PathVariable long orderId,@RequestBody Map<String,Object> body){
+  CarrierLocation location;
+  try{ location=CarrierLocation.valueOf(String.valueOf(body.get("carrierLocation"))); }
+  catch(IllegalArgumentException e){ throw new TransportRejected("RECOVERY_LOCATION_REQUIRED","unknown carrier location",false); }
+  return orders.resolveRecovery(siteId,orderId,location,str(body.get("reason")),actor(),traceId());
+ }
+
+ /**
   * Holds a vehicle for this order. Repeating the request returns the vehicle already held
   * rather than assigning a second one.
   */

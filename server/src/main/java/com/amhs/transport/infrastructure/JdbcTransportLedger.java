@@ -81,12 +81,30 @@ class JdbcTransportLedger implements TransportLedger {
   if(current==target)return locked;
   if(!current.canTransitionTo(target))
    throw new TransportRejected("TRANSITION_NOT_ALLOWED",current+" cannot move to "+target,true);
-  // A cancellation acknowledgement does not establish where the carrier ended up.
-  // Decide under the same row lock used for the state update and event append.
-  if(current==OrderStatus.CANCEL_REQUESTED&&target==OrderStatus.CANCELLED
-    &&(locked.carrierLocation()==CarrierLocation.UNKNOWN||locked.carrierLocation()==CarrierLocation.VEHICLE)){
+  boolean carrierUnsettled=locked.carrierLocation()==CarrierLocation.UNKNOWN||locked.carrierLocation()==CarrierLocation.VEHICLE;
+  // A cancellation acknowledgement does not establish where the carrier ended up once a pickup
+  // has begun. A cancel requested before any pickup (the vehicle was only driving there) leaves
+  // the carrier where it always was. Decide under the same row lock used for the state update.
+  if(current==OrderStatus.CANCEL_REQUESTED&&target==OrderStatus.CANCELLED&&carrierUnsettled&&pickupBegan(orderId)){
    target=OrderStatus.RECOVERY_REQUIRED;
    reason="CANCEL_REQUIRES_CARRIER_RECOVERY"+(reason==null||reason.isBlank()?"":": "+reason);
+  }
+  // Leaving recovery is a statement about where the carrier is. Without one the protection would
+  // end on the next acknowledgement, which is exactly what it exists to stop. A repeated cancel
+  // confirmation says nothing new and changes nothing.
+  if(current==OrderStatus.RECOVERY_REQUIRED){
+   if(carrierUnsettled){
+    if(target==OrderStatus.CANCELLED) return locked;
+    throw new TransportRejected("RECOVERY_EVIDENCE_REQUIRED","where the carrier is must be recorded first",true);
+   }
+   boolean consistent=switch(target){
+    case COMPLETED -> locked.carrierLocation()==CarrierLocation.DESTINATION;
+    case CANCELLED -> locked.carrierLocation()==CarrierLocation.SOURCE;
+    default -> true;
+   };
+   if(!consistent)
+    throw new TransportRejected("RECOVERY_LOCATION_MISMATCH",
+     "the carrier is recorded at "+locked.carrierLocation()+", which does not end the order as "+target,true);
   }
   boolean starting=locked.startedAt()==null&&target!=OrderStatus.QUEUED;
   jdbc.update("UPDATE transport.order SET status=?,version=version+1"
@@ -107,6 +125,20 @@ class JdbcTransportLedger implements TransportLedger {
   return find(siteId,orderId).orElseThrow();
  }
 
+ /** Whether this order ever reached the pickup, which is when the carrier may have changed hands. */
+ private boolean pickupBegan(long orderId){
+  Boolean began=jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM transport.order_event WHERE order_id=? AND new_status='LOADING')",
+   Boolean.class,orderId);
+  return Boolean.TRUE.equals(began);
+ }
+
+ @Transactional(propagation=Propagation.MANDATORY)
+ public void recordCarrierLocation(long siteId,long orderId,CarrierLocation location){
+  int updated=jdbc.update("UPDATE transport.order SET carrier_location=?,version=version+1 WHERE site_id=? AND id=?",
+   location.name(),siteId,orderId);
+  if(updated==0) throw new TransportRejected("ORDER_NOT_FOUND","unknown order",false);
+ }
+
  @Transactional(propagation=Propagation.MANDATORY)
  public Optional<TransportOrder> lock(long siteId,long orderId){
   return one("SELECT "+COLS+" FROM transport.order WHERE site_id=? AND id=? FOR UPDATE",siteId,orderId);
@@ -118,10 +150,10 @@ class JdbcTransportLedger implements TransportLedger {
   * back rather than leaving one vehicle holding two jobs.
   */
  @Transactional(propagation=Propagation.MANDATORY)
- public long assign(long orderId,long vehicleId,List<Long> routeNodeIds){
+ public long assign(long orderId,long vehicleId,List<Long> routeNodeIds,int pickupIndex){
   try{
-   return jdbc.queryForObject("INSERT INTO transport.assignment(order_id,vehicle_id,route_node_ids)"
-    +" VALUES(?,?,?) RETURNING id",Long.class,orderId,vehicleId,routeNodeIds.toArray(Long[]::new));
+   return jdbc.queryForObject("INSERT INTO transport.assignment(order_id,vehicle_id,route_node_ids,pickup_index)"
+    +" VALUES(?,?,?,?) RETURNING id",Long.class,orderId,vehicleId,routeNodeIds.toArray(Long[]::new),pickupIndex);
   }catch(DuplicateKeyException e){
    throw new TransportRejected("ASSIGNMENT_CONFLICT","vehicle or order is already assigned",true);
   }
@@ -153,11 +185,19 @@ class JdbcTransportLedger implements TransportLedger {
    +" AND route_cursor<?",cursor,orderId,cursor);
  }
 
+ @Transactional(readOnly=true)
+ public int pickupIndex(long orderId){
+  var rows=jdbc.query("SELECT pickup_index FROM transport.assignment"
+   +" WHERE order_id=? AND released_at IS NULL ORDER BY id DESC LIMIT 1",
+   (r,n)->r.getObject(1)==null?-1:r.getInt(1),orderId);
+  return rows.isEmpty()?-1:rows.getFirst();
+ }
+
  /** The cursor is kept: a replacement only ever changes what lies ahead of the vehicle. */
  @Transactional(propagation=Propagation.MANDATORY)
- public void replaceRoute(long orderId,List<Long> routeNodeIds){
-  jdbc.update("UPDATE transport.assignment SET route_node_ids=? WHERE order_id=? AND released_at IS NULL",
-   routeNodeIds.toArray(Long[]::new),orderId);
+ public void replaceRoute(long orderId,List<Long> routeNodeIds,int pickupIndex){
+  jdbc.update("UPDATE transport.assignment SET route_node_ids=?,pickup_index=? WHERE order_id=? AND released_at IS NULL",
+   routeNodeIds.toArray(Long[]::new),pickupIndex<0?null:pickupIndex,orderId);
  }
 
  @Transactional(readOnly=true)

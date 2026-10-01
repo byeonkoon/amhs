@@ -13,6 +13,7 @@ const COMMAND_STATE: Record<CommandStatus, { tone: string; label: string; note: 
   SENT: { tone: 'wr', label: '송신됨', note: '회선에 나갔습니다. 장비가 이미 수행 중일 수 있어 다시 보내지 않습니다.' },
   ACCEPTED: { tone: 'ok', label: '수신 확인', note: '장비가 받았다고 응답했습니다. 수행 완료와는 다릅니다.' },
   FAILED: { tone: 'er', label: '미도달', note: '회선에 나가지 못했음이 확인됐습니다. 지연 후 다시 시도합니다.' },
+  WITHDRAWN: { tone: 'id', label: '철회', note: '나가기 전에 작업이 멈춰 거둬들였습니다. 보내지 않습니다.' },
 };
 
 /** What one flush of the outbox did. */

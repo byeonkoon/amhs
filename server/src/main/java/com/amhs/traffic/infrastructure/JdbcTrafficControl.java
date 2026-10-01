@@ -18,6 +18,7 @@ class JdbcTrafficControl implements TrafficControl {
 
   lockInAscendingIdOrder(siteId,wanted);
   var holders=holdersOf(wanted);
+  var standing=standingOn(siteId,wanted,vehicleId);
   var nodes=attributesOf(siteId,revisionId,wanted);
   boolean controllerDecidesMerges="CONTROLLER".equals(mergeControl(siteId));
 
@@ -26,6 +27,15 @@ class JdbcTrafficControl implements TrafficControl {
   int sequence=nextSequence(siteId,vehicleId);
   for(int i=0;i<wanted.size();i++){
    Long node=wanted.get(i);
+   // Where another vehicle says it is standing outranks any permission, this vehicle's included:
+   // the ledger records what was allowed, the report what is there. A vehicle that reported a node
+   // it was never given still occupies it.
+   Long occupant=standing.get(node);
+   if(occupant!=null){
+    blockedNode=node; blockedBy=occupant;
+    reason=granted.isEmpty()?"POSITION_HELD_BY_OTHER_VEHICLE":"NODE_OCCUPIED_BY_OTHER_VEHICLE";
+    break;
+   }
    Long holder=holders.get(node);
    boolean mine=holder!=null&&holder==vehicleId;
    if(holder!=null&&!mine){
@@ -167,9 +177,12 @@ class JdbcTrafficControl implements TrafficControl {
   * would send an operator after a vehicle that is no longer stuck.
   */
  private Map<Long,Wait> liveWaits(long siteId){
-  var rows=jdbc.query("SELECT w.vehicle_id,w.wanted_node_id,r.vehicle_id FROM traffic.reservation_wait w"
-   +" JOIN traffic.node_reservation r ON r.node_id=w.wanted_node_id AND r.released_at IS NULL"
-   +" WHERE w.site_id=? AND r.vehicle_id<>w.vehicle_id",
+  // In the way means holding the node or standing on it, the same two things a request is refused for.
+  var rows=jdbc.query("SELECT w.vehicle_id,w.wanted_node_id,h.vehicle_id FROM traffic.reservation_wait w"
+   +" JOIN (SELECT node_id,vehicle_id FROM traffic.node_reservation WHERE released_at IS NULL"
+   +"  UNION SELECT node_id,vehicle_id FROM fleet.vehicle_state WHERE node_id IS NOT NULL) h"
+   +"  ON h.node_id=w.wanted_node_id"
+   +" WHERE w.site_id=? AND h.vehicle_id<>w.vehicle_id ORDER BY h.vehicle_id",
    (r,n)->new Wait(r.getLong(1),r.getLong(2),r.getLong(3)),siteId);
   var out=new LinkedHashMap<Long,Wait>();
   for(var wait:rows) out.put(wait.vehicleId(),wait);
@@ -199,6 +212,18 @@ class JdbcTrafficControl implements TrafficControl {
   for(Long id:nodeIds)
    jdbc.query("SELECT vehicle_id FROM traffic.node_reservation WHERE node_id=? AND released_at IS NULL",
     (r,n)->r.getLong(1),id).forEach(v->out.put(id,v));
+  return out;
+ }
+
+ /**
+  * Other vehicles last reported standing on these nodes. A report that has gone quiet still counts:
+  * not knowing where a vehicle went is no reason to believe it left.
+  */
+ private Map<Long,Long> standingOn(long siteId,List<Long> nodeIds,long vehicleId){
+  var out=new HashMap<Long,Long>();
+  for(Long id:nodeIds)
+   jdbc.query("SELECT vehicle_id FROM fleet.vehicle_state WHERE site_id=? AND node_id=? AND vehicle_id<>?"
+    +" ORDER BY vehicle_id LIMIT 1",(r,n)->r.getLong(1),siteId,id,vehicleId).forEach(v->out.put(id,v));
   return out;
  }
 

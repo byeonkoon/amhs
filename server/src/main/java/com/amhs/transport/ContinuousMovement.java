@@ -7,12 +7,12 @@ import com.amhs.platform.OperationOptions;
 import com.amhs.topology.MapSnapshot;
 import com.amhs.topology.TopologyQuery;
 import com.amhs.traffic.NodeHold;
-import com.amhs.traffic.ReservationGrant;
 import com.amhs.traffic.TrafficControl;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import java.time.OffsetDateTime;
 import java.util.*;
 
 /**
@@ -30,6 +30,10 @@ import java.util.*;
  * <p>A second command is never produced while one is still unacknowledged. That, rather than a fixed
  * wait between sends, is the condition worth checking: what must not happen is two overlapping
  * movements, and time only ever approximated that.
+ *
+ * <p>Neither gives road to an order that is not in a driving stage (loading, unloading, a requested
+ * cancel, a recovery), nor acts on a vehicle state nobody has confirmed lately, nor reaches past the
+ * pickup before the pickup has been reported.
  */
 @Service
 public class ContinuousMovement {
@@ -57,6 +61,7 @@ public class ContinuousMovement {
   var assignment=ledger.activeAssignment(siteId,orderId);
   if(assignment.isEmpty()) return none(orderId,0,"NO_ASSIGNMENT");
   long vehicleId=assignment.get().vehicleId();
+  if(!order.status().movable()) return none(orderId,vehicleId,"ORDER_NOT_MOVABLE");
 
   OperationOptions options=operations.get(siteId).settings();
   if(!options.moreEnabled()) return none(orderId,vehicleId,"MORE_DISABLED");
@@ -65,6 +70,7 @@ public class ContinuousMovement {
   if(vehicle.isEmpty()) return none(orderId,vehicleId,"VEHICLE_NOT_FOUND");
   var state=vehicle.get();
   if(state.nodeId()==null) return none(orderId,vehicleId,"POSITION_UNKNOWN");
+  if(!state.reportedSince(staleBefore(options))) return none(orderId,vehicleId,"POSITION_STALE");
   if(!state.online()||!state.remote()) return none(orderId,vehicleId,"VEHICLE_NOT_CONTROLLABLE");
   // MORE lengthens a movement in progress. A stopped vehicle needs a movement command, not an
   // extension of one it is no longer running; resume() gives it that.
@@ -81,11 +87,12 @@ public class ContinuousMovement {
   if(heldIndex<0) return none(orderId,vehicleId,"POSITION_OUTSIDE_AUTHORITY");
 
   var route=ledger.plannedRoute(orderId);
+  int last=MovementPhase.lastIndex(order.status(),ledger.pickupIndex(orderId),route.size());
   int routeIndex=locate(orderId,route,state.nodeId());
   if(routeIndex<0) return none(orderId,vehicleId,"POSITION_OFF_ROUTE");
-  var remainingRoute=route.subList(routeIndex,route.size());
+  var remainingRoute=route.subList(routeIndex,Math.max(routeIndex,last)+1);
   var heldFromHere=held.subList(heldIndex,held.size()).stream().map(NodeHold::nodeId).toList();
-  if(heldFromHere.size()>=remainingRoute.size()) return none(orderId,vehicleId,"ROUTE_COMPLETE");
+  if(heldFromHere.size()>=remainingRoute.size()) return none(orderId,vehicleId,endOfStage(last,route));
 
   var map=topology.getMap(siteId,order.revisionId());
   // The authority ends at a stop node on purpose. The vehicle halts there first and is given the
@@ -100,7 +107,7 @@ public class ContinuousMovement {
    return none(orderId,vehicleId,"NOT_NEEDED");
 
   var grant=traffic.request(siteId,order.revisionId(),vehicleId,orderId,remainingRoute);
-  grant=detour.aroundFullZone(siteId,order.revisionId(),vehicleId,orderId,routeIndex,grant);
+  grant=detour.aroundFullZone(siteId,order.revisionId(),vehicleId,orderId,order.status(),routeIndex,grant);
   var added=new ArrayList<>(grant.nodeIds());
   added.removeAll(heldFromHere);
   // Asking and getting nothing new is congestion, not an error: the vehicle keeps the authority
@@ -109,7 +116,7 @@ public class ContinuousMovement {
 
   var extended=traffic.heldBy(siteId,vehicleId);
   String commandId="order-"+orderId+"-more-seq-"+extended.getLast().sequence();
-  outbox.enqueue(orderId,commandId,"MORE",payload(state,grant.nodeIds(),added,grant.complete()));
+  outbox.enqueue(orderId,vehicleId,commandId,"MORE",payload(state,grant.nodeIds(),added,grant.complete()));
   return new Extension(orderId,vehicleId,"EXTENDED",added,commandId);
  }
 
@@ -128,11 +135,14 @@ public class ContinuousMovement {
   var assignment=ledger.activeAssignment(siteId,orderId);
   if(assignment.isEmpty()) return none(orderId,0,"NO_ASSIGNMENT");
   long vehicleId=assignment.get().vehicleId();
+  if(!order.status().movable()) return none(orderId,vehicleId,"ORDER_NOT_MOVABLE");
 
   var vehicle=fleet.find(siteId,order.revisionId(),vehicleId);
   if(vehicle.isEmpty()) return none(orderId,vehicleId,"VEHICLE_NOT_FOUND");
   var state=vehicle.get();
   if(state.nodeId()==null) return none(orderId,vehicleId,"POSITION_UNKNOWN");
+  if(!state.reportedSince(staleBefore(operations.get(siteId).settings())))
+   return none(orderId,vehicleId,"POSITION_STALE");
   if(!state.online()||!state.remote()) return none(orderId,vehicleId,"VEHICLE_NOT_CONTROLLABLE");
   if(!state.idle()) return none(orderId,vehicleId,"VEHICLE_MOVING");
   if(!outbox.unresolved(siteId,orderId,"MOVE").isEmpty()||!outbox.unresolved(siteId,orderId,"MORE").isEmpty())
@@ -143,20 +153,21 @@ public class ContinuousMovement {
   if(heldIndex>=0&&heldIndex<held.size()-1) return none(orderId,vehicleId,"AUTHORITY_NOT_USED");
 
   var route=ledger.plannedRoute(orderId);
+  int last=MovementPhase.lastIndex(order.status(),ledger.pickupIndex(orderId),route.size());
   int routeIndex=locate(orderId,route,state.nodeId());
   if(routeIndex<0) return none(orderId,vehicleId,"POSITION_OFF_ROUTE");
-  var remainingRoute=route.subList(routeIndex,route.size());
-  if(remainingRoute.size()<=1) return none(orderId,vehicleId,"AT_ROUTE_END");
+  var remainingRoute=route.subList(routeIndex,Math.max(routeIndex,last)+1);
+  if(remainingRoute.size()<=1) return none(orderId,vehicleId,last<route.size()-1?"AT_PICKUP":"AT_ROUTE_END");
 
   var grant=traffic.request(siteId,order.revisionId(),vehicleId,orderId,remainingRoute);
-  grant=detour.aroundFullZone(siteId,order.revisionId(),vehicleId,orderId,routeIndex,grant);
+  grant=detour.aroundFullZone(siteId,order.revisionId(),vehicleId,orderId,order.status(),routeIndex,grant);
   // Getting only the node it already stands on is no movement at all; the recorded wait says why.
   if(grant.nodeIds().size()<=1) return none(orderId,vehicleId,grant.reason()==null?"NOTHING_TO_ADD":grant.reason());
 
   var added=new ArrayList<>(grant.nodeIds()); added.remove(state.nodeId());
   var holds=traffic.heldBy(siteId,vehicleId);
   String commandId="order-"+orderId+"-resume-seq-"+holds.getLast().sequence();
-  outbox.enqueue(orderId,commandId,"MOVE",payload(state,grant.nodeIds(),added,grant.complete()));
+  outbox.enqueue(orderId,vehicleId,commandId,"MOVE",payload(state,grant.nodeIds(),added,grant.complete()));
   return new Extension(orderId,vehicleId,"RESUMED",added,commandId);
  }
 
@@ -208,6 +219,13 @@ public class ContinuousMovement {
   double full=length(map,window);
   if(full<=0) return true;
   return length(map,heldFromHere)*100<=(double)options.moreRemainingPercent()*full;
+ }
+ /** The stage's road is all granted: up to the pickup before it is reported, the whole route after. */
+ private static String endOfStage(int last,List<Long> route){
+  return last<route.size()-1?"AUTHORIZED_TO_PICKUP":"ROUTE_COMPLETE";
+ }
+ private static OffsetDateTime staleBefore(OperationOptions options){
+  return OffsetDateTime.now().minusSeconds(options.positionStaleSeconds());
  }
  private static boolean isStopNode(MapSnapshot map,long nodeId){
   for(var node:map.nodes()) if(node.id()==nodeId) return node.stopNode();

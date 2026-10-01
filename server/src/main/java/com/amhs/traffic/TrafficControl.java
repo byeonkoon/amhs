@@ -22,7 +22,9 @@ public interface TrafficControl {
      * blocked node would hand the vehicle permission for somewhere it cannot legally reach, which
      * reads to the device as a clear path straight through whatever is in the way.
      *
-     * <p>Beyond the node it stands on, a node cannot be had when another vehicle holds it, when it
+     * <p>No node is granted that another vehicle reports standing on, held or not
+     * ({@code NODE_OCCUPIED_BY_OTHER_VEHICLE}): where a vehicle is outranks what it was allowed.
+     * Beyond the node it stands on, a node cannot be had when another vehicle holds it, when it
      * is out of service, when it is the first node of a zone that is already full
      * ({@code ZONE_FULL}), or, while the controller decides merges, when it is a merge point another
      * vehicle asked for earlier and is still asking for ({@code MERGE_EARLIER_REQUEST}). A stop node
