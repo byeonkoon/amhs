@@ -8,8 +8,7 @@ import java.util.List;
 /**
  * Accounts and what each may do. Administrator-only, which the path itself establishes.
  *
- * <p>A newly issued token is in the response to the call that created it and nowhere else. It is
- * never readable again: the account list says only whether a token exists.
+ * <p>A password goes in and never comes out: the listing says only whether one has been set.
  */
 @RestController
 @RequestMapping("/api/v1/sites/{siteId}/configuration/accounts")
@@ -17,13 +16,18 @@ class AccountController {
     private final AccountDirectory accounts;
     AccountController(AccountDirectory accounts) { this.accounts=accounts; }
 
+    /** Settings plus the first password, which is the one thing not kept afterwards. */
+    public record NewAccount(String code, String displayName, String role, boolean enabled, String password) {
+        AccountSettings settings() { return new AccountSettings(code,displayName,role,enabled); }
+    }
+    public record NewPassword(String password) {}
+
     @GetMapping
     List<AccountView> list(@PathVariable long siteId) { return accounts.list(siteId); }
 
-    /** 201 with the token. Show it to the person once; it cannot be fetched afterwards. */
     @PostMapping
-    AccountDirectory.Issued create(@PathVariable long siteId,@RequestBody AccountSettings settings) {
-        return accounts.create(siteId,settings);
+    AccountView create(@PathVariable long siteId,@RequestBody NewAccount body) {
+        return accounts.create(siteId,body.settings(),body.password());
     }
 
     @PutMapping("/{accountId}")
@@ -32,15 +36,9 @@ class AccountController {
         return accounts.update(siteId,accountId,expectedVersion,settings);
     }
 
-    /** Replaces the token; the old one stops working immediately. */
-    @PostMapping("/{accountId}/token")
-    AccountDirectory.Issued reissue(@PathVariable long siteId,@PathVariable long accountId) {
-        return accounts.reissueToken(siteId,accountId);
-    }
-
-    /** Stops the account getting in without deleting it, so its audit trail keeps its owner. */
-    @DeleteMapping("/{accountId}/token")
-    AccountView revoke(@PathVariable long siteId,@PathVariable long accountId) {
-        return accounts.revokeToken(siteId,accountId);
+    /** Sets a new password and ends the account's live sessions, so the old one stops working. */
+    @PutMapping("/{accountId}/password")
+    AccountView setPassword(@PathVariable long siteId,@PathVariable long accountId,@RequestBody NewPassword body) {
+        return accounts.setPassword(siteId,accountId,body.password());
     }
 }

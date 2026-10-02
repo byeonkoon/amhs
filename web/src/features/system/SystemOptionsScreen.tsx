@@ -1,6 +1,6 @@
 import React from 'react';
 import {
-  ApiError, cfgApi, get, getAs, opsApi, send, setWriteToken, hasWriteToken,
+  ApiError, cfgApi, get, send,
   ROLE_LABEL, type Cfg, type OperationOptions, type Session,
 } from '../../api';
 import { Chip, Empty } from '../../shell/States';
@@ -56,7 +56,7 @@ export function SystemOptionsScreen({ session }: { session: Session }) {
         <span className="s"><span className="k">버전</span><span className="v">{record.version}</span></span>
         <span className="s"><span className="k">변경</span>
           <span className="v">{mayChange ? '가능' : '불가'}</span>
-          <span className="d">{mayChange ? '' : '관리자 권한이 필요합니다'}</span></span>
+          <span className="d">{mayChange ? '' : 'Lv4 관리자 권한이 필요합니다'}</span></span>
       </div>
 
       {(error || saved) && (
@@ -201,57 +201,10 @@ export function SystemOptionsScreen({ session }: { session: Session }) {
         <button type="button" style={ghost} disabled={busy} onClick={() => { setDraft(record.settings); setError(null); setSaved(null); }}>
           되돌리기
         </button>
-        {!mayChange && <span className="hint">조회만 가능합니다. 변경하려면 관리자 토큰이 필요합니다.</span>}
+        {!mayChange && <span className="hint">조회만 가능합니다. 변경하려면 Lv4 관리자로 로그인해야 합니다.</span>}
         {mayChange && <span className="hint">설정 변경은 사이트가 유지보수 상태일 때만 받아들여집니다.</span>}
       </div>
     </>
-  );
-}
-
-/** Token entry. The value is held in memory for the session and never stored or shown back. */
-export function SignInScreen({ onChanged }: { onChanged: () => void }) {
-  const [value, setValue] = React.useState('');
-  const [result, setResult] = React.useState<{ tone: string; text: string } | null>(null);
-  const present = hasWriteToken();
-  // A token is kept only if the server recognises it, so a wrong one is said at once instead of
-  // surfacing later as every command being refused.
-  async function apply() {
-    setWriteToken(value); setValue('');
-    try {
-      const session = await getAs<Session>(opsApi.session());
-      if (!session.authenticated) {
-        setWriteToken(null);
-        setResult({ tone: 'er', text: '토큰이 맞지 않습니다. 계정에 발급된 토큰을 넣어 주세요(비밀번호가 아닙니다).' });
-      } else {
-        setResult({ tone: 'ok', text: `${session.code} · ${ROLE_LABEL[session.role]} 권한으로 접속했습니다.` });
-      }
-    } catch {
-      setWriteToken(null);
-      setResult({ tone: 'er', text: '서버에 확인하지 못했습니다.' });
-    }
-    onChanged();
-  }
-  return (
-    <section className="card">
-      <div className="ch"><h2>접속 토큰</h2><span className="aux">조회는 토큰 없이 됩니다</span></div>
-      <div className="cb" style={{ display: 'grid', gap: 10, maxWidth: 520 }}>
-        <p className="hint" style={{ margin: 0 }}>
-          상태를 바꾸는 요청만 토큰을 요구합니다. 입력한 값은 이 브라우저 세션의 메모리에만 두며 저장하거나 다시
-          보여 주지 않습니다. 권한은 토큰에 딸린 계정이 정합니다.
-        </p>
-        <input type="password" style={{ ...field, width: '100%' }} value={value} placeholder={present ? '새 토큰을 입력하면 교체됩니다' : '토큰'}
-          onChange={e => setValue(e.target.value)} autoComplete="off" />
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button type="button" style={primary} disabled={!value.trim()} onClick={apply}>적용</button>
-          <button type="button" style={ghost} disabled={!present}
-            onClick={() => { setWriteToken(null); setValue(''); onChanged(); }}>해제</button>
-        </div>
-        <p className="hint" style={{ margin: 0 }}>
-          현재 상태: <b>{present ? '토큰 있음' : '토큰 없음'}</b> · 토큰은 브라우저마다, 새로고침할 때마다 다시 넣어야 합니다.
-        </p>
-        {result && <p style={{ margin: 0, fontSize: 12 }}><Chip tone={result.tone}>{result.tone === 'er' ? '거부' : '완료'}</Chip> {result.text}</p>}
-      </div>
-    </section>
   );
 }
 

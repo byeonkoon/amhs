@@ -1,10 +1,10 @@
 import React from 'react';
 import {
-  ApiError, cfgApi, get, hasWriteToken, opsApi, send, setWriteToken,
+  ApiError, cfgApi, get, opsApi, send, ROLE_LABEL,
   type Cfg, type ConnectionSettings, type EquipmentSettings, type MapData, type OperationOptions, type PortSettings, type ProtocolSettings,
   type Session, type VdaProfileSettings, type VehicleSettings,
 } from '../../api';
-import { Chip, Empty, Failed, Loading } from '../../shell/States';
+import { Empty, Failed, Loading } from '../../shell/States';
 import { NodeTab, SegmentTab } from './TopologyTabs';
 import { layerOfNode } from '../map/MapView';
 import {
@@ -28,10 +28,18 @@ const TABS: { key: Tab; label: string }[] = [
 
 export function ConfigurationScreen({ map, session }: { map: MapData; session: Session }) {
   const [tab, setTab] = React.useState<Tab>('vehicles');
-  const [tokenSet, setTokenSet] = React.useState(hasWriteToken());
+  // What may be saved follows the login, not a value typed into this screen. One place decides it,
+  // so a screen cannot offer a save the server will refuse.
+  const canWrite = session.allows.includes('resources');
   return (
     <>
-      <TokenBar tokenSet={tokenSet} onChange={setTokenSet} />
+      <div className="statbar">
+        <span className="s"><span className="k">계정</span><span className="v mono">{session.code}</span></span>
+        <span className="s"><span className="k">권한</span><span className="v">{ROLE_LABEL[session.role]}</span></span>
+        <span className="s"><span className="k">저장</span>
+          <span className="v">{canWrite ? '가능' : '불가'}</span>
+          <span className="d">{canWrite ? '' : 'Lv4 관리자 권한이 필요합니다'}</span></span>
+      </div>
       <div className="card">
         <div className="ch" style={{ gap: 4 }}>
           {TABS.map(t => (
@@ -41,45 +49,19 @@ export function ConfigurationScreen({ map, session }: { map: MapData; session: S
                 background: tab === t.key ? 'var(--acc)' : 'var(--srf)', color: tab === t.key ? '#fff' : 'var(--ink2)',
               }}>{t.label}</button>
           ))}
-          <span className="aux">저장은 설비 설정 권한과 유지보수 상태가 필요합니다</span>
+          <span className="aux">저장은 Lv4 관리자 권한과 유지보수 상태가 필요합니다</span>
         </div>
         <div className="cb">
-          {tab === 'vehicles' && <VehicleTab map={map} canWrite={tokenSet} />}
+          {tab === 'vehicles' && <VehicleTab map={map} canWrite={canWrite} />}
           {tab === 'nodes' && <NodeTab session={session} revisionId={map.revisionId} />}
           {tab === 'segments' && <SegmentTab session={session} revisionId={map.revisionId} />}
-          {tab === 'vda' && <VdaProfileTab canWrite={tokenSet} />}
-          {tab === 'ports' && <PortTab map={map} canWrite={tokenSet} />}
-          {tab === 'connections' && <ConnectionTab canWrite={tokenSet} />}
-          {tab === 'protocols' && <ProtocolTab canWrite={tokenSet} />}
+          {tab === 'vda' && <VdaProfileTab canWrite={canWrite} />}
+          {tab === 'ports' && <PortTab map={map} canWrite={canWrite} />}
+          {tab === 'connections' && <ConnectionTab canWrite={canWrite} />}
+          {tab === 'protocols' && <ProtocolTab canWrite={canWrite} />}
         </div>
       </div>
     </>
-  );
-}
-
-/** The token lives in memory for this tab only. It is never stored and never shown back. */
-function TokenBar({ tokenSet, onChange }: { tokenSet: boolean; onChange: (v: boolean) => void }) {
-  const [value, setValue] = React.useState('');
-  return (
-    <div className="card">
-      <div className="cb" style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-        <b style={{ fontSize: 12.5 }}>설정 변경 토큰</b>
-        {tokenSet
-          ? <>
-            <Chip tone="ok">입력됨</Chip>
-            <span className="hint" style={{ margin: 0 }}>이 탭에서만 유지되며 저장하지 않습니다. 새로고침하면 다시 입력해야 합니다.</span>
-            <button type="button" style={btn} onClick={() => { setWriteToken(null); setValue(''); onChange(false); }}>지우기</button>
-          </>
-          : <>
-            <input type="password" value={value} onChange={e => setValue(e.target.value)}
-              placeholder="관리자 토큰" aria-label="설정 변경 토큰"
-              style={{ border: '1px solid var(--ln2)', borderRadius: 5, padding: '6px 10px', fontSize: 12, minWidth: 260 }} />
-            <button type="button" style={btn} disabled={!value.trim()}
-              onClick={() => { setWriteToken(value); setValue(''); onChange(true); }}>적용</button>
-            <span className="hint" style={{ margin: 0 }}>토큰이 없으면 조회만 가능합니다.</span>
-          </>}
-      </div>
-    </div>
   );
 }
 
@@ -129,7 +111,7 @@ function SaveBar({ issues, canWrite, busy, message, onSave }: {
         disabled={!canWrite || issues.length > 0 || busy} onClick={onSave}>
         {busy ? '저장 중…' : '저장'}
       </button>
-      {!canWrite && <span className="hint" style={{ marginLeft: 10 }}>토큰을 입력하면 저장할 수 있습니다.</span>}
+      {!canWrite && <span className="hint" style={{ marginLeft: 10 }}>Lv4 관리자로 로그인하면 저장할 수 있습니다.</span>}
     </div>
   );
 }

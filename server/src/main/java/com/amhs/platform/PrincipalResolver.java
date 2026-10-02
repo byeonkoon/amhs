@@ -7,30 +7,32 @@ import java.security.NoSuchAlgorithmException;
 import java.util.Optional;
 
 /**
- * Turns a presented token into who is asking.
+ * Turns what a request presents into who is asking.
  *
- * <p>Kept apart from the gate that enforces authority so that a screen can ask what it is allowed
- * to do without first attempting something and being refused. Only the hash of a token is ever
- * compared against storage; the local development token is compared in constant time and is
- * accepted only while local writes are explicitly enabled.
+ * <p>Normally that is a session from a login. The local development token stays as a way to reach
+ * a site that has no usable account yet — a first run, or a forgotten administrator password — and
+ * it is off unless local writes are explicitly enabled, so it cannot be the way in by accident.
+ *
+ * <p>Kept apart from the gate that enforces authority so a screen can ask what it is allowed to do
+ * without first attempting something and being refused.
  */
 @Service
 public class PrincipalResolver {
- private final boolean localTokenEnabled; private final String localToken; private final AccountQuery accounts;
+ private final boolean localTokenEnabled; private final String localToken; private final Logins logins;
  public PrincipalResolver(@Value("${amhs.configuration.writes-enabled:false}") boolean localTokenEnabled,
                           @Value("${amhs.configuration.write-token:}") String localToken,
-                          AccountQuery accounts){
-  this.localTokenEnabled=localTokenEnabled; this.localToken=localToken; this.accounts=accounts;
+                          Logins logins){
+  this.localTokenEnabled=localTokenEnabled; this.localToken=localToken; this.logins=logins;
  }
 
- /** Empty when the header is missing, malformed, or names nothing that is enabled. */
+ /** Empty when the header is missing, malformed, or names no live session. */
  public Optional<Principal> resolve(String authorizationHeader){
-  if(authorizationHeader==null||!authorizationHeader.startsWith("Bearer "))return Optional.empty();
+  if(authorizationHeader==null||!authorizationHeader.startsWith("Bearer ")) return Optional.empty();
   String supplied=authorizationHeader.substring(7);
   if(localTokenEnabled&&localToken.length()>=32
    &&MessageDigest.isEqual(localToken.getBytes(StandardCharsets.UTF_8),supplied.getBytes(StandardCharsets.UTF_8)))
    return Optional.of(Principal.localAdmin());
-  return accounts.findByTokenHash(sha256Hex(supplied));
+  return logins.resolve(sha256Hex(supplied));
  }
 
  public static String sha256Hex(String value){

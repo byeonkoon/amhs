@@ -195,7 +195,7 @@ function VehicleReportPanel(props: {
                     <button type="button" onClick={submit} disabled={busy || !hasWriteToken()} style={primary}>
                       {busy ? '보고 중…' : '보고'}
                     </button>
-                    {!hasWriteToken() && <span className="hint">설정 화면에서 토큰을 먼저 입력해 주세요.</span>}
+                    {!hasWriteToken() && <span className="hint">오른쪽 위 계정 메뉴에서 먼저 로그인해 주세요.</span>}
                   </div>
                   {error && <p className="hint" style={{ color: 'var(--crit)', margin: 0 }}>{error}</p>}
                   {result && <ReportOutcome result={result} map={props.map} />}

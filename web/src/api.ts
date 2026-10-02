@@ -130,30 +130,30 @@ export const cfgApi = {
   /** Site-wide options: not one machine's parameters, so they sit apart and need ADMIN. */
   system: () => `/api/v1/sites/${SITE_ID}/configuration/system`,
   vdaProfiles: () => `/api/v1/sites/${SITE_ID}/configuration/vda-profiles`,
-  /** Who may do what. ADMIN, and the issued token appears only in the reply that issues it. */
+  /** Who may do what. ADMIN only; a password goes in here and never comes back out. */
   accounts: () => `/api/v1/sites/${SITE_ID}/configuration/accounts`,
 };
 
 /**
- * An account as it may be shown. It carries neither the token nor its hash: `hasToken` says one
- * was issued, which is all a screen needs, because the token is readable only once at issue.
+ * An account as it may be shown. Nothing here carries the password or its stored form: `canLogIn`
+ * says only that one has been set, which is all a listing needs in order to be useful.
  */
 export type AccountView = {
   id: number; siteId: number; code: string; displayName: string; role: Role;
-  enabled: boolean; hasToken: boolean; version: number;
+  enabled: boolean; canLogIn: boolean; level: number; version: number;
 };
 export type AccountSettings = { code: string; displayName: string; role: Role; enabled: boolean };
-/** The one place a token ever appears. Show it once; it cannot be fetched again. */
-export type IssuedAccount = { account: AccountView; token: string };
+/** Settings plus the first password: the one field that goes in and never comes back. */
+export type NewAccount = AccountSettings & { password: string };
 
-/** Write token is kept in memory only: it is never stored and never rendered back. */
+/** The session is kept in memory only: it is never stored and never rendered back. */
 let writeToken: string | null = null;
 export const setWriteToken = (v: string | null) => { writeToken = v && v.trim() ? v.trim() : null; };
 export const hasWriteToken = () => writeToken !== null;
 
 export async function send<T>(url: string, method: 'POST' | 'PUT' | 'DELETE', body: unknown, reason?: string,
   extraHeaders?: Record<string, string>): Promise<T> {
-  if (!writeToken) throw new ApiError(401, url, '설정 변경 토큰이 없습니다. 먼저 토큰을 입력해 주세요.');
+  if (!writeToken) throw new ApiError(401, url, '로그인이 필요합니다. 오른쪽 위 계정 메뉴에서 로그인해 주세요.');
   const res = await fetch(url, {
     method,
     headers: {
@@ -323,6 +323,9 @@ export const opsApi = {
   /** Destination and remaining route of every vehicle with work or a move. */
   vehicleHeadings: () => `/api/v1/sites/${SITE_ID}/vehicle-headings`,
   session: () => `/api/v1/session`,
+  /** Logging in is how a session is got at all, so it is an operation and not a configuration change. */
+  logIn: () => `/api/v1/sites/${SITE_ID}/session`,
+  logOut: () => '/api/v1/session',
 };
 
 /** A node's editable parameters. Its revision and the segments reaching it are structure, not these. */
@@ -346,11 +349,22 @@ export type SlotView = {
 };
 
 /** Authority levels, lowest first. A screen offers what the session says it may do. */
-export type Role = 'VIEWER' | 'OPERATOR' | 'ENGINEER' | 'ADMIN';
+export type Role = 'VIEWER' | 'OPERATOR' | 'MANAGER' | 'ADMIN';
+/** 1 to 4, the same numbers the login screen and the account list speak in. */
+export const ROLE_LEVEL: Record<Role, number> = { VIEWER: 1, OPERATOR: 2, MANAGER: 3, ADMIN: 4 };
 /** `allows` names the areas this session may change, as the server itself computes them. */
-export type Session = { authenticated: boolean; code: string; role: Role; allows: string[] };
+export type Session = { authenticated: boolean; code: string; role: Role; level: number; allows: string[] };
+/** The session value is in the reply to a login and nowhere else; it is held in memory only. */
+export type LoggedIn = { token: string; expiresAt: string; session: Session };
 export const ROLE_LABEL: Record<Role, string> = {
-  VIEWER: '조회', OPERATOR: '운전', ENGINEER: '설비 설정', ADMIN: '관리자',
+  VIEWER: 'Lv1 조회', OPERATOR: 'Lv2 운전', MANAGER: 'Lv3 운영 관리', ADMIN: 'Lv4 관리자',
+};
+/** What each level reaches, written once so the screen and the gate cannot describe it differently. */
+export const ROLE_SCOPE: Record<Role, string> = {
+  VIEWER: '지도·차량, 알람, 이력, 진단 조회',
+  OPERATOR: '위 전부 + 이동 조작, 반송 작업, 구간 점유',
+  MANAGER: '위 전부 + 재고',
+  ADMIN: '위 전부 + 자원 구성, 설비, 시스템 옵션, 계정',
 };
 
 export type Publication = { claimed: number; delivered: number; notDelivered: number; inDoubt: number };
@@ -362,6 +376,28 @@ export type SweepResult = {
   evacuated: { vehicleId: number; decision: string; addedNodeIds: number[]; commandId: string | null }[];
   extended: Extension[]; published: Publication;
 };
+
+/**
+ * A call that does not require being logged in — logging in is the obvious one, since it is how a
+ * session is got in the first place. The current session is still sent when there is one, so
+ * logging out can name the session it is ending.
+ */
+export async function post<T>(url: string, body?: unknown, method: 'POST' | 'DELETE' = 'POST'): Promise<T> {
+  const res = await fetch(url, {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(writeToken ? { Authorization: `Bearer ${writeToken}` } : {}),
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!res.ok) {
+    let code = '';
+    try { code = ((await res.json()) as { code?: string }).code ?? ''; } catch { /* body may be empty */ }
+    throw new ApiError(res.status, url, code || describe(res.status));
+  }
+  return res.json() as Promise<T>;
+}
 
 /**
  * A read that identifies the caller, used to ask what this session may do. The token is sent
@@ -432,10 +468,13 @@ export function explainDecision(decision: string): string {
     RECOVERY_LOCATION_REQUIRED: '화물이 출발지에 있는지 목적지에 있는지 지정해야 합니다.',
     RECOVERY_REASON_REQUIRED: '화물 위치를 어떻게 확인했는지 적어야 합니다.',
     ORDER_NOT_IN_RECOVERY: '복구 대기 중인 작업이 아닙니다.',
-    PRINCIPAL_REQUIRED: '토큰이 없거나 맞지 않습니다. 오른쪽 위 계정 메뉴의 토큰 입력에서 토큰을 다시 넣어 주세요.',
-    ROLE_OPERATOR_REQUIRED: '운전자 이상 권한이 필요합니다.',
-    ROLE_ENGINEER_REQUIRED: '설비 설정 권한이 필요합니다.',
-    ROLE_ADMIN_REQUIRED: '관리자 권한이 필요합니다.',
+    PRINCIPAL_REQUIRED: '로그인이 필요하거나 로그인이 끝났습니다. 오른쪽 위 계정 메뉴에서 다시 로그인해 주세요.',
+    ROLE_OPERATOR_REQUIRED: 'Lv2 운전 이상 권한이 필요합니다.',
+    ROLE_MANAGER_REQUIRED: 'Lv3 운영 관리 이상 권한이 필요합니다.',
+    ROLE_ADMIN_REQUIRED: 'Lv4 관리자 권한이 필요합니다.',
+    LOGIN_REFUSED: '아이디나 비밀번호가 맞지 않습니다.',
+    PASSWORD_TOO_SHORT: '비밀번호가 너무 짧습니다.',
+    LAST_ADMIN: '마지막 관리자입니다. 내리면 권한을 되돌려 줄 사람이 남지 않습니다.',
     PICKUP_EVIDENCE_REQUIRED: '화물이 차량에 실렸다는 증거가 있어야 반송 단계로 넘어갑니다.',
     DROP_EVIDENCE_REQUIRED: '화물이 목적지에 내려졌다는 증거가 있어야 완료됩니다.',
     RETRY_EVIDENCE_REQUIRED: '이적재가 일어나지 않았다는 증거가 있어야 다시 시도합니다.',

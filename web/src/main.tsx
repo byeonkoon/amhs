@@ -8,7 +8,7 @@ import {
   type OperationOptions, type Session, type TransportOrder, type Vehicle, type VehicleSnapshot,
   type VehicleHeading, type VehicleMove, type ZoneOccupancy,
 } from './api';
-import { AppShell, type MenuKey, type ServerState } from './shell/AppShell';
+import { AppShell, mayOpen, type MenuKey, type ServerState } from './shell/AppShell';
 import { Chip, Empty, Failed, Loading } from './shell/States';
 import { Grid, Panel, Row } from './shell/Panel';
 import { MapLegend, MapView } from './features/map/MapView';
@@ -18,7 +18,8 @@ import { ConfigurationScreen } from './features/configuration/ConfigurationScree
 import { TransportScreen } from './features/transport/TransportScreen';
 import { TrafficScreen } from './features/traffic/TrafficScreen';
 import { DiagnosticsScreen } from './features/operations/DiagnosticsScreen';
-import { SignInScreen, SystemOptionsScreen } from './features/system/SystemOptionsScreen';
+import { SystemOptionsScreen } from './features/system/SystemOptionsScreen';
+import { SignInScreen } from './features/system/SignInScreen';
 import { AccountsScreen } from './features/system/AccountsScreen';
 import { EquipmentScreen } from './features/equipment/EquipmentScreen';
 import { HistoryScreen } from './features/history/HistoryScreen';
@@ -28,7 +29,8 @@ const REVISION_ID = 1;
 /** Pages reached from the account menu rather than the sidebar, so no sidebar entry is current. */
 type AccountPage = 'system' | 'accounts' | 'signin';
 const ACCOUNT_PAGES = new Set<string>(['system', 'accounts', 'signin']);
-const ANONYMOUS: Session = { authenticated: false, code: 'anonymous', role: 'VIEWER', allows: [] };
+/** Nobody in particular: the lowest level, which is what a screen gets before anyone logs in. */
+const ANONYMOUS: Session = { authenticated: false, code: 'anonymous', role: 'VIEWER', level: 1, allows: ['monitor'] };
 
 type Loaded = {
   map: MapData; vehicles: Vehicle[]; orders: TransportOrder[]; state: VehicleSnapshot[];
@@ -129,6 +131,16 @@ function App() {
     return () => controller.abort();
   }, [reload]);
 
+  // Logging out, or being put on a lower level while a screen is open, takes the screen away too.
+  // A permission that is withdrawn but still usable on the screen already open was not withdrawn.
+  React.useEffect(() => {
+    if (ACCOUNT_PAGES.has(menu)) {
+      if (menu !== 'signin' && !session.allows.includes(menu)) setMenu('fleet');
+      return;
+    }
+    if (!mayOpen(session, menu as MenuKey)) setMenu('fleet');
+  }, [session, menu]);
+
   const server: ServerState = error ? 'unreachable' : data ? 'connected' : 'connecting';
   const retry = () => setReload(v => v + 1);
   const page = PAGES[menu];
@@ -139,7 +151,7 @@ function App() {
       onAccount={setMenu}
       session={session} runMode={data?.options?.runMode ?? null}
       crumb={['Home', page.crumb, page.title]} title={page.title} subtitle={page.subtitle} server={server}>
-      {menu === 'signin' ? <SignInScreen onChanged={retry} />
+      {menu === 'signin' ? <SignInScreen session={session} onChanged={retry} />
         : error ? <div className="card"><Failed error={error} onRetry={retry} /></div>
           : !data ? <div className="card"><Loading what={page.title} /></div>
             : menu === 'system' ? <SystemOptionsScreen session={session} />
@@ -535,7 +547,7 @@ function ManualMove(props: {
         : !(vehicle.status ? vehicle.status === 'IDLE' : vehicle.idle) ? '대기 상태가 아닙니다.'
           : props.target === null ? '목표 노드를 고르세요(목록 또는 지도 클릭).'
             : props.target === vehicle.nodeId ? '이미 그 노드에 있습니다.'
-              : !hasWriteToken() ? '토큰을 입력해야 명령할 수 있습니다.' : null;
+              : !hasWriteToken() ? 'Lv2 운전 이상으로 로그인해야 명령할 수 있습니다.' : null;
 
   async function move() {
     if (!vehicle || props.target === null) return;

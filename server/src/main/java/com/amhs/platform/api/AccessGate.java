@@ -28,10 +28,18 @@ class AccessGate extends OncePerRequestFilter {
   String traceId=UUID.randomUUID().toString();
   String target=req.getMethod()+" "+decode(req.getRequestURI());
   String reason=com.amhs.platform.RequestReason.fromHeader(req.getHeader("X-Amhs-Reason"));
-  Principal actor=principals.resolve(req.getHeader("Authorization")).orElse(null);
-  if(actor==null){deny(res,401,"PRINCIPAL_REQUIRED",traceId,Principal.anonymous(),req.getMethod(),target,reason);return;}
+  // Nobody in particular still has the lowest level, which is what lets a login through: asking to
+  // log in cannot require being logged in. Whether that is enough is the one question asked.
+  var resolved=principals.resolve(req.getHeader("Authorization"));
+  Principal actor=resolved.orElseGet(Principal::anonymous);
   Role required=requiredRole(req.getRequestURI());
-  if(!actor.role().allows(required)){deny(res,403,"ROLE_"+required+"_REQUIRED",traceId,actor,req.getMethod(),target,reason);return;}
+  if(!actor.role().allows(required)){
+   // Presenting nothing is a different thing to say than presenting too little.
+   int status=resolved.isPresent()?403:401;
+   String code=resolved.isPresent()?"ROLE_"+required+"_REQUIRED":"PRINCIPAL_REQUIRED";
+   deny(res,status,code,traceId,actor,req.getMethod(),target,reason);
+   return;
+  }
   // Whoever passed the gate is who the ledger records, not a placeholder.
   req.setAttribute(Principal.REQUEST_ATTRIBUTE,actor);
   try{
@@ -52,11 +60,16 @@ class AccessGate extends OncePerRequestFilter {
   */
  private static Role requiredRole(String uri){
   String path=decode(uri);
-  if(!path.contains("/configuration/"))return Role.OPERATOR;
-  for(String area:SITE_WIDE)if(path.contains("/configuration/"+area))return Role.ADMIN;
-  return Role.ENGINEER;
+  // Logging in is how somebody gets a level in the first place, so it cannot need one.
+  if(path.endsWith("/session"))return Role.VIEWER;
+  // Configuring anything — the vehicles, the equipment, the track, the options, the accounts — is
+  // the administrator's. Each of them outlives the shift that made the change and reaches work
+  // nobody is watching yet.
+  if(path.contains("/configuration/"))return Role.ADMIN;
+  if(path.contains("/inventory"))return Role.MANAGER;
+  // Running work that is already configured.
+  return Role.OPERATOR;
  }
- private static final List<String> SITE_WIDE=List.of("system","topology","accounts");
  private static String decode(String uri){
   try{return java.net.URLDecoder.decode(uri,StandardCharsets.UTF_8);}catch(RuntimeException e){return uri;}
  }

@@ -103,7 +103,7 @@ export function TransportScreen(props: {
         )}
         {!hasWriteToken() && (
           <div className="cb" style={{ paddingBottom: 0 }}>
-            <p className="hint" style={{ margin: 0 }}>조회는 열려 있고 상태를 바꾸는 요청만 토큰을 요구합니다. 설정 화면에서 토큰을 입력하면 배차·취소·연장이 열립니다.</p>
+            <p className="hint" style={{ margin: 0 }}>조회는 열려 있고 상태를 바꾸는 요청만 로그인을 요구합니다. 오른쪽 위 계정 메뉴에서 Lv2 운전 이상으로 로그인하면 배차·취소·연장이 열립니다.</p>
           </div>
         )}
 
@@ -191,7 +191,7 @@ function CreateOrder(props: {
       <button type="button" disabled={props.busy || !ready} onClick={() => props.onCreate({ source, destination, carrier, priority })}
         style={{ border: '1px solid var(--acc)', background: ready ? 'var(--acc)' : 'var(--srf)', color: ready ? '#fff' : 'var(--mut)',
           borderRadius: 5, padding: '3px 14px', fontSize: 12, cursor: ready ? 'pointer' : 'default' }}>생성</button>
-      {!hasWriteToken() && <span className="hint">토큰을 입력해야 만들 수 있습니다.</span>}
+      {!hasWriteToken() && <span className="hint">로그인해야 만들 수 있습니다.</span>}
     </div>
   );
 }

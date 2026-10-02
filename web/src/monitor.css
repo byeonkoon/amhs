@@ -13,6 +13,13 @@
 .compact .nav-menu .t1 { font-size: 12px; }
 .compact .nav-menu .t2 { font-size: 9px; }
 .compact .nav-foot { padding: 9px 13px 11px; font-size: 10px; }
+
+/*
+ * A screen the login cannot open keeps its place and says the level it takes. Removing the entry
+ * would teach that the screen does not exist, and somebody would go looking for it.
+ */
+.nav-menu .need { margin-left: auto; flex: none; font-family: var(--mono); font-size: 9.5px;
+  padding: 1px 5px; border-radius: 3px; border: 1px solid rgba(255, 255, 255, .22); color: var(--nav-dim); }
 .compact .topbar { min-height: 38px; }
 .compact .phead { padding: 10px 14px 0; }
 .compact .phead h1 { font-size: 16.5px; }

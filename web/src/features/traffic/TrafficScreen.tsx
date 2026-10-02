@@ -242,7 +242,7 @@ function RecoveryChoice(props: {
                 style={{ flex: '1 1 180px', minWidth: 140 }} disabled={busy} />
               {candidates.map(v => (
                 <button key={v} type="button" disabled={busy || !reason.trim() || !hasWriteToken()}
-                  title={hasWriteToken() ? '정지시킨 뒤 앞 예약만 반납하고, 상대가 지나갈 때까지 새 예약을 받지 않습니다.' : '조작 토큰이 필요합니다.'}
+                  title={hasWriteToken() ? '정지시킨 뒤 앞 예약만 반납하고, 상대가 지나갈 때까지 새 예약을 받지 않습니다.' : 'Lv2 운전 이상으로 로그인해야 합니다.'}
                   onClick={() => giveWay(v)}>{props.vehicleCode(v)} 양보</button>
               ))}
             </div>

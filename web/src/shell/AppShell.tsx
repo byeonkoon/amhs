@@ -1,29 +1,43 @@
 import React from 'react';
-import { ROLE_LABEL, type Session } from '../api';
+import { ROLE_LABEL, ROLE_LEVEL, type Role, type Session } from '../api';
 
 /** Menu entries share one shape so every screen shows the same sidebar. */
 export type MenuKey = 'overview' | 'fleet' | 'resources' | 'equipment' | 'transport' | 'traffic'
   | 'inventory' | 'alarms' | 'history' | 'diagnostics';
-type Entry = { key: MenuKey; label: string; sub: string; ready: boolean };
+/** `needs` is the lowest level that may open the screen at all. */
+type Entry = { key: MenuKey; label: string; sub: string; ready: boolean; needs: Role };
 
 /**
  * Resources holds what the controller commands — vehicles, the nodes and segments they run on,
  * and the ports that face equipment. Equipment holds the equipment itself, with its racks and
  * slots. They are separate because configuring a machine and rewiring the track are different
  * jobs with different consequences.
+ *
+ * <p>The level each screen needs is the level its screen can act at: watching the floor is level 1,
+ * running work and giving way is level 2, what is being carried and stored is level 3, and changing
+ * the vehicles, the track, the equipment or who may log in is level 4.
  */
 const MENU: Entry[] = [
-  { key: 'overview', label: 'Overview', sub: 'Status / KPI', ready: false },
-  { key: 'fleet', label: 'Fleet', sub: 'Map / Vehicles', ready: true },
-  { key: 'transport', label: 'Transport', sub: 'Job / Route', ready: true },
-  { key: 'traffic', label: 'Traffic', sub: 'Reservation / Deadlock', ready: true },
-  { key: 'resources', label: 'Resources', sub: 'Vehicle / Node / Port', ready: true },
-  { key: 'equipment', label: 'Equipment', sub: 'EQP / Rack / Slot', ready: true },
-  { key: 'inventory', label: 'Inventory', sub: 'Carrier / Stocker', ready: false },
-  { key: 'alarms', label: 'Alarms', sub: 'Event / Notification', ready: false },
-  { key: 'history', label: 'History', sub: 'Log / Trace', ready: true },
-  { key: 'diagnostics', label: 'Diagnostics', sub: 'Health / Recovery', ready: true },
+  { key: 'overview', label: 'Overview', sub: 'Status / KPI', ready: false, needs: 'VIEWER' },
+  { key: 'fleet', label: 'Fleet', sub: 'Map / Vehicles', ready: true, needs: 'VIEWER' },
+  { key: 'transport', label: 'Transport', sub: 'Job / Route', ready: true, needs: 'OPERATOR' },
+  { key: 'traffic', label: 'Traffic', sub: 'Reservation / Deadlock', ready: true, needs: 'OPERATOR' },
+  { key: 'resources', label: 'Resources', sub: 'Vehicle / Node / Port', ready: true, needs: 'ADMIN' },
+  { key: 'equipment', label: 'Equipment', sub: 'EQP / Rack / Slot', ready: true, needs: 'ADMIN' },
+  { key: 'inventory', label: 'Inventory', sub: 'Carrier / Stocker', ready: false, needs: 'MANAGER' },
+  { key: 'alarms', label: 'Alarms', sub: 'Event / Notification', ready: false, needs: 'VIEWER' },
+  { key: 'history', label: 'History', sub: 'Log / Trace', ready: true, needs: 'VIEWER' },
+  { key: 'diagnostics', label: 'Diagnostics', sub: 'Health / Recovery', ready: true, needs: 'VIEWER' },
 ];
+
+/** The lowest level that may open a screen, so main and the shell cannot disagree about it. */
+export function menuNeeds(key: MenuKey): Role {
+  return MENU.find(e => e.key === key)?.needs ?? 'ADMIN';
+}
+/** Whether this session may open that screen. */
+export function mayOpen(session: Session, key: MenuKey): boolean {
+  return session.level >= ROLE_LEVEL[menuNeeds(key)];
+}
 
 export type ServerState = 'connecting' | 'connected' | 'unreachable';
 
@@ -63,21 +77,29 @@ export function AppShell(props: {
           <span>Automated Material Handling System</span>
         </div>
         <ul className="nav-menu">
-          {MENU.map(entry => (
-            <li key={entry.key} className={entry.key === props.active ? 'on' : undefined}>
-              <button
-                type="button"
-                disabled={!entry.ready}
-                aria-current={entry.key === props.active ? 'page' : undefined}
-                title={entry.ready ? undefined : '아직 구현하지 않은 화면입니다.'}
-                onClick={() => entry.ready && props.onSelect(entry.key)}>
-                <span className="tx">
-                  <span className="t1">{entry.label}</span>
-                  <span className="t2">{entry.sub}</span>
-                </span>
-              </button>
-            </li>
-          ))}
+          {MENU.map(entry => {
+            // A level that is not enough is shown with the level it takes. Hiding the entry would
+            // teach that the screen does not exist, and somebody would go looking for it.
+            const allowed = props.session.level >= ROLE_LEVEL[entry.needs];
+            const open = entry.ready && allowed;
+            return (
+              <li key={entry.key} className={entry.key === props.active ? 'on' : undefined}>
+                <button
+                  type="button"
+                  disabled={!open}
+                  aria-current={entry.key === props.active ? 'page' : undefined}
+                  title={!entry.ready ? '아직 구현하지 않은 화면입니다.'
+                    : allowed ? undefined : `${ROLE_LABEL[entry.needs]} 이상 권한이 필요합니다. 계정 메뉴에서 로그인하세요.`}
+                  onClick={() => open && props.onSelect(entry.key)}>
+                  <span className="tx">
+                    <span className="t1">{entry.label}</span>
+                    <span className="t2">{entry.sub}</span>
+                  </span>
+                  {entry.ready && !allowed && <span className="need">Lv{ROLE_LEVEL[entry.needs]}</span>}
+                </button>
+              </li>
+            );
+          })}
         </ul>
         <div className="nav-foot">
           <div className="row">
@@ -159,18 +181,18 @@ function AccountMenu({ session, onSelect }: { session: Session; onSelect: (item:
         <div className="acct-menu" role="menu">
           <div className="who">
             <b className="mono">{session.code}</b><br />
-            {session.authenticated ? `권한 ${ROLE_LABEL[session.role]} · ${session.role}` : '토큰 없음 · 조회만 가능합니다'}
+            {session.authenticated ? `${ROLE_LABEL[session.role]} · ${session.role}` : '로그인하지 않음 · 조회만 가능합니다'}
           </div>
           <div className="sep" />
           <button type="button" role="menuitem" disabled={!may('system')} onClick={() => pick('system')}>
-            시스템 옵션<span className="lv">ADMIN</span>
+            시스템 옵션<span className="lv">Lv4</span>
           </button>
           <button type="button" role="menuitem" disabled={!may('accounts')} onClick={() => pick('accounts')}>
-            계정·권한<span className="lv">ADMIN</span>
+            계정·권한<span className="lv">Lv4</span>
           </button>
           <div className="sep" />
           <button type="button" role="menuitem" onClick={() => pick('signin')}>
-            {session.authenticated ? '토큰 변경·해제' : '토큰 입력'}
+            {session.authenticated ? '로그인 정보·로그아웃' : '로그인'}
           </button>
         </div>
       )}
