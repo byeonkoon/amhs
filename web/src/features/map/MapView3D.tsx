@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { STATUS_LABEL, type MapData, type VehicleSnapshot } from '../../api';
-import { AGV, CALL_OFF, CALL_ON, CARRIER_ON, OHT, layerOfNode, vehicleLook, callable } from './MapView';
+import { AGV, CALL_OFF, CALL_ON, CARRIER_OFF, CARRIER_ON, OHT, layerOfNode, vehicleLook, callable } from './MapView';
 import { portTitle, segmentPoints, vehiclePlaces, vehiclePoint } from './geometry';
 import { MotionBuffer } from './motion';
 
@@ -72,12 +72,12 @@ function fitted(model: THREE.Object3D, length: number): { object: THREE.Object3D
 // ---- labels ----
 
 /** A text label that always faces the camera. `dot` draws a status dot before the text. */
-function makeLabel(text: string, opts: { dot?: string; dark?: boolean; size?: number }): THREE.Sprite {
-  const px = 44, padX = 22, dotW = opts.dot ? 40 : 0;
+function makeLabel(text: string, opts: { dot?: string; dark?: boolean; size?: number; carrier?: boolean }): THREE.Sprite {
+  const px = 44, padX = 22, dotW = opts.dot ? 40 : 0, carrierW = opts.carrier === undefined ? 0 : 56;
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d')!;
   ctx.font = `600 ${px}px ui-monospace, Consolas, monospace`;
-  const width = Math.ceil(ctx.measureText(text).width) + padX * 2 + dotW;
+  const width = Math.ceil(ctx.measureText(text).width) + padX * 2 + dotW + carrierW;
   canvas.width = width; canvas.height = 72;
   ctx.font = `600 ${px}px ui-monospace, Consolas, monospace`;
   ctx.fillStyle = opts.dark ? 'rgba(23,34,49,0.92)' : 'rgba(255,255,255,0.92)';
@@ -90,6 +90,12 @@ function makeLabel(text: string, opts: { dot?: string; dark?: boolean; size?: nu
   ctx.fillStyle = opts.dark ? '#fff' : '#42525F';
   ctx.textBaseline = 'middle';
   ctx.fillText(text, padX + dotW, 38);
+  if (opts.carrier !== undefined) {
+    // Carrier on board: green; none: the inactive colour — the same round mark as in 2D.
+    ctx.fillStyle = opts.carrier ? CARRIER_ON : CARRIER_OFF;
+    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.arc(width - padX - 20, 36, 20, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  }
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, depthTest: false, transparent: true }));
@@ -114,6 +120,7 @@ type VehicleObject = {
   marker: THREE.MeshBasicMaterial;
   ring: THREE.Mesh;
   carrier: THREE.Object3D;
+  carrierMark: THREE.MeshStandardMaterial;
   label: THREE.Sprite | null;
   labelKey: string;
   labelY: number;
@@ -446,6 +453,13 @@ class World {
     carrier.position.y = carrierY;
     carrier.castShadow = true;
     body.add(carrier);
+    // Round mark on the roof, always shown: green with a carrier, the inactive colour without.
+    // On an OHT it sits behind the hanger, beside the rail, so the rail does not hide it.
+    const carrierMark = new THREE.MeshStandardMaterial({ color: CARRIER_OFF, emissive: CARRIER_OFF, emissiveIntensity: 0.25 });
+    const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.17, 0.03, 32), carrierMark);
+    if (type === 'OHT') disc.position.set(-0.24, RAIL - 0.08 + 0.016, 0);
+    else disc.position.set(-0.05, top + 0.016, 0);
+    body.add(disc);
     group.add(body);
 
     // A status-coloured patch on the floor below, so an OHT is easy to place from above.
@@ -460,7 +474,7 @@ class World {
     ring.visible = false;
     group.add(ring);
 
-    return { group, type, shell, outline, band, lamp, marker, ring, carrier, label: null, labelKey: '', labelY,
+    return { group, type, shell, outline, band, lamp, marker, ring, carrier, carrierMark, label: null, labelKey: '', labelY,
       target: new THREE.Vector3(), yaw: 0, targetYaw: 0, placed: false };
   }
 
@@ -514,12 +528,14 @@ class World {
       obj.marker.color.copy(color);
       obj.outline.color.set(callable(v) ? CALL_ON : CALL_OFF);
       obj.carrier.visible = v.carrierPresent;
+      const mark = v.carrierPresent ? CARRIER_ON : CARRIER_OFF;
+      obj.carrierMark.color.set(mark); obj.carrierMark.emissive.set(mark);
       obj.ring.visible = selectedId === v.id;
       const extra = status !== 'IDLE' && status !== 'MOVING' || !v.online ? ` · ${look.label}` : '';
-      const key = `${v.code} ${modeLetter(v)}${extra}|${look.fill}`;
+      const key = `${v.code} ${modeLetter(v)}${extra}|${look.fill}|${v.carrierPresent ? 1 : 0}`;
       if (key !== obj.labelKey) {
         if (obj.label) { obj.group.remove(obj.label); disposeTree(obj.label); }
-        obj.label = makeLabel(key.split('|')[0], { dot: look.fill, dark: true });
+        obj.label = makeLabel(key.split('|')[0], { dot: look.fill, dark: true, carrier: v.carrierPresent });
         obj.label.position.y = obj.labelY;
         obj.group.add(obj.label);
         obj.labelKey = key;
@@ -590,7 +606,9 @@ class World {
 /**
  * The same layout and vehicles as the 2D map, in 3D: the OHT rail hangs at ceiling height with its
  * vehicles below it, the AGV route is painted on the floor. Status shows as the colour of each
- * vehicle's band, lamp and floor patch, the carrier as a yellow box, mode and code in the label.
+ * vehicle's band, lamp and floor patch; whether it carries as a round mark on the roof and in the
+ * label (green with a carrier, the inactive colour without) and a green box when it does; mode and
+ * code in the label.
  * Clicking a vehicle selects it, clicking a node picks it as the move target, as in 2D.
  */
 export default function MapView3D(props: Props) {
