@@ -4,7 +4,7 @@ import './style.css';
 import './monitor.css';
 import {
   api, cfgApi, explainDecision, freshness, get, getAs, hasWriteToken, opsApi, send, ApiError, MODE_LABEL, STATUS_LABEL,
-  type AssignmentView, type Cfg, type Deadlock, type DeviceCommand, type MapData, type NodeHold,
+  type AssignmentView, type Cfg, type Deadlock, type DeadlockPlan, type DeadlockRecovery, type DeviceCommand, type MapData, type NodeHold,
   type OperationOptions, type Session, type TransportOrder, type Vehicle, type VehicleSnapshot,
   type VehicleHeading, type VehicleMove, type ZoneOccupancy,
 } from './api';
@@ -32,6 +32,7 @@ type Loaded = {
   assignments: AssignmentView[]; options: OperationOptions | null; zones: ZoneOccupancy[];
   moves: VehicleMove[];
   headings: VehicleHeading[];
+  plans: DeadlockPlan[]; recoveries: DeadlockRecovery[];
 };
 
 /** The live parts laid over what was read, under the names the screens use. */
@@ -41,6 +42,7 @@ function withLive(d: Loaded, p: LiveParts): Loaded {
     state: p.vehicles ?? d.state, holds: p.holds ?? d.holds, headings: p.headings ?? d.headings,
     moves: p.moves ?? d.moves, assignments: p.assignments ?? d.assignments, orders: p.orders ?? d.orders,
     deadlocks: p.deadlocks ?? d.deadlocks, zones: p.zones ?? d.zones, inDoubt: p.inDoubt ?? d.inDoubt,
+    plans: p.deadlockPlans ?? d.plans, recoveries: p.recoveries ?? d.recoveries,
   };
 }
 
@@ -108,9 +110,13 @@ function App() {
       softly(get<ZoneOccupancy[]>(opsApi.zones(), signal), [] as ZoneOccupancy[]),
       softly(get<VehicleMove[]>(opsApi.vehicleMoves(), signal), [] as VehicleMove[]),
       softly(get<VehicleHeading[]>(opsApi.vehicleHeadings(), signal), [] as VehicleHeading[]),
+      softly(get<DeadlockPlan[]>(opsApi.deadlockPlans(), signal), [] as DeadlockPlan[]),
+      softly(get<DeadlockRecovery[]>(opsApi.deadlockRecoveries(), signal), [] as DeadlockRecovery[]),
     ])
-      .then(([map, vehicles, orders, state, holds, deadlocks, inDoubt, assignments, options, zones, moves, headings]) => {
-        const read: Loaded = { map, vehicles, orders, state, holds, deadlocks, inDoubt, assignments, options, zones, moves, headings };
+      .then(([map, vehicles, orders, state, holds, deadlocks, inDoubt, assignments, options, zones, moves, headings, plans, recoveries]) => {
+        const read: Loaded = {
+          map, vehicles, orders, state, holds, deadlocks, inDoubt, assignments, options, zones, moves, headings, plans, recoveries,
+        };
         const now = liveRef.current;
         setData(now.status === 'live' ? withLive(read, now.parts) : read);
         setLoadedAt(new Date());
@@ -141,7 +147,7 @@ function App() {
                       loadedAt={loadedAt} onRetry={retry} />
                   : menu === 'traffic'
                     ? <TrafficScreen map={data.map} holds={data.holds} deadlocks={data.deadlocks} vehicles={data.state}
-                        zones={data.zones} />
+                        zones={data.zones} plans={data.plans} recoveries={data.recoveries} onChanged={retry} />
                     : menu === 'diagnostics'
                       ? <DiagnosticsScreen map={data.map} revisionId={REVISION_ID} vehicles={data.state}
                           inDoubt={data.inDoubt} onChanged={retry} />

@@ -24,7 +24,7 @@ class LiveSite {
  /** Read on every pass: what moves. */
  static final java.util.List<String> FAST=java.util.List.of("revisionId","vehicles","holds","headings","moves","assignments");
  /** Read every few passes: what changes with work rather than with motion. */
- static final java.util.List<String> SLOW=java.util.List.of("orders","deadlocks","zones","inDoubt");
+ static final java.util.List<String> SLOW=java.util.List.of("orders","deadlocks","zones","inDoubt","deadlockPlans","recoveries");
 
  private final Map<String,LongFunction<Object>> reads=new LinkedHashMap<>();
  private final TransactionTemplate tx;
@@ -44,6 +44,8 @@ class LiveSite {
   reads.put("deadlocks",traffic::deadlocks);
   reads.put("zones",traffic::zones);
   reads.put("inDoubt",site->outbox.inDoubt(site,50));
+  reads.put("deadlockPlans",traffic::deadlockPlans);
+  reads.put("recoveries",site->traffic.recoveries(site,20));
  }
 
  /**

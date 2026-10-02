@@ -232,6 +232,19 @@ export type NodeHold = {
 };
 /** A closed chain of vehicles, each waiting for a node the next one holds. */
 export type Deadlock = { vehicleIds: number[]; wantedNodeIds: number[] };
+/**
+ * A deadlock with its links: vehicleId waits for wantedNodeId, which blockerId holds or stands on.
+ * releasable: the blocker only holds it ahead of where it stands, so the blocker giving way frees it.
+ */
+export type DeadlockLink = { vehicleId: number; wantedNodeId: number; blockerId: number; blockerStandsThere: boolean; releasable: boolean };
+export type DeadlockPlan = { vehicleIds: number[]; wantedNodeIds: number[]; links: DeadlockLink[]; recoveryId: number | null };
+/** One vehicle giving way to break a deadlock. STOPPING → YIELDING → DONE, or ABANDONED by an operator. */
+export type DeadlockRecovery = {
+  id: number; vehicleId: number; beneficiaryVehicleId: number; wantedNodeId: number; chainVehicleIds: number[];
+  status: 'STOPPING' | 'YIELDING' | 'DONE' | 'ABANDONED'; reason: string; requestedBy: string; requestedAt: string;
+  stopCommandId: string | null; stopSettledAt: string | null; releasedNodeIds: number[]; releasedAt: string | null;
+  finishedAt: string | null; finishReason: string | null;
+};
 /** A set of nodes that admits at most `capacity` vehicles; vehicleIds are those counted inside it now. */
 export type ZoneOccupancy = {
   id: number; revisionId: number; code: string; capacity: number; enabled: boolean;
@@ -265,6 +278,9 @@ export const opsApi = {
   reservations: (vehicleId?: number) =>
     `/api/v1/sites/${SITE_ID}/traffic/reservations${vehicleId === undefined ? '' : `?vehicleId=${vehicleId}`}`,
   deadlocks: () => `/api/v1/sites/${SITE_ID}/traffic/deadlocks`,
+  deadlockPlans: () => `/api/v1/sites/${SITE_ID}/deadlock-plans`,
+  deadlockRecoveries: () => `/api/v1/sites/${SITE_ID}/deadlock-recoveries`,
+  closeRecovery: (id: number) => `/api/v1/sites/${SITE_ID}/deadlock-recoveries/${id}/close`,
   zones: () => `/api/v1/sites/${SITE_ID}/traffic/zones`,
   inDoubt: (limit = 50) => `/api/v1/sites/${SITE_ID}/device-commands/in-doubt?limit=${limit}`,
   orderCommands: (orderId: number) => `/api/v1/sites/${SITE_ID}/transport-orders/${orderId}/device-commands`,

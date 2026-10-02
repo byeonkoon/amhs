@@ -15,6 +15,7 @@ class JdbcTrafficControl implements TrafficControl {
  public ReservationGrant request(long siteId,long revisionId,long vehicleId,Long orderId,List<Long> routeNodeIds){
   var wanted=untilFirstRepeat(routeNodeIds,nodeCount(siteId));
   if(wanted.isEmpty()) return new ReservationGrant(vehicleId,List.of(),true,null,null,"EMPTY_ROUTE");
+  if(givingWay(siteId,vehicleId)) return keptOnly(siteId,vehicleId,wanted);
 
   lockInAscendingIdOrder(siteId,wanted);
   var holders=holdersOf(wanted);
@@ -181,6 +182,142 @@ class JdbcTrafficControl implements TrafficControl {
  }
 
  private record Wait(long vehicleId,long wantedNodeId,Long blockerId){}
+
+ private boolean givingWay(long siteId,long vehicleId){
+  return Boolean.TRUE.equals(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM traffic.deadlock_recovery"
+   +" WHERE site_id=? AND vehicle_id=? AND finished_at IS NULL)",Boolean.class,siteId,vehicleId));
+ }
+ /** What the vehicle already holds along the route from where it stands; nothing new, no wait. */
+ private ReservationGrant keptOnly(long siteId,long vehicleId,List<Long> wanted){
+  var mine=new HashSet<Long>();
+  for(var h:heldBy(siteId,vehicleId)) mine.add(h.nodeId());
+  var kept=new ArrayList<Long>();
+  for(Long node:wanted){ if(!mine.contains(node)) break; kept.add(node); }
+  Long next=kept.size()<wanted.size()?wanted.get(kept.size()):null;
+  return new ReservationGrant(vehicleId,kept,next==null,next,null,next==null?null:"DEADLOCK_RECOVERY");
+ }
+
+ @Transactional(readOnly=true)
+ public List<DeadlockPlan> deadlockPlans(long siteId){
+  var standing=new HashMap<Long,Long>();
+  jdbc.query("SELECT node_id,vehicle_id FROM fleet.vehicle_state WHERE site_id=? AND node_id IS NOT NULL",
+   (org.springframework.jdbc.core.RowCallbackHandler)r->standing.put(r.getLong(1),r.getLong(2)),siteId);
+  var where=new HashMap<Long,Long>();
+  standing.forEach((node,vehicle)->where.put(vehicle,node));
+  var open=new HashMap<Long,Long>();
+  jdbc.query("SELECT vehicle_id,id FROM traffic.deadlock_recovery WHERE site_id=? AND finished_at IS NULL",
+   (org.springframework.jdbc.core.RowCallbackHandler)r->open.put(r.getLong(1),r.getLong(2)),siteId);
+  var out=new ArrayList<DeadlockPlan>();
+  for(var d:deadlocks(siteId)){
+   var links=new ArrayList<DeadlockPlan.Link>();
+   Long recoveryId=null;
+   for(int i=0;i<d.vehicleIds().size();i++){
+    long waiter=d.vehicleIds().get(i), node=d.wantedNodeIds().get(i);
+    long blocker=d.vehicleIds().get((i+1)%d.vehicleIds().size());
+    Long stander=standing.get(node);
+    // Giving back the road ahead frees the node only if the blocker holds it after where it stands.
+    Long at=where.get(blocker);
+    int posSeq=-1, nodeSeq=-1;
+    for(var h:heldBy(siteId,blocker)){
+     if(at!=null&&h.nodeId()==at) posSeq=h.sequence();
+     if(h.nodeId()==node) nodeSeq=h.sequence();
+    }
+    boolean releasable=stander==null&&posSeq>=0&&nodeSeq>posSeq;
+    links.add(new DeadlockPlan.Link(waiter,node,blocker,stander!=null&&stander==blocker,releasable));
+    if(recoveryId==null&&open.containsKey(blocker)) recoveryId=open.get(blocker);
+    if(recoveryId==null&&open.containsKey(waiter)) recoveryId=open.get(waiter);
+   }
+   out.add(new DeadlockPlan(d.vehicleIds(),d.wantedNodeIds(),links,recoveryId));
+  }
+  return out;
+ }
+
+ private static final String RECOVERY="SELECT id,site_id,vehicle_id,beneficiary_vehicle_id,wanted_node_id,chain_vehicle_ids,"
+  +"status,reason,requested_by,requested_at,stop_command_id,stop_settled_at,released_node_ids,released_at,finished_at,finish_reason"
+  +" FROM traffic.deadlock_recovery";
+ private static List<Long> longs(java.sql.Array array) throws java.sql.SQLException {
+  if(array==null) return List.of();
+  var out=new ArrayList<Long>();
+  for(Object o:(Object[])array.getArray()) out.add(((Number)o).longValue());
+  return out;
+ }
+ private static final RowMapper<DeadlockRecovery> RECOVERY_MAPPER=(r,n)->new DeadlockRecovery(r.getLong(1),r.getLong(2),
+  r.getLong(3),r.getLong(4),r.getLong(5),longs(r.getArray(6)),r.getString(7),r.getString(8),r.getString(9),
+  r.getObject(10,OffsetDateTime.class),r.getString(11),r.getObject(12,OffsetDateTime.class),longs(r.getArray(13)),
+  r.getObject(14,OffsetDateTime.class),r.getObject(15,OffsetDateTime.class),r.getString(16));
+ private static String arrayText(List<Long> ids){
+  var b=new StringBuilder("{");
+  for(int i=0;i<ids.size();i++){ if(i>0) b.append(','); b.append(ids.get(i)); }
+  return b.append('}').toString();
+ }
+
+ @Transactional(readOnly=true)
+ public List<DeadlockRecovery> recoveries(long siteId,int recentFinished){
+  var out=new ArrayList<>(jdbc.query(RECOVERY+" WHERE site_id=? AND finished_at IS NULL ORDER BY requested_at DESC,id DESC",
+   RECOVERY_MAPPER,siteId));
+  out.addAll(jdbc.query(RECOVERY+" WHERE site_id=? AND finished_at IS NOT NULL ORDER BY finished_at DESC,id DESC LIMIT ?",
+   RECOVERY_MAPPER,siteId,Math.max(0,Math.min(recentFinished,100))));
+  return out;
+ }
+ @Transactional(readOnly=true)
+ public Optional<DeadlockRecovery> recovery(long siteId,long recoveryId){
+  return jdbc.query(RECOVERY+" WHERE site_id=? AND id=?",RECOVERY_MAPPER,siteId,recoveryId).stream().findFirst();
+ }
+ @Transactional
+ public DeadlockRecovery openRecovery(long siteId,long vehicleId,long beneficiaryId,long wantedNodeId,
+                                      List<Long> chainVehicleIds,String stopCommandId,String reason,String requestedBy){
+  if(givingWay(siteId,vehicleId)) throw new IllegalStateException("RECOVERY_ALREADY_OPEN");
+  Long id=jdbc.queryForObject("INSERT INTO traffic.deadlock_recovery(site_id,vehicle_id,beneficiary_vehicle_id,wanted_node_id,"
+   +"chain_vehicle_ids,status,reason,requested_by,stop_command_id) VALUES(?,?,?,?,?::bigint[],'STOPPING',?,?,?) RETURNING id",Long.class,
+   siteId,vehicleId,beneficiaryId,wantedNodeId,arrayText(chainVehicleIds),reason.length()<=256?reason:reason.substring(0,256),
+   requestedBy.length()<=128?requestedBy:requestedBy.substring(0,128),stopCommandId);
+  return recovery(siteId,id).orElseThrow();
+ }
+ @Transactional
+ public void recoveryStopSettled(long recoveryId){
+  jdbc.update("UPDATE traffic.deadlock_recovery SET stop_settled_at=clock_timestamp() WHERE id=? AND stop_settled_at IS NULL",recoveryId);
+ }
+ @Transactional
+ public DeadlockRecovery releaseForRecovery(long recoveryId,long positionNodeId){
+  var rec=jdbc.query(RECOVERY+" WHERE id=? FOR UPDATE",RECOVERY_MAPPER,recoveryId).stream().findFirst()
+   .orElseThrow(()->new IllegalStateException("RECOVERY_NOT_FOUND"));
+  if(!DeadlockRecovery.STOPPING.equals(rec.status())||!rec.open()) return rec;
+  var before=heldBy(rec.siteId(),rec.vehicleId()).stream().map(NodeHold::nodeId).toList();
+  releaseAhead(rec.siteId(),rec.vehicleId(),positionNodeId,"DEADLOCK_RECOVERY");
+  var after=new HashSet<>(heldBy(rec.siteId(),rec.vehicleId()).stream().map(NodeHold::nodeId).toList());
+  var released=before.stream().filter(n->!after.contains(n)).toList();
+  jdbc.update("UPDATE traffic.deadlock_recovery SET status='YIELDING',released_node_ids=?::bigint[],released_at=clock_timestamp()"
+   +" WHERE id=?",arrayText(released),recoveryId);
+  return recovery(rec.siteId(),recoveryId).orElseThrow();
+ }
+ @Transactional
+ public List<DeadlockRecovery> settleYielding(long siteId){
+  var out=new ArrayList<DeadlockRecovery>();
+  for(var rec:jdbc.query(RECOVERY+" WHERE site_id=? AND status='YIELDING' AND finished_at IS NULL FOR UPDATE",RECOVERY_MAPPER,siteId)){
+   long node=rec.wantedNodeId();
+   var takers=new HashSet<Long>(jdbc.queryForList("SELECT vehicle_id FROM traffic.node_reservation WHERE site_id=? AND node_id=?"
+    +" AND released_at IS NULL",Long.class,siteId,node));
+   takers.addAll(jdbc.queryForList("SELECT vehicle_id FROM fleet.vehicle_state WHERE site_id=? AND node_id=?",Long.class,siteId,node));
+   takers.remove(rec.vehicleId());
+   String done=null;
+   if(takers.contains(rec.beneficiaryVehicleId())) done="BENEFICIARY_TOOK_NODE";
+   else if(!takers.isEmpty()) done="NODE_TAKEN_BY_OTHER";
+   else if(!Boolean.TRUE.equals(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM traffic.reservation_wait WHERE site_id=?"
+    +" AND vehicle_id=? AND wanted_node_id=?)",Boolean.class,siteId,rec.beneficiaryVehicleId(),node))) done="BENEFICIARY_NOT_WAITING";
+   if(done!=null) out.add(finishRecovery(rec.id(),DeadlockRecovery.DONE,done));
+  }
+  return out;
+ }
+ @Transactional
+ public DeadlockRecovery finishRecovery(long recoveryId,String status,String finishReason){
+  if(!DeadlockRecovery.DONE.equals(status)&&!DeadlockRecovery.ABANDONED.equals(status))
+   throw new IllegalArgumentException("finish status must be DONE or ABANDONED");
+  var reason=finishReason==null?null:finishReason.length()<=64?finishReason:finishReason.substring(0,64);
+  jdbc.update("UPDATE traffic.deadlock_recovery SET status=?,finished_at=clock_timestamp(),finish_reason=?"
+   +" WHERE id=? AND finished_at IS NULL",status,reason,recoveryId);
+  return jdbc.query(RECOVERY+" WHERE id=?",RECOVERY_MAPPER,recoveryId).stream().findFirst()
+   .orElseThrow(()->new IllegalStateException("RECOVERY_NOT_FOUND"));
+ }
  /**
   * Recomputes who is actually in the way instead of trusting what was recorded when the request
   * was refused: the blocker may have moved on, and reporting a deadlock that has already cleared

@@ -25,10 +25,12 @@ public class SiteSweep {
  private final TransportOrders orders; private final TransportAssignment assignment;
  private final ContinuousMovement movement; private final DeviceGateway gateway;
  private final OperationOptionConfiguration options; private final ZoneEvacuation evacuation;
+ private final DeadlockRecoveries recoveries;
  public SiteSweep(TransportOrders orders,TransportAssignment assignment,ContinuousMovement movement,
-                  DeviceGateway gateway,OperationOptionConfiguration options,ZoneEvacuation evacuation){
+                  DeviceGateway gateway,OperationOptionConfiguration options,ZoneEvacuation evacuation,
+                  DeadlockRecoveries recoveries){
   this.orders=orders; this.assignment=assignment; this.movement=movement;
-  this.gateway=gateway; this.options=options; this.evacuation=evacuation;
+  this.gateway=gateway; this.options=options; this.evacuation=evacuation; this.recoveries=recoveries;
  }
 
  /** What one pass did. {@code skipped} explains each order the pass could not take on. */
@@ -72,6 +74,9 @@ public class SiteSweep {
     if(page.size()<200) break;
    }
   }
+  // A vehicle giving way to break a deadlock hands back its road before anyone resumes, so the one
+  // it gave way to can take the node in this same pass.
+  recoveries.advance(siteId);
   var resumed=movement.resumeAll(siteId);
   var extended=movement.extendAll(siteId);
   var evacuated=new ArrayList<>(evacuation.evacuateAll(siteId));

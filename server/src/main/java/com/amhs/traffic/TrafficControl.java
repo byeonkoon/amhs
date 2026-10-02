@@ -30,6 +30,10 @@ public interface TrafficControl {
      * vehicle asked for earlier and is still asking for ({@code MERGE_EARLIER_REQUEST}). A stop node
      * is granted and then ends the run ({@code STOP_NODE}): the vehicle halts there first.
      *
+     * <p>A vehicle giving way to break a deadlock ({@link DeadlockRecovery}, open) is granted only
+     * what it already holds from where it stands ({@code DEADLOCK_RECOVERY}), and no wait is recorded
+     * for it: it is not asking.
+     *
      * @param routeNodeIds the remaining route, starting with the node the vehicle occupies now
      */
     ReservationGrant request(long siteId, long revisionId, long vehicleId, Long orderId, List<Long> routeNodeIds);
@@ -59,4 +63,31 @@ public interface TrafficControl {
     List<Deadlock> deadlocks(long siteId);
     /** Every vehicle at the site waiting for a node another vehicle holds or stands on now. */
     List<WaitingFor> waitingFor(long siteId);
+
+    /** Every deadlock at this site with its links, and which vehicles could give way to break it. */
+    List<DeadlockPlan> deadlockPlans(long siteId);
+    /** Open recoveries at this site and the most recent finished ones, newest first. */
+    List<DeadlockRecovery> recoveries(long siteId, int recentFinished);
+    Optional<DeadlockRecovery> recovery(long siteId, long recoveryId);
+    /**
+     * Records that {@code vehicleId} gives way to {@code beneficiaryId}, which waits for
+     * {@code wantedNodeId}; it starts STOPPING. Refused ({@code RECOVERY_ALREADY_OPEN}) while the
+     * vehicle has an open one.
+     */
+    DeadlockRecovery openRecovery(long siteId, long vehicleId, long beneficiaryId, long wantedNodeId,
+                                  List<Long> chainVehicleIds, String stopCommandId, String reason, String requestedBy);
+    /** The stop command has settled; the vehicle's next report after this moment is its answer. */
+    void recoveryStopSettled(long recoveryId);
+    /**
+     * The vehicle was seen standing still at {@code positionNodeId}: what it holds ahead of that node
+     * is given back and the recovery is YIELDING.
+     */
+    DeadlockRecovery releaseForRecovery(long recoveryId, long positionNodeId);
+    /**
+     * Ends YIELDING recoveries whose purpose is served: the vehicle given way to has taken the node,
+     * somebody else has, or it no longer waits for it.
+     */
+    List<DeadlockRecovery> settleYielding(long siteId);
+    /** Ends an open recovery as ABANDONED (an operator's decision) or DONE. */
+    DeadlockRecovery finishRecovery(long recoveryId, String status, String finishReason);
 }

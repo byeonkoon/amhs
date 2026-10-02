@@ -1,6 +1,6 @@
 import React from 'react';
 import {
-  SITE_ID, type AssignmentView, type Deadlock, type DeviceCommand, type NodeHold, type TransportOrder,
+  SITE_ID, type AssignmentView, type Deadlock, type DeadlockPlan, type DeadlockRecovery, type DeviceCommand, type NodeHold, type TransportOrder,
   type VehicleHeading, type VehicleMove, type VehicleSnapshot, type ZoneOccupancy,
 } from './api';
 
@@ -8,7 +8,7 @@ import {
 export type LiveParts = Partial<{
   revisionId: number; vehicles: VehicleSnapshot[]; holds: NodeHold[]; headings: VehicleHeading[];
   moves: VehicleMove[]; assignments: AssignmentView[]; orders: TransportOrder[]; deadlocks: Deadlock[];
-  zones: ZoneOccupancy[]; inDoubt: DeviceCommand[];
+  zones: ZoneOccupancy[]; inDoubt: DeviceCommand[]; deadlockPlans: DeadlockPlan[]; recoveries: DeadlockRecovery[];
 }>;
 export type LiveMessage = {
   type: 'snapshot' | 'delta' | 'heartbeat'; epoch: string; seq: number; at: string; data?: LiveParts;
