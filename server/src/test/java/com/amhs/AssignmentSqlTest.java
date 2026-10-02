@@ -28,8 +28,9 @@ class AssignmentSqlTest {
  private static final long SITE=1, REVISION=1, OHT=1, AGV=2, OHT_SOURCE_NODE=101;
  private final String run=UUID.randomUUID().toString().substring(0,8);
 
- private long order(String key){
-  return tx.execute(s->orders.accept(SITE,new OrderRequest("TEST",run+"-"+key,"OHT-A","OHT-B",run+"-"+key,50),
+ private long order(String key){ return order(key,"OHT-A","OHT-B"); }
+ private long order(String key,String from,String to){
+  return tx.execute(s->orders.accept(SITE,new OrderRequest("TEST",run+"-"+key,from,to,run+"-"+key,50),
    "tester","trace").order().id());
  }
  private void report(long vehicleId,Long node,boolean online,boolean remote,boolean idle){
@@ -100,7 +101,8 @@ class AssignmentSqlTest {
  @Test void aHeldVehicleIsNotOfferedToTheNextOrder(){
   releaseAll(); parked(); available(OHT,OHT_SOURCE_NODE);
   long first=order("holder"); assign(first);
-  long second=order("waiter");
+  // Other ports, so it is the vehicle and not a port the second order waits for.
+  long second=order("waiter","OHT-D","OHT-C");
   // The only usable vehicle is busy, so the second order waits instead of taking it.
   assertThatThrownBy(()->assign(second)).isInstanceOf(TransportRejected.class)
    .hasFieldOrPropertyWithValue("code","NO_AVAILABLE_VEHICLE");

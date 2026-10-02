@@ -42,6 +42,26 @@ public interface TransportLedger {
  List<Long> assignedOrderIds(long siteId);
  /** The vehicle of the order's latest assignment, released or not; null when it never had one. */
  Long assignedVehicleOf(long orderId);
+ /**
+  * Takes the claim on these ports for the rest of the transaction, in id order. Every assignment
+  * takes it for both its ports before looking at who uses them, so two cannot both see them free.
+  */
+ void lockPorts(List<Long> portIds);
+ /**
+  * Whether another order holding a vehicle is using one of these ports: as its source until it has
+  * picked up, as its destination until it has finished. One transfer at a port at a time.
+  */
+ boolean portInUse(long siteId,long orderId,long sourcePortId,long destinationPortId);
+ /**
+  * Takes the claim on a carrier id for the rest of the transaction and says whether an order that
+  * has not finished already carries it.
+  */
+ boolean carrierInTransport(long siteId,String carrierCode);
+ /**
+  * Waiting orders in the order dispatch takes them: higher priority first, then the one accepted
+  * first, then the lower id.
+  */
+ List<TransportOrder> dispatchQueue(long siteId,int limit);
  /** Open moves out of zones at this site, one per vehicle at most. */
  List<Relocation> openRelocations(long siteId);
  /** Vehicles currently being moved out of a zone, which are not offered to dispatch meanwhile. */

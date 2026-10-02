@@ -49,6 +49,11 @@ class JdbcTransportLedger implements TransportLedger {
    +" ORDER BY id DESC LIMIT ?",MAPPER,siteId,limit);
  }
  @Transactional(readOnly=true)
+ public List<TransportOrder> dispatchQueue(long siteId,int limit){
+  return jdbc.query("SELECT "+COLS+" FROM transport.order WHERE site_id=? AND status='QUEUED'"
+   +" ORDER BY priority DESC,created_at,id LIMIT ?",MAPPER,siteId,limit);
+ }
+ @Transactional(readOnly=true)
  public List<TransportOrder> list(long siteId,OrderStatus status,int limit){
   return status==null
    ?jdbc.query("SELECT "+COLS+" FROM transport.order WHERE site_id=? ORDER BY id DESC LIMIT ?",MAPPER,siteId,limit)
@@ -296,6 +301,28 @@ class JdbcTransportLedger implements TransportLedger {
   r.getLong(1),r.getLong(2),r.getLong(3),r.getLong(4),r.getObject(5)==null?null:r.getLong(5),
   List.of((Long[])r.getArray(6).getArray()),r.getLong(7),r.getObject(8,OffsetDateTime.class),r.getString(9),
   r.getObject(10,OffsetDateTime.class));
+
+ @Transactional(propagation=Propagation.MANDATORY)
+ public void lockPorts(List<Long> portIds){
+  for(long id:portIds.stream().distinct().sorted().toList())
+   jdbc.queryForObject("SELECT pg_advisory_xact_lock(hashtext('amhs-port'),CAST(? AS INT))",Object.class,(int)id);
+ }
+ @Transactional(propagation=Propagation.MANDATORY)
+ public boolean portInUse(long siteId,long orderId,long sourcePortId,long destinationPortId){
+  // Held means holding a vehicle: an order whose assignment was released no longer uses anything.
+  return jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM transport.order o JOIN transport.assignment a"
+   +" ON a.order_id=o.id AND a.released_at IS NULL WHERE o.site_id=? AND o.id<>? AND ("
+   +" (o.source_port_id IN (?,?) AND o.status IN ('ASSIGNED','TO_SOURCE','LOADING','CANCEL_REQUESTED','RECOVERY_REQUIRED'))"
+   +" OR (o.destination_port_id IN (?,?) AND o.status IN ('ASSIGNED','TO_SOURCE','LOADING','TO_DESTINATION','UNLOADING',"
+   +"'CANCEL_REQUESTED','RECOVERY_REQUIRED'))))",Boolean.class,
+   siteId,orderId,sourcePortId,destinationPortId,sourcePortId,destinationPortId);
+ }
+ @Transactional(propagation=Propagation.MANDATORY)
+ public boolean carrierInTransport(long siteId,String carrierCode){
+  jdbc.queryForObject("SELECT pg_advisory_xact_lock(hashtext('amhs-carrier'),hashtext(?))",Object.class,siteId+":"+carrierCode);
+  return jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM transport.order WHERE site_id=? AND carrier_code=?"
+   +" AND status NOT IN ('COMPLETED','CANCELLED','FAILED'))",Boolean.class,siteId,carrierCode);
+ }
 
  @Transactional(readOnly=true)
  public List<Relocation> openRelocations(long siteId){

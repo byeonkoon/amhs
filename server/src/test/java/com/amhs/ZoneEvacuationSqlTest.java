@@ -79,7 +79,7 @@ class ZoneEvacuationSqlTest {
   assertThat(payload.get("targetNodeId").asLong()).isEqualTo(111L);
   // While it moves out it is not offered to new work: that move would cross this one.
   assertThat(ledger.relocatingVehicleIds(SITE)).contains(OHT);
-  long id=orders.accept(SITE,new OrderRequest("EVAC",UUID.randomUUID().toString(),"OHT-A","OHT-C","C",50),"test",null).order().id();
+  long id=orders.accept(SITE,new OrderRequest("EVAC",UUID.randomUUID().toString(),"OHT-A","OHT-C",UUID.randomUUID().toString(),50),"test",null).order().id();
   assertThatThrownBy(()->assignment.assign(SITE,id,"test",null)).isInstanceOf(TransportRejected.class);
  }
 
@@ -132,7 +132,7 @@ class ZoneEvacuationSqlTest {
 
  @Test void aVehicleWithAnOrderLeavesWithThatOrderInstead(){
   standAt(BAY_PORT,true);
-  long id=orders.accept(SITE,new OrderRequest("EVAC",UUID.randomUUID().toString(),"OHT-E","OHT-C","C",50),"test",null).order().id();
+  long id=orders.accept(SITE,new OrderRequest("EVAC",UUID.randomUUID().toString(),"OHT-E","OHT-C",UUID.randomUUID().toString(),50),"test",null).order().id();
   assignment.assign(SITE,id,"test",null);
   assertThat(stepOf(OHT).decision()).isEqualTo("HAS_ORDER");
   assertThat(ledger.relocatingVehicleIds(SITE)).doesNotContain(OHT);

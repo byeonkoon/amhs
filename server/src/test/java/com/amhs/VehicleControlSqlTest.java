@@ -144,7 +144,7 @@ class VehicleControlSqlTest {
   jdbc.update("UPDATE fleet.vehicle_profile SET enabled=FALSE WHERE site_id=? AND id=?",SITE,OHT);
   rejected(()->moves.moveTo(SITE,OHT,105L),"VEHICLE_DISABLED");
   jdbc.update("UPDATE fleet.vehicle_profile SET enabled=TRUE WHERE site_id=? AND id=?",SITE,OHT);
-  long id=orders.accept(SITE,new OrderRequest("CTRL",UUID.randomUUID().toString(),"OHT-A","OHT-C","C",50),"test",null).order().id();
+  long id=orders.accept(SITE,new OrderRequest("CTRL",UUID.randomUUID().toString(),"OHT-A","OHT-C",UUID.randomUUID().toString(),50),"test",null).order().id();
   assignment.assign(SITE,id,"test",null);
   rejected(()->moves.moveTo(SITE,OHT,105L),"VEHICLE_HAS_ORDER");
  }
@@ -168,8 +168,8 @@ class VehicleControlSqlTest {
  // ---- the work list and the history ----
 
  @Test void theWorkListHoldsOnlyOrdersStillGoingAndTheHistoryTheFinishedOnes() throws Exception {
-  long going=orders.accept(SITE,new OrderRequest("CTRL",UUID.randomUUID().toString(),"OHT-A","OHT-C","C",50),"test",null).order().id();
-  long done=orders.accept(SITE,new OrderRequest("CTRL",UUID.randomUUID().toString(),"OHT-A","OHT-C","C",50),"test",null).order().id();
+  long going=orders.accept(SITE,new OrderRequest("CTRL",UUID.randomUUID().toString(),"OHT-A","OHT-C",UUID.randomUUID().toString(),50),"test",null).order().id();
+  long done=orders.accept(SITE,new OrderRequest("CTRL",UUID.randomUUID().toString(),"OHT-A","OHT-C",UUID.randomUUID().toString(),50),"test",null).order().id();
   orders.cancel(SITE,done,"test","test",null);
   assertThat(orders.listActive(SITE,500)).extracting(TransportOrder::id).contains(going).doesNotContain(done);
   assertThat(orders.listFinished(SITE,500)).extracting(TransportOrder::id).contains(done).doesNotContain(going);

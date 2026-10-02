@@ -31,7 +31,7 @@ class TransferEvidenceSqlTest {
  @BeforeEach void limit(){ jdbc.update("UPDATE platform.site_operation SET transfer_max_attempts=3 WHERE site_id=?",SITE); }
 
  private long atPickup(){
-  long id=orders.accept(SITE,new OrderRequest("EVIDENCE",UUID.randomUUID().toString(),"OHT-A","OHT-C","C",50),"test",null).order().id();
+  long id=orders.accept(SITE,new OrderRequest("EVIDENCE",UUID.randomUUID().toString(),"OHT-A","OHT-C",UUID.randomUUID().toString(),50),"test",null).order().id();
   for(var s:List.of(OrderStatus.ASSIGNED,OrderStatus.TO_SOURCE,OrderStatus.LOADING)) orders.advance(SITE,id,s,"test","test",null);
   return id;
  }

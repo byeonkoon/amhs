@@ -26,6 +26,7 @@ public class TransportOrders {
 
  public record Accepted(TransportOrder order,boolean created){}
 
+ @Transactional
  public Accepted accept(long siteId,OrderRequest request,String actorCode,String traceId){
   require(request.requestSource(),"REQUEST_SOURCE_REQUIRED");
   require(request.idempotencyKey(),"IDEMPOTENCY_KEY_REQUIRED");
@@ -53,6 +54,10 @@ public class TransportOrders {
   if(source.accessVehicleType()!=destination.accessVehicleType())
    throw reject("ACCESS_VEHICLE_TYPE_MISMATCH","source and destination require different vehicle types");
 
+  // One carrier is in one place: a second order for a carrier still being moved is refused.
+  if(request.carrierCode()!=null&&!request.carrierCode().isBlank()
+   &&ledger.carrierInTransport(siteId,request.carrierCode()))
+   throw new TransportRejected("CARRIER_IN_TRANSPORT","an unfinished order already carries this carrier",true);
   VehicleType type=source.accessVehicleType();
   var draft=new TransportOrder(0L,siteId,revisionId,request.requestSource(),request.idempotencyKey(),
    source.id(),destination.id(),type,request.carrierCode(),priority,
@@ -140,6 +145,8 @@ public class TransportOrders {
  }
 
  public Optional<TransportOrder> find(long siteId,long orderId){return ledger.find(siteId,orderId);}
+ /** Waiting orders in dispatch order: priority, then acceptance time, then id. */
+ public List<TransportOrder> dispatchQueue(long siteId,int limit){return ledger.dispatchQueue(siteId,Math.min(Math.max(limit,1),200));}
  public List<TransportOrder> list(long siteId,OrderStatus status,int limit){return ledger.list(siteId,status,Math.min(Math.max(limit,1),200));}
  /** Orders still being worked on. Finished ones belong to the history, not to the work list. */
  public List<TransportOrder> listActive(long siteId,int limit){return ledger.listActive(siteId,Math.min(Math.max(limit,1),500));}

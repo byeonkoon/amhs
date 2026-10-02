@@ -53,6 +53,11 @@ public class TransportAssignment {
   if(held.isPresent()) return new Assigned(order,held.get(),null,false);
   if(order.status()!=OrderStatus.QUEUED)
    throw new TransportRejected("ORDER_NOT_QUEUED",order.status()+" cannot be assigned",false);
+  // One transfer at a port at a time. The ports are claimed first, so two assignments cannot both
+  // find them free; the order then waits until the other order has picked up or finished.
+  ledger.lockPorts(List.of(order.sourcePortId(),order.destinationPortId()));
+  if(ledger.portInUse(siteId,orderId,order.sourcePortId(),order.destinationPortId()))
+   throw new TransportRejected("PORT_IN_USE","another order is using the source or destination port",true);
 
   var map=topology.getMap(siteId,order.revisionId());
   // A vehicle already holding a job is not a candidate. The unique index still settles a race,
@@ -60,7 +65,9 @@ public class TransportAssignment {
   // being moved out of a zone is busy too: its own move would cross the new one.
   var busy=new java.util.HashSet<>(ledger.assignedVehicleIds(siteId));
   busy.addAll(ledger.relocatingVehicleIds(siteId));
-  var free=fleet.snapshot(siteId,order.revisionId()).stream().filter(v->!busy.contains(v.id())).toList();
+  // A vehicle with a carrier on board cannot pick up another one.
+  var free=fleet.snapshot(siteId,order.revisionId()).stream()
+   .filter(v->!busy.contains(v.id())&&!v.carrierPresent()).toList();
   // A state nobody has confirmed lately is not a state to dispatch on: the vehicle that said it
   // was idle and online a day ago may be anywhere now. The same line is drawn again under the lock.
   var cutoff=staleBefore(siteId);
@@ -128,7 +135,7 @@ public class TransportAssignment {
   return OffsetDateTime.now().minusSeconds(operations.get(siteId).settings().positionStaleSeconds());
  }
  private static boolean eligible(VehicleSnapshot v){
-  return v.enabled()&&v.assignmentEnabled()&&v.online()&&v.remote()&&v.idle()&&v.nodeId()!=null;
+  return v.enabled()&&v.assignmentEnabled()&&v.online()&&v.remote()&&v.idle()&&v.nodeId()!=null&&!v.carrierPresent();
  }
 
  /**

@@ -78,8 +78,9 @@ class TopologySqlTest {
 
     @Test void fleetReadsOnlyRequestedRevisionAndDefaultsToActive() throws Exception {
         mvc.perform(get("/api/v1/sites/1/vehicles"))
-            .andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(2))
-            .andExpect(jsonPath("$[0].id").value(1)).andExpect(jsonPath("$[1].id").value(2));
+            .andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(4))
+            .andExpect(jsonPath("$[0].id").value(1)).andExpect(jsonPath("$[1].id").value(2))
+            .andExpect(jsonPath("$[2].id").value(3)).andExpect(jsonPath("$[3].id").value(4));
         mvc.perform(get("/api/v1/sites/1/vehicles?revisionId=2"))
             .andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(2))
             .andExpect(jsonPath("$[0].vType").value("OHT"))

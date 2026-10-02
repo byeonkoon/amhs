@@ -49,7 +49,7 @@ class SimulatedTransportSqlTest {
  }
 
  private long accept(String to){
-  return orders.accept(SITE,new OrderRequest("SIM",UUID.randomUUID().toString(),"OHT-A",to,"SIM-C",50),"test",null).order().id();
+  return orders.accept(SITE,new OrderRequest("SIM",UUID.randomUUID().toString(),"OHT-A",to,UUID.randomUUID().toString(),50),"test",null).order().id();
  }
  /** What the running loop does each tick: a sweep of the site, then one step of each vehicle. */
  private TransportOrder runUntilFinished(long id,int ticks){

@@ -95,7 +95,7 @@ class TransportOrderSqlTest {
  @Test void cancellationAcknowledgementCannotLoseAnUnknownOrOnboardCarrier(){
   for(var location:List.of(CarrierLocation.UNKNOWN,CarrierLocation.VEHICLE)){
    var created=orders.accept(1,new OrderRequest("test","cancel-location-"+location,
-    "OHT-A","OHT-B","CST",50),"test",null).order();
+    "OHT-A","OHT-B","CST-"+location,50),"test",null).order();
    for(var status:List.of(OrderStatus.ASSIGNED,OrderStatus.TO_SOURCE,OrderStatus.LOADING,OrderStatus.CANCEL_REQUESTED))
     orders.advance(1,created.id(),status,"prepare","test",null);
    // Model the last persisted observation; no adapter or physical device is involved.

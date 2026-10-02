@@ -46,7 +46,8 @@ public class SiteSweep {
   boolean autoDispatch=options.get(siteId).settings().autoDispatch();
   var assigned=new ArrayList<Long>(); var skipped=new ArrayList<Skipped>();
   if(autoDispatch){
-   for(var order:orders.list(siteId,OrderStatus.QUEUED,200)){
+   // Oldest of the most urgent first; a newer order must not take a port or vehicle from an older one.
+   for(var order:orders.dispatchQueue(siteId,200)){
     try{
      var result=assignment.assign(siteId,order.id(),actorCode,traceId);
      if(result.created()) assigned.add(order.id());

@@ -51,7 +51,7 @@ class VehicleOwnershipRaceSqlTest {
  }
  /** An order that starts where the vehicle stands, so it is the obvious candidate. */
  private long orderFromTheBay(){
-  return tx.execute(s->orders.accept(SITE,new OrderRequest("RACE",UUID.randomUUID().toString(),"OHT-E","OHT-C","C",50),
+  return tx.execute(s->orders.accept(SITE,new OrderRequest("RACE",UUID.randomUUID().toString(),"OHT-E","OHT-C",UUID.randomUUID().toString(),50),
    "test",null).order().id());
  }
  private boolean hasOrder(){ return ledger.assignedVehicleIds(SITE).contains(OHT); }

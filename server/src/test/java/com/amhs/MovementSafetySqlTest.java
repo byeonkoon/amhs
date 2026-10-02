@@ -52,7 +52,7 @@ class MovementSafetySqlTest {
  }
  private void arrive(long node,boolean idle){ standAt(node,idle); traffic.advanced(SITE,OHT,node); }
  private long order(String to){
-  return orders.accept(SITE,new OrderRequest("SAFETY",UUID.randomUUID().toString(),"OHT-A",to,"C",50),"test",null).order().id();
+  return orders.accept(SITE,new OrderRequest("SAFETY",UUID.randomUUID().toString(),"OHT-A",to,UUID.randomUUID().toString(),50),"test",null).order().id();
  }
  private long assigned(String to){ long id=order(to); assignment.assign(SITE,id,"test",null); return id; }
  /** Walks the order on. Moving off the pickup carries the load sensor's word that the carrier is on board. */
