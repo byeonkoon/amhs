@@ -168,7 +168,11 @@ public class ZoneEvacuation {
   var added=new ArrayList<>(grant.nodeIds()); added.remove(vehicle.nodeId());
   String commandId="relocation-"+relocation.id()+"-seq-"+traffic.heldBy(siteId,vehicleId).getLast().sequence();
   outbox.enqueueForVehicle(siteId,vehicleId,commandId,"MOVE",payload(vehicle,relocation,grant,added));
-  return new Step(vehicleId,Relocation.MANUAL.equals(relocation.purpose())?"MOVING_TO_TARGET":"EVACUATING",added,commandId);
+  String moving=switch(relocation.purpose()){
+   case Relocation.MANUAL->"MOVING_TO_TARGET"; case Relocation.YIELD->"YIELDING";
+   case Relocation.HOME->"GOING_HOME"; case Relocation.CHARGE->"GOING_TO_CHARGE"; default->"EVACUATING";
+  };
+  return new Step(vehicleId,moving,added,commandId);
  }
 
  /**
@@ -237,6 +241,112 @@ public class ZoneEvacuation {
  public List<Relocation> openMoves(long siteId){ return ledger.openRelocations(siteId); }
 
  /**
+  * A vehicle with nothing to do that stands where another one has been waiting to go for longer
+  * than the site allows is moved out of the way: to its home node when that lies off the waiting
+  * vehicle's road, otherwise to the nearest clear place off that road (the same rules as leaving a
+  * zone). Only a vehicle in use and in automatic work, idle on a node, fresh, holding no order, no
+  * move and no unsettled command is moved; one move per vehicle and pass.
+  */
+ @Transactional
+ public List<Step> yieldAll(long siteId){
+  var settings=operations.get(siteId).settings();
+  if(settings.yieldAfterSeconds()<=0) return List.of();
+  long revisionId=ledger.activeRevision(siteId);
+  var now=OffsetDateTime.now();
+  var cutoff=now.minusSeconds(settings.positionStaleSeconds());
+  var waitedLongEnough=now.minusSeconds(settings.yieldAfterSeconds());
+  var out=new ArrayList<Step>(); var moved=new HashSet<Long>();
+  for(var wait:traffic.waitingFor(siteId)){
+   if(wait.since().isAfter(waitedLongEnough)||!moved.add(wait.blockerId())) continue;
+   out.add(yieldFor(siteId,revisionId,wait,cutoff));
+  }
+  return out;
+ }
+
+ private Step yieldFor(long siteId,long revisionId,com.amhs.traffic.WaitingFor wait,OffsetDateTime cutoff){
+  long id=wait.blockerId();
+  fleet.lockForAssignment(siteId,List.of(id));
+  var vehicle=fleet.find(siteId,revisionId,id).orElse(null);
+  String busy=whyNotFree(siteId,vehicle,cutoff);
+  if(busy!=null) return none(id,"YIELD_"+busy);
+  var map=topology.getMap(siteId,revisionId);
+  // Off the waiting vehicle's road: what it holds, what it wants and what it is still to drive.
+  var avoid=new HashSet<Long>(zoneNodes(siteId,revisionId));
+  avoid.add(wait.wantedNodeId());
+  for(NodeHold hold:traffic.heldBy(siteId,wait.vehicleId())) avoid.add(hold.nodeId());
+  for(var a:ledger.activeAssignments(siteId))
+   if(a.vehicleId()==wait.vehicleId()) avoid.addAll(ledger.plannedRoute(a.orderId()));
+  for(var r:ledger.openRelocations(siteId)) if(r.vehicleId()==wait.vehicleId()) avoid.addAll(r.routeNodeIds());
+  avoid.remove(vehicle.nodeId());
+  var place=nearestClearPlace(siteId,map,avoid,vehicle,fleet.snapshot(siteId,revisionId));
+  if(place==null) return none(id,"NO_PLACE_TO_YIELD");
+  ledger.startRelocation(siteId,revisionId,id,null,place.nodeIds(),place.nodeIds().getLast(),Relocation.YIELD);
+  return step(siteId,revisionId,id,zoneOf(siteId,revisionId),fleet.snapshot(siteId,revisionId),cutoff);
+ }
+
+ /**
+  * A vehicle with a home node, standing elsewhere with nothing to do for longer than the site
+  * allows, goes home when its home is free (nobody stands on, holds or is heading for it). A
+  * vehicle with a carrier on board stays where it is, as in the existing system.
+  */
+ @Transactional
+ public List<Step> returnHome(long siteId){
+  var settings=operations.get(siteId).settings();
+  if(settings.homeReturnSeconds()<=0) return List.of();
+  long revisionId=ledger.activeRevision(siteId);
+  var now=OffsetDateTime.now();
+  var cutoff=now.minusSeconds(settings.positionStaleSeconds());
+  var quietSince=now.minusSeconds(settings.homeReturnSeconds());
+  var out=new ArrayList<Step>();
+  var candidates=fleet.snapshot(siteId,revisionId).stream()
+   .filter(v->v.homeNodeId()!=null&&v.nodeId()!=null&&!v.homeNodeId().equals(v.nodeId())&&!v.carrierPresent())
+   .sorted(Comparator.comparingLong(VehicleSnapshot::id)).toList();
+  for(var seen:candidates){
+   var ended=ledger.lastActivityEnded(siteId,seen.id());
+   if(ended!=null&&ended.isAfter(quietSince)) continue;
+   fleet.lockForAssignment(siteId,List.of(seen.id()));
+   var vehicle=fleet.find(siteId,revisionId,seen.id()).orElse(null);
+   if(whyNotFree(siteId,vehicle,cutoff)!=null||vehicle.carrierPresent()) continue;
+   long home=vehicle.homeNodeId();
+   if(placeTaken(siteId,revisionId,home,vehicle.id())) continue;
+   var route=planner.find(topology.getMap(siteId,revisionId),vehicle.nodeId(),home);
+   if(route.status()!=RouteResult.Status.FOUND) continue;
+   ledger.startRelocation(siteId,revisionId,vehicle.id(),null,route.nodeIds(),home,Relocation.HOME);
+   out.add(step(siteId,revisionId,vehicle.id(),zoneOf(siteId,revisionId),fleet.snapshot(siteId,revisionId),cutoff));
+  }
+  return out;
+ }
+
+ /** Null when the vehicle may be sent somewhere on the controller's own initiative; otherwise why not. */
+ private String whyNotFree(long siteId,VehicleSnapshot vehicle,OffsetDateTime cutoff){
+  if(vehicle==null) return "VEHICLE_NOT_FOUND";
+  if(!vehicle.enabled()) return "VEHICLE_DISABLED";
+  if(!vehicle.assignmentEnabled()) return "ASSIGNMENT_DISABLED";
+  if(vehicle.nodeId()==null) return "POSITION_UNKNOWN";
+  if(!vehicle.reportedSince(cutoff)) return "POSITION_STALE";
+  if(!vehicle.online()||!vehicle.remote()) return "VEHICLE_NOT_CONTROLLABLE";
+  if(!vehicle.idle()||!"IDLE".equals(vehicle.effectiveStatus())) return "VEHICLE_NOT_IDLE";
+  if(ledger.assignedVehicleIds(siteId).contains(vehicle.id())) return "HAS_ORDER";
+  if(ledger.relocatingVehicleIds(siteId).contains(vehicle.id())) return "ALREADY_MOVING";
+  if(!outbox.unresolvedForVehicle(siteId,vehicle.id()).isEmpty()) return "COMMAND_OUTSTANDING";
+  return null;
+ }
+ /** Somebody else stands on, holds, or is being sent to this node. */
+ private boolean placeTaken(long siteId,long revisionId,long nodeId,long vehicleId){
+  for(var v:fleet.snapshot(siteId,revisionId)) if(v.id()!=vehicleId&&Long.valueOf(nodeId).equals(v.nodeId())) return true;
+  for(NodeHold hold:traffic.held(siteId)) if(hold.vehicleId()!=vehicleId&&hold.nodeId()==nodeId) return true;
+  for(var r:ledger.openRelocations(siteId)) if(r.vehicleId()!=vehicleId&&r.targetNodeId()==nodeId) return true;
+  return false;
+ }
+ private Set<Long> zoneNodes(long siteId,long revisionId){ return zoneOf(siteId,revisionId).keySet(); }
+ private Map<Long,Long> zoneOf(long siteId,long revisionId){
+  var zoneOf=new HashMap<Long,Long>();
+  for(ZoneOccupancy zone:traffic.zones(siteId))
+   if(zone.enabled()&&zone.revisionId()==revisionId) for(Long node:zone.nodeIds()) zoneOf.put(node,zone.id());
+  return zoneOf;
+ }
+
+ /**
   * Where the vehicle goes. Its home node comes first: somebody chose that place for it. It is used
   * when it lies outside every zone, nobody else stands on or holds it, and it can be reached.
   * Otherwise, the cheapest place outside every zone that does not stand in anybody's way: not a
@@ -277,7 +387,7 @@ public class ZoneEvacuation {
  private String payload(VehicleSnapshot vehicle,Relocation relocation,ReservationGrant grant,List<Long> added){
   var body=new LinkedHashMap<String,Object>();
   body.put("vehicleId",vehicle.id()); body.put("vehicleCode",vehicle.code());
-  body.put("purpose",Relocation.MANUAL.equals(relocation.purpose())?"MANUAL_MOVE":"ZONE_EVACUATION");
+  body.put("purpose",Relocation.MANUAL.equals(relocation.purpose())?"MANUAL_MOVE":relocation.purpose());
   body.put("fromNodeId",vehicle.nodeId());
   body.put("targetNodeId",relocation.targetNodeId());
   body.put("authorizedNodeIds",grant.nodeIds());

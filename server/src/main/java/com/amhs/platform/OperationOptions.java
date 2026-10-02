@@ -28,7 +28,30 @@ import java.util.Set;
 public record OperationOptions(String commType,int nodeCount,boolean moreEnabled,String moreType,
  int moreRemainingNodes,int moreRemainingPercent,
  boolean autoDispatch,int commandMaxAttempts,int commandRetrySeconds,int positionStaleSeconds,
- int moreMinRemainingNodes,boolean moreVehicleSignal,String mergeControl,int transferMaxAttempts,String runMode){
+ int moreMinRemainingNodes,boolean moreVehicleSignal,String mergeControl,int transferMaxAttempts,String runMode,
+ Integer yieldAfterSeconds,Integer homeReturnSeconds,Integer chargeRequestPct,Integer chargeCriticalPct,Integer chargeReleasePct){
+ /**
+  * yieldAfterSeconds: how long a vehicle may wait for one standing idle in its way before that one
+  * is moved aside (0 never). homeReturnSeconds: how long a vehicle may stand without work before it
+  * is sent to its home node (0 never). The charge values are state of charge in percent: below
+  * request an AGV asks to charge and work still wins; below critical, without a carrier, it must
+  * charge and is given no work; above release the request ends.
+  */
+ public OperationOptions{
+  if(yieldAfterSeconds==null) yieldAfterSeconds=5;
+  if(homeReturnSeconds==null) homeReturnSeconds=0;
+  if(chargeRequestPct==null) chargeRequestPct=40;
+  if(chargeCriticalPct==null) chargeCriticalPct=20;
+  if(chargeReleasePct==null) chargeReleasePct=80;
+ }
+ public OperationOptions(String commType,int nodeCount,boolean moreEnabled,String moreType,
+  int moreRemainingNodes,int moreRemainingPercent,
+  boolean autoDispatch,int commandMaxAttempts,int commandRetrySeconds,int positionStaleSeconds,
+  int moreMinRemainingNodes,boolean moreVehicleSignal,String mergeControl,int transferMaxAttempts,String runMode){
+  this(commType,nodeCount,moreEnabled,moreType,moreRemainingNodes,moreRemainingPercent,autoDispatch,commandMaxAttempts,
+   commandRetrySeconds,positionStaleSeconds,moreMinRemainingNodes,moreVehicleSignal,mergeControl,transferMaxAttempts,runMode,
+   null,null,null,null,null);
+ }
  public static final Set<String> COMM_TYPES=Set.of("PC","PLC","MQTT");
  public static final Set<String> MORE_TYPES=Set.of("NODE","DISTANCE");
  public static final Set<String> MERGE_CONTROLS=Set.of("CONTROLLER","VEHICLE_SIGNAL");
@@ -53,5 +76,9 @@ public record OperationOptions(String commType,int nodeCount,boolean moreEnabled
   ConfigurationException.require(MERGE_CONTROLS.contains(mergeControl==null?"":mergeControl),"INVALID_MERGE_CONTROL");
   ConfigurationException.require(transferMaxAttempts>=1&&transferMaxAttempts<=10,"INVALID_TRANSFER_MAX_ATTEMPTS");
   ConfigurationException.require(RUN_MODES.contains(runMode==null?"":runMode),"INVALID_RUN_MODE");
+  ConfigurationException.require(yieldAfterSeconds>=0&&yieldAfterSeconds<=600,"INVALID_YIELD_AFTER_SECONDS");
+  ConfigurationException.require(homeReturnSeconds>=0&&homeReturnSeconds<=3600,"INVALID_HOME_RETURN_SECONDS");
+  ConfigurationException.require(chargeCriticalPct>=1&&chargeCriticalPct<chargeRequestPct
+   &&chargeRequestPct<chargeReleasePct&&chargeReleasePct<=100,"INVALID_CHARGE_LEVELS");
  }
 }

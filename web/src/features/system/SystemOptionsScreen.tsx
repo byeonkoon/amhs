@@ -166,6 +166,34 @@ export function SystemOptionsScreen({ session }: { session: Session }) {
             onChange={e => set({ transferMaxAttempts: Number(e.target.value) })} />
         </Field>
       </Panel>
+
+      <h3 style={category}>자동 이동·충전 <span className="hint" style={{ fontWeight: 400 }}>작업 없는 차량을 관제가 스스로 움직이는 규칙</span></h3>
+      <Panel id="sys-yield" title="회피와 홈 복귀" aux="작업 없는 차량을 비켜 세우거나 홈으로 보냄" padded>
+        <Field label="회피 대기 시간 (초)"
+          note="다른 차량이 이 시간 넘게 기다리는 노드에 작업 없는 차량이 서 있으면, 그 차량을 기다리는 차량의 길 밖(홈 또는 가장 가까운 빈 자리)으로 비켜 세웁니다. 0이면 하지 않습니다. 0~600.">
+          <input type="number" style={field} value={draft.yieldAfterSeconds ?? 5} min={0} max={600} disabled={!mayChange}
+            onChange={e => set({ yieldAfterSeconds: Number(e.target.value) })} />
+        </Field>
+        <Field label="홈 복귀 대기 시간 (초)"
+          note="홈 노드가 설정된 차량이 작업 없이 이 시간을 넘기면 홈으로 보냅니다. 화물이 있거나 홈이 차 있으면 보내지 않습니다. 0이면 하지 않습니다. 0~3600.">
+          <input type="number" style={field} value={draft.homeReturnSeconds ?? 0} min={0} max={3600} disabled={!mayChange}
+            onChange={e => set({ homeReturnSeconds: Number(e.target.value) })} />
+        </Field>
+      </Panel>
+      <Panel id="sys-charge" title="AGV 충전 기준" aux="배터리 잔량(%) — OHT에는 적용하지 않습니다" padded>
+        <Field label="충전 요청 (%)" note="이 값 이하이면 충전을 요청합니다. 작업이 오면 작업이 먼저입니다.">
+          <input type="number" style={field} value={draft.chargeRequestPct ?? 40} min={2} max={99} disabled={!mayChange}
+            onChange={e => set({ chargeRequestPct: Number(e.target.value) })} />
+        </Field>
+        <Field label="충전 위험 (%)" note="이 값 미만이고 화물이 없으면 반드시 충전하며 작업을 받지 않습니다.">
+          <input type="number" style={field} value={draft.chargeCriticalPct ?? 20} min={1} max={98} disabled={!mayChange}
+            onChange={e => set({ chargeCriticalPct: Number(e.target.value) })} />
+        </Field>
+        <Field label="충전 해제 (%)" note="이 값을 넘으면 충전 요청을 끝냅니다. 위험 &lt; 요청 &lt; 해제 ≤ 100.">
+          <input type="number" style={field} value={draft.chargeReleasePct ?? 80} min={3} max={100} disabled={!mayChange}
+            onChange={e => set({ chargeReleasePct: Number(e.target.value) })} />
+        </Field>
+      </Panel>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
         <button type="button" style={primary} disabled={!mayChange || busy} onClick={save}>
           {busy ? '저장 중…' : '저장'}

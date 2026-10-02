@@ -170,6 +170,16 @@ class JdbcTrafficControl implements TrafficControl {
   return Optional.empty();
  }
 
+ @Transactional(readOnly=true)
+ public List<WaitingFor> waitingFor(long siteId){
+  return jdbc.query("SELECT DISTINCT ON (w.vehicle_id) w.vehicle_id,w.wanted_node_id,h.vehicle_id,w.since FROM traffic.reservation_wait w"
+   +" JOIN (SELECT node_id,vehicle_id FROM traffic.node_reservation WHERE released_at IS NULL"
+   +"  UNION SELECT node_id,vehicle_id FROM fleet.vehicle_state WHERE node_id IS NOT NULL) h"
+   +"  ON h.node_id=w.wanted_node_id"
+   +" WHERE w.site_id=? AND h.vehicle_id<>w.vehicle_id ORDER BY w.vehicle_id,h.vehicle_id",
+   (r,n)->new WaitingFor(r.getLong(1),r.getLong(2),r.getLong(3),r.getObject(4,java.time.OffsetDateTime.class)),siteId);
+ }
+
  private record Wait(long vehicleId,long wantedNodeId,Long blockerId){}
  /**
   * Recomputes who is actually in the way instead of trusting what was recorded when the request

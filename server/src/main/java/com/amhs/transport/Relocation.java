@@ -16,5 +16,11 @@ public record Relocation(long id,long siteId,long revisionId,long vehicleId,Long
  public static final String ZONE_EVACUATION="ZONE_EVACUATION";
  /** An operator sending the vehicle to a node. */
  public static final String MANUAL="MANUAL";
+ /** Moving an idle vehicle out of the way of one that has been waiting for where it stands. */
+ public static final String YIELD="YIELD";
+ /** Sending a vehicle that has had no work for a while to its home node. */
+ public static final String HOME="HOME";
+ /** Sending an AGV that asks to charge to a charge point. */
+ public static final String CHARGE="CHARGE";
  public Relocation { routeNodeIds=List.copyOf(routeNodeIds); }
 }

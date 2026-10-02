@@ -107,6 +107,12 @@ export type OperationOptions = {
   transferMaxAttempts: number;
   /** SIMULATION: vehicles simulated in the server carry out the work. OPERATION: real devices. */
   runMode: 'SIMULATION' | 'OPERATION';
+  /** Seconds a vehicle may wait for an idle one in its way before that one is moved aside; 0 never. */
+  yieldAfterSeconds?: number;
+  /** Seconds without work before a vehicle with a home node is sent home; 0 never. */
+  homeReturnSeconds?: number;
+  /** AGV charging thresholds, state of charge in percent. */
+  chargeRequestPct?: number; chargeCriticalPct?: number; chargeReleasePct?: number;
 };
 /** Topic version and JSON version are separate values; actions are sent at the pickup and drop ports. */
 export type VdaProfileSettings = {
@@ -335,6 +341,12 @@ export function explainDecision(decision: string): string {
     MORE_DISABLED: '연장 기능이 꺼져 있습니다.',
     MORE_OUTSTANDING: '앞선 연장 명령의 결과를 아직 모릅니다. 그것이 정리되기 전에는 보내지 않습니다.',
     MOVE_STOPPED: '이동을 중지했습니다. 차량이 선 자리에서 이동을 닫았습니다.',
+    YIELDING: '다른 차량이 지나가도록 비켜 서는 중입니다.',
+    GOING_HOME: '작업이 없어 홈으로 가는 중입니다.',
+    GOING_TO_CHARGE: '충전하러 가는 중입니다.',
+    NO_PLACE_TO_YIELD: '비켜 설 빈 자리가 없습니다.',
+    PORT_IN_USE: '출발 또는 도착 포트를 다른 작업이 쓰고 있어 기다립니다.',
+    CARRIER_IN_TRANSPORT: '같은 화물 ID로 진행 중인 작업이 있습니다.',
     MOVE_STOPPED_STOPPING: '이동 중지를 요청했습니다. 더 허가하지 않으며, 이미 받은 허가 끝에서 차량이 서면 이동을 닫습니다.',
     NO_MOVE: '이 차량에는 진행 중인 이동이 없습니다.',
     NOT_A_MANUAL_MOVE: 'Zone 퇴출 이동은 여기서 중지하지 않습니다. 차량을 자동 작업에서 제외하세요.',

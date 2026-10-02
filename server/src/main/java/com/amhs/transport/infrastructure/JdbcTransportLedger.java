@@ -325,6 +325,13 @@ class JdbcTransportLedger implements TransportLedger {
  }
 
  @Transactional(readOnly=true)
+ public OffsetDateTime lastActivityEnded(long siteId,long vehicleId){
+  return jdbc.queryForObject("SELECT GREATEST((SELECT max(a.released_at) FROM transport.assignment a JOIN transport.order o"
+   +" ON o.id=a.order_id WHERE o.site_id=? AND a.vehicle_id=?),(SELECT max(finished_at) FROM transport.relocation"
+   +" WHERE site_id=? AND vehicle_id=?))",(r,n)->r.getObject(1,OffsetDateTime.class),siteId,vehicleId,siteId,vehicleId);
+ }
+
+ @Transactional(readOnly=true)
  public List<Relocation> openRelocations(long siteId){
   return jdbc.query("SELECT "+RELOCATION_COLS+" FROM transport.relocation WHERE site_id=? AND finished_at IS NULL"
    +" ORDER BY id",RELOCATION,siteId);

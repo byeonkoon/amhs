@@ -60,7 +60,10 @@ public class SiteSweep {
   }
   var resumed=movement.resumeAll(siteId);
   var extended=movement.extendAll(siteId);
-  var evacuated=evacuation.evacuateAll(siteId);
+  var evacuated=new ArrayList<>(evacuation.evacuateAll(siteId));
+  // Moves the controller starts on its own: out of a waiting vehicle's way first, then home.
+  evacuated.addAll(evacuation.yieldAll(siteId));
+  evacuated.addAll(evacuation.returnHome(siteId));
   var published=gateway.publishPending(siteId);
   return new Sweep(autoDispatch,assigned,skipped,resumed,extended,evacuated,published);
  }

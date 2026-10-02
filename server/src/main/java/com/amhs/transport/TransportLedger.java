@@ -62,6 +62,8 @@ public interface TransportLedger {
   * first, then the lower id.
   */
  List<TransportOrder> dispatchQueue(long siteId,int limit);
+ /** When the vehicle last finished work or a move, whichever is later; null when it never had either. */
+ java.time.OffsetDateTime lastActivityEnded(long siteId,long vehicleId);
  /** Open moves out of zones at this site, one per vehicle at most. */
  List<Relocation> openRelocations(long siteId);
  /** Vehicles currently being moved out of a zone, which are not offered to dispatch meanwhile. */

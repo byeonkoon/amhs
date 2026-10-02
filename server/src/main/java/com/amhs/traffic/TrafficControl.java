@@ -57,4 +57,6 @@ public interface TrafficControl {
     Optional<Deadlock> deadlock(long siteId, long vehicleId);
     /** Every distinct closed chain at this site. */
     List<Deadlock> deadlocks(long siteId);
+    /** Every vehicle at the site waiting for a node another vehicle holds or stands on now. */
+    List<WaitingFor> waitingFor(long siteId);
 }
