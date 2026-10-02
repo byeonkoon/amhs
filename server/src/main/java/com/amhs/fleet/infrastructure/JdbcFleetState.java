@@ -67,6 +67,13 @@ class JdbcFleetState implements FleetState {
  }
 
  @Transactional
+ public void reportBattery(long siteId,long revisionId,long vehicleId,double batteryPct){
+  if(!Double.isFinite(batteryPct)||batteryPct<0||batteryPct>100) throw new IllegalArgumentException("INVALID_BATTERY");
+  jdbc.update("UPDATE fleet.vehicle_state SET battery_pct=? WHERE site_id=? AND vehicle_id=? AND revision_id=?",
+   batteryPct,siteId,vehicleId,revisionId);
+ }
+
+ @Transactional
  public VehicleSnapshot reportDriving(long siteId,long revisionId,long vehicleId,double xMm,double yMm){
   int changed=jdbc.update("UPDATE fleet.vehicle_state SET x_mm=?,y_mm=?,status='MOVING',idle=FALSE,"
    +"reported_at=clock_timestamp(),version=version+1 WHERE site_id=? AND vehicle_id=? AND revision_id=? AND node_id IS NOT NULL",
@@ -102,7 +109,7 @@ class JdbcFleetState implements FleetState {
   // Between two nodes a vehicle is not idle, whatever it says: nothing may treat it as standing.
   +"COALESCE(s.online,FALSE),COALESCE(s.remote,FALSE),COALESCE(s.idle,FALSE) AND s.x_mm IS NULL,COALESCE(s.carrier_present,FALSE),"
   +"COALESCE(s.source,'INITIAL_CONFIGURATION'),s.reported_at,s.destination_change_enabled,p.home_node_id,s.mode,s.status,"
-  +"s.x_mm,s.y_mm,p.charge_node_id,p.speed_mm_s"
+  +"s.x_mm,s.y_mm,p.charge_node_id,p.speed_mm_s,s.battery_pct,p.charging_policy"
   +" FROM fleet.vehicle_profile p LEFT JOIN fleet.vehicle_state s ON s.site_id=p.site_id AND s.vehicle_id=p.id"
   +" WHERE p.site_id=? AND p.revision_id=?";
  // reported_at stays null until something reports, so a screen can tell "never" from "a while ago".
@@ -112,5 +119,5 @@ class JdbcFleetState implements FleetState {
   r.getBoolean(5),r.getBoolean(6),r.getBoolean(7),r.getBoolean(8),r.getBoolean(9),r.getBoolean(10),r.getString(11),
   r.getObject(12,java.time.OffsetDateTime.class),r.getObject(13,Boolean.class),r.getObject(14,Long.class),
   r.getString(15),r.getString(16),r.getObject(17,Double.class),r.getObject(18,Double.class),
-  r.getObject(19,Long.class),r.getInt(20));
+  r.getObject(19,Long.class),r.getInt(20),r.getObject(21,Double.class),r.getString(22));
 }

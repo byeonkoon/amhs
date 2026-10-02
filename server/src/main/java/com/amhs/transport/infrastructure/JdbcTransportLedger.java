@@ -336,6 +336,30 @@ class JdbcTransportLedger implements TransportLedger {
  }
 
  @Transactional(readOnly=true)
+ public java.util.Map<Long,Integer> chargeLevels(long siteId){
+  var out=new java.util.HashMap<Long,Integer>();
+  jdbc.query("SELECT vehicle_id,level FROM transport.charge_request WHERE site_id=?",
+   (org.springframework.jdbc.core.RowCallbackHandler)r->out.put(r.getLong(1),r.getInt(2)),siteId);
+  return out;
+ }
+ @Transactional(propagation=Propagation.MANDATORY)
+ public void setChargeLevel(long siteId,long vehicleId,int level){
+  if(level<=0){ jdbc.update("DELETE FROM transport.charge_request WHERE site_id=? AND vehicle_id=?",siteId,vehicleId); return; }
+  jdbc.update("INSERT INTO transport.charge_request(site_id,vehicle_id,level) VALUES(?,?,?) ON CONFLICT(site_id,vehicle_id)"
+   +" DO UPDATE SET level=EXCLUDED.level,since=CASE WHEN transport.charge_request.level=EXCLUDED.level"
+   +" THEN transport.charge_request.since ELSE now() END",siteId,vehicleId,level);
+ }
+ @Transactional(readOnly=true)
+ public int queuedCount(long siteId,com.amhs.platform.VehicleType type){
+  return jdbc.queryForObject("SELECT count(*) FROM transport.order WHERE site_id=? AND status='QUEUED' AND vehicle_type=?",
+   Integer.class,siteId,type.name());
+ }
+ @Transactional(propagation=Propagation.MANDATORY)
+ public void lockPlace(long nodeId){
+  jdbc.queryForObject("SELECT pg_advisory_xact_lock(hashtext('amhs-place'),CAST(? AS INT))",Object.class,(int)nodeId);
+ }
+
+ @Transactional(readOnly=true)
  public OffsetDateTime lastActivityEnded(long siteId,long vehicleId){
   return jdbc.queryForObject("SELECT GREATEST((SELECT max(a.released_at) FROM transport.assignment a JOIN transport.order o"
    +" ON o.id=a.order_id WHERE o.site_id=? AND a.vehicle_id=?),(SELECT max(finished_at) FROM transport.relocation"

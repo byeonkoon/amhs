@@ -32,6 +32,10 @@ class VehicleStateController {
             report.mode(),report.status()));
         // An arrival further along is the only thing that frees the nodes behind it, so the
         // release happens here, with the evidence, rather than on a timer somewhere else.
+        if(report.batteryPct()!=null){
+            fleet.reportBattery(siteId,revisionId,vehicleId,report.batteryPct());
+            stored=fleet.find(siteId,revisionId,vehicleId).orElseThrow();
+        }
         var progress=stored.nodeId()==null?null:traffic.advanced(siteId,vehicleId,stored.nodeId());
         var body=new java.util.LinkedHashMap<String,Object>();
         body.put("vehicle",stored);
@@ -39,8 +43,9 @@ class VehicleStateController {
         return body;
     }
     /** The report as sent. It becomes a VehicleReport here, so a bad mode or status is a 422, not a parse error. */
+    /** {@code batteryPct}: state of charge, percent, when the vehicle reports one. */
     record Body(Long nodeId,boolean online,boolean remote,boolean idle,boolean carrierPresent,String source,
-                Boolean destinationChangeEnabled,String mode,String status) {}
+                Boolean destinationChangeEnabled,String mode,String status,Double batteryPct) {}
     @ExceptionHandler(IllegalArgumentException.class)
     ResponseEntity<Map<String,String>> rejected(IllegalArgumentException ex) {
         var status="VEHICLE_NOT_FOUND".equals(ex.getMessage())?HttpStatus.NOT_FOUND:HttpStatus.UNPROCESSABLE_ENTITY;

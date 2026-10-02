@@ -230,7 +230,7 @@ function MonitorScreen(props: {
         <div style={{ display: 'grid', gap: 9, alignContent: 'start' }}>
           <Panel id="mon-vehicles" title="차량 상태" aux={`${state.length}대`} defaultOpen>
             {state.length === 0 ? <Empty title="등록된 차량이 없습니다" /> : (
-              <Grid cols="58px 1fr 48px 58px 44px 36px" head={['차량', '위치', '모드', '상태', '적재', '점유']}>
+              <Grid cols="58px 1fr 48px 58px 44px 44px 36px" head={['차량', '위치', '모드', '상태', '적재', '배터리', '점유']}>
                 {state.map(v => (
                   <Row key={v.id} selected={props.selected === v.id}
                     onClick={() => props.onSelect(v.id === props.selected ? null : v.id)}>
@@ -239,6 +239,8 @@ function MonitorScreen(props: {
                     <span><Chip tone={modeTone(v)}>{modeLabel(v)}</Chip></span>
                     <span><Chip tone={stateTone(v)}>{stateLabel(v)}</Chip></span>
                     <span><Chip tone={v.carrierPresent ? 'ac' : 'id'}>{v.carrierPresent ? '있음' : '없음'}</Chip></span>
+                    <span className="mono" style={{ color: batteryColor(v, options) }}>
+                      {v.batteryPct == null ? '—' : `${Math.round(v.batteryPct)}%`}</span>
                     <span className="mono">{holdsOf(v.id) || '—'}</span>
                   </Row>
                 ))}
@@ -336,6 +338,17 @@ function VehicleDetail(props: {
       setStateError(cause instanceof ApiError ? explainDecision(cause.message) : '바꾸지 못했습니다.');
     }
   }
+  // Simulation only: set the state of charge, to watch charging requests and charge points at work.
+  async function setBattery(batteryPct: number) {
+    if (!r) return;
+    setStateError(null);
+    try {
+      await send(opsApi.simulatedState(r.id), 'PUT', { batteryPct }, '시뮬레이션 배터리 변경');
+      props.onChanged?.();
+    } catch (cause) {
+      setStateError(cause instanceof ApiError ? explainDecision(cause.message) : '바꾸지 못했습니다.');
+    }
+  }
   return (
     <div style={{ display: 'grid', gap: 7, fontSize: 12 }}>
       <div style={{ display: 'flex', gap: 7, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -366,6 +379,10 @@ function VehicleDetail(props: {
             ['REMOTE', 'ERROR', '에러'], ['REMOTE', 'CHARGING', '충전']] as const).map(([m, s, label]) => (
             <button key={label} type="button" style={tiny} disabled={!hasWriteToken()} onClick={() => setState(m, s)}>{label}</button>
           ))}
+          <span className="hint" style={{ marginLeft: 6 }}>배터리</span>
+          {[15, 35, 100].map(pct => (
+            <button key={pct} type="button" style={tiny} disabled={!hasWriteToken()} onClick={() => setBattery(pct)}>{pct}%</button>
+          ))}
           {stateError && <span className="hint" style={{ color: 'var(--crit)' }}>{stateError}</span>}
         </div>
       )}
@@ -395,6 +412,14 @@ const STEP: Record<string, { label: string; note: string }> = {
 };
 
 /** Status as the vehicle reports it, on its own axis apart from the mode. */
+/** Battery shown red below the critical threshold, amber at or below the request threshold. */
+function batteryColor(v: VehicleSnapshot, options: OperationOptions | null | undefined): string | undefined {
+  if (v.batteryPct == null) return undefined;
+  if (v.batteryPct < (options?.chargeCriticalPct ?? 20)) return 'var(--crit)';
+  if (v.batteryPct <= (options?.chargeRequestPct ?? 40)) return '#B7791F';
+  return undefined;
+}
+
 function stateLabel(v: VehicleSnapshot): string {
   if (!v.online) return '오프라인';
   const status = v.status ?? (v.idle ? 'IDLE' : 'MOVING');

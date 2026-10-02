@@ -64,6 +64,14 @@ public interface TransportLedger {
  List<TransportOrder> dispatchQueue(long siteId,int limit);
  /** The page of waiting orders that follows {@code after} in dispatch order; the first page when null. */
  List<TransportOrder> dispatchQueue(long siteId,TransportOrder after,int limit);
+ /** Charge requests by vehicle: 1 asks to charge (work still wins), 2 must charge. */
+ java.util.Map<Long,Integer> chargeLevels(long siteId);
+ /** Sets a vehicle's charge request; 0 clears it. */
+ void setChargeLevel(long siteId,long vehicleId,int level);
+ /** How many orders for this kind of vehicle are waiting to be assigned. */
+ int queuedCount(long siteId,com.amhs.platform.VehicleType type);
+ /** Takes the claim on a place (a charge point) for the rest of the transaction. */
+ void lockPlace(long nodeId);
  /** When the vehicle last finished work or a move, whichever is later; null when it never had either. */
  java.time.OffsetDateTime lastActivityEnded(long siteId,long vehicleId);
  /** Open moves out of zones at this site, one per vehicle at most. */

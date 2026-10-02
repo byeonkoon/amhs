@@ -72,7 +72,7 @@ function TrackTab({ session, revisionId, kind }: { session: Session; revisionId:
     <div>
       {banner}
       {nodes.length === 0 ? <Empty title="이 지도 revision에 노드가 없습니다" /> : (
-        <Grid cols="80px 1fr 90px 90px 96px 96px 96px" head={['코드', '', 'X (mm)', 'Y (mm)', '사용', '정지 노드', '합류 지점']}>
+        <Grid cols="80px 1fr 90px 90px 96px 96px 96px 96px" head={['코드', '', 'X (mm)', 'Y (mm)', '사용', '정지 노드', '합류 지점', '충전 지점']}>
           {nodes.map(n => (
             <Row key={n.id}>
               <span className="mono">{n.settings.code}</span>
@@ -98,6 +98,13 @@ function TrackTab({ session, revisionId, kind }: { session: Session; revisionId:
                   onClick={() => change(`${opsApi.nodes(revisionId)}/${n.id}`, n.version,
                     { ...n.settings, mergePoint: !n.settings.mergePoint }, '합류 지점 지정 변경')}>
                   {n.settings.mergePoint ? '합류' : '—'}
+                </button>
+              </span>
+              <span>
+                <button type="button" disabled={!mayEdit || busy} style={flagStyle(!!n.settings.chargePoint)}
+                  onClick={() => change(`${opsApi.nodes(revisionId)}/${n.id}`, n.version,
+                    { ...n.settings, chargePoint: !n.settings.chargePoint }, '충전 지점 지정 변경')}>
+                  {n.settings.chargePoint ? '충전' : '—'}
                 </button>
               </span>
             </Row>

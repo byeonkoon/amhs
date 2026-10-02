@@ -317,6 +317,116 @@ public class ZoneEvacuation {
   return out;
  }
 
+ /**
+  * AGV charging, as the existing system decides it. Each AGV that charges (policy HOME or NEAREST)
+  * and reports a state of charge keeps a request level: at or below the request threshold it asks to
+  * charge (1), unless it is working; below the critical threshold without a carrier it must charge
+  * (2), which also keeps it out of dispatch; above the release threshold the request ends. Work
+  * clears an ordinary request.
+  *
+  * <p>A free AGV with a request is sent to its charge node (HOME) or the nearest free charge point
+  * (NEAREST); on arrival it is told to start charging. A charge point nobody else stands on, holds
+  * or is heading for is taken under a lock on it, so two vehicles never pick the same one. A
+  * charging AGV is told to stop once charged past the release threshold, or when work of its kind
+  * is waiting and no other vehicle of its kind is free and it does not have to charge.
+  * {@code freeByKind} is what dispatch left free in this pass.
+  */
+ @Transactional
+ public List<Step> chargeAll(long siteId,Map<com.amhs.platform.VehicleType,Integer> freeByKind){
+  var settings=operations.get(siteId).settings();
+  long revisionId=ledger.activeRevision(siteId);
+  var cutoff=OffsetDateTime.now().minusSeconds(settings.positionStaleSeconds());
+  var levels=ledger.chargeLevels(siteId);
+  var out=new ArrayList<Step>();
+  var candidates=fleet.snapshot(siteId,revisionId).stream()
+   .filter(v->v.vType()==com.amhs.platform.VehicleType.AGV&&v.batteryPct()!=null
+    &&v.chargingPolicy()!=null&&!"DISABLED".equals(v.chargingPolicy()))
+   .sorted(Comparator.comparingLong(VehicleSnapshot::id)).toList();
+  for(var seen:candidates){
+   fleet.lockForAssignment(siteId,List.of(seen.id()));
+   var v=fleet.find(siteId,revisionId,seen.id()).orElse(null);
+   if(v==null||v.batteryPct()==null) continue;
+   double b=v.batteryPct();
+   boolean working=ledger.assignedVehicleIds(siteId).contains(v.id());
+   int level=levels.getOrDefault(v.id(),0), next=level;
+   if(level==0){
+    if(b<=settings.chargeRequestPct()){
+     if(b<settings.chargeCriticalPct()&&!v.carrierPresent()) next=2; else if(!working) next=1;
+    }
+   }else if(level==1){
+    if(working) next=0;
+    else if(b<settings.chargeCriticalPct()&&!v.carrierPresent()) next=2;
+    else if(b>settings.chargeReleasePct()) next=0;
+   }else if(b>settings.chargeReleasePct()) next=0;
+   if(next!=level) ledger.setChargeLevel(siteId,v.id(),next);
+
+   boolean idleCommands=outbox.unresolvedForVehicle(siteId,v.id()).isEmpty();
+   if("CHARGING".equals(v.effectiveStatus())){
+    boolean full=b>settings.chargeReleasePct();
+    boolean workWaits=next<2&&ledger.queuedCount(siteId,v.vType())>0&&freeByKind.getOrDefault(v.vType(),0)<=0;
+    if((full||workWaits||next==0)&&idleCommands){
+     if(workWaits&&next!=0) ledger.setChargeLevel(siteId,v.id(),0);
+     chargeCommand(siteId,v,"CHARGE_STOP",full?"CHARGED":"WORK_WAITING");
+     out.add(none(v.id(),full||next==0?"CHARGE_COMPLETE":"CHARGE_STOPPED_FOR_WORK"));
+    }
+    continue;
+   }
+   if(next==0) continue;
+   if(v.carrierPresent()){ out.add(none(v.id(),"CHARGE_WAITS_FOR_CARRIER")); continue; }
+   if(whyNotFree(siteId,v,cutoff)!=null) continue;
+   var map=topology.getMap(siteId,revisionId);
+   var charger=chooseCharger(siteId,revisionId,map,v);
+   if(charger==null){ out.add(none(v.id(),"NO_FREE_CHARGER")); continue; }
+   if(charger.route().size()<=1){
+    chargeCommand(siteId,v,"CHARGE_START",next==2?"MUST_CHARGE":"CHARGE_REQUEST");
+    out.add(none(v.id(),"CHARGE_STARTED"));
+    continue;
+   }
+   ledger.startRelocation(siteId,revisionId,v.id(),null,charger.route(),charger.nodeId(),Relocation.CHARGE);
+   out.add(step(siteId,revisionId,v.id(),zoneOf(siteId,revisionId),fleet.snapshot(siteId,revisionId),cutoff));
+  }
+  return out;
+ }
+
+ /**
+  * The charge point this vehicle should use and the route there, or null when none is free and
+  * reachable. A one-node route means it already stands there. HOME uses the vehicle's own charge node only;
+  * NEAREST also considers every charge point on the map and takes the cheapest.
+  */
+ private record Charger(long nodeId,List<Long> route,double cost){}
+ private Charger chooseCharger(long siteId,long revisionId,MapSnapshot map,VehicleSnapshot v){
+  var places=new TreeSet<Long>();
+  if(v.chargeNodeId()!=null) places.add(v.chargeNodeId());
+  if("NEAREST".equals(v.chargingPolicy()))
+   for(var node:map.nodes()) if(node.chargePoint()&&node.enabled()) places.add(node.id());
+  Charger best=null;
+  for(long place:places){
+   var node=map.nodes().stream().filter(n->n.id()==place).findFirst().orElse(null);
+   if(node==null||!node.enabled()) continue;
+   Charger option;
+   if(v.nodeId()!=null&&place==v.nodeId()) option=new Charger(place,List.of(place),0);
+   else{
+    var route=planner.find(map,v.nodeId(),place);
+    if(route.status()!=RouteResult.Status.FOUND) continue;
+    option=new Charger(place,route.nodeIds(),route.costSeconds()==null?0:route.costSeconds());
+   }
+   if(best!=null&&best.cost()<=option.cost()) continue;
+   ledger.lockPlace(place);
+   if(placeTaken(siteId,revisionId,place,v.id())) continue;
+   best=option;
+  }
+  return best;
+ }
+
+ private void chargeCommand(long siteId,VehicleSnapshot v,String type,String reason){
+  var body=new LinkedHashMap<String,Object>();
+  body.put("vehicleId",v.id()); body.put("vehicleCode",v.code()); body.put("nodeId",v.nodeId());
+  body.put("batteryPct",v.batteryPct()); body.put("reason",reason);
+  try{
+   outbox.enqueueForVehicle(siteId,v.id(),"charge-"+v.id()+"-"+type+"-"+java.util.UUID.randomUUID(),type,json.writeValueAsString(body));
+  }catch(JsonProcessingException e){ throw new IllegalStateException("command payload could not be written",e); }
+ }
+
  /** Null when the vehicle may be sent somewhere on the controller's own initiative; otherwise why not. */
  private String whyNotFree(long siteId,VehicleSnapshot vehicle,OffsetDateTime cutoff){
   if(vehicle==null) return "VEHICLE_NOT_FOUND";

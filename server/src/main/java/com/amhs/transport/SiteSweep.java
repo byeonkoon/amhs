@@ -75,7 +75,9 @@ public class SiteSweep {
   var resumed=movement.resumeAll(siteId);
   var extended=movement.extendAll(siteId);
   var evacuated=new ArrayList<>(evacuation.evacuateAll(siteId));
-  // Moves the controller starts on its own: out of a waiting vehicle's way first, then home.
+  // Moves the controller starts on its own: charging first, then out of a waiting vehicle's way,
+  // then home.
+  evacuated.addAll(evacuation.chargeAll(siteId,assignment.freeVehicles(siteId)));
   evacuated.addAll(evacuation.yieldAll(siteId));
   evacuated.addAll(evacuation.returnHome(siteId));
   var published=gateway.publishPending(siteId);

@@ -18,6 +18,8 @@ public interface FleetState {
      * remote control as idle is still on its way, so it is stored as moving.
      */
     VehicleSnapshot reportModeAndStatus(long siteId, long revisionId, long vehicleId, String mode, String status);
+    /** The vehicle's state of charge, percent; nothing else of its state changes. */
+    void reportBattery(long siteId, long revisionId, long vehicleId, double batteryPct);
     /** A vehicle driving between nodes: where it is, and that it is moving, in one report. */
     VehicleSnapshot reportDriving(long siteId, long revisionId, long vehicleId, double xMm, double yMm);
     /** Locks the given vehicles in ascending id order so two assignments cannot deadlock. */

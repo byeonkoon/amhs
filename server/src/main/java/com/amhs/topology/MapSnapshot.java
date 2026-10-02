@@ -7,9 +7,14 @@ public record MapSnapshot(long siteId, long revisionId, List<Node> nodes, List<E
     }
     /**
      * {@code stopNode} ends every movement authority that reaches it. {@code mergePoint} marks where
-     * tracks join, so entry there is decided first come first served.
+     * tracks join, so entry there is decided first come first served. {@code chargePoint}: an AGV
+     * can charge here.
      */
-    public record Node(long id, String code, double x, double y, boolean enabled, boolean stopNode, boolean mergePoint) {
+    public record Node(long id, String code, double x, double y, boolean enabled, boolean stopNode, boolean mergePoint,
+                       boolean chargePoint) {
+        public Node(long id,String code,double x,double y,boolean enabled,boolean stopNode,boolean mergePoint) {
+            this(id,code,x,y,enabled,stopNode,mergePoint,false);
+        }
         public Node(long id,String code,double x,double y,boolean enabled) { this(id,code,x,y,enabled,false,false); }
         public Node(long id,String code,double x,double y) { this(id,code,x,y,true); }
     }

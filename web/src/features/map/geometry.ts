@@ -45,9 +45,13 @@ export function portTitle(p: MapData['ports'][number]): { main: string; sub: str
   return { main: p.code, sub: null };
 }
 
-/** Nodes some vehicle waits at (home) or charges at, with the vehicles that use them. */
-export function vehiclePlaces(vehicles: VehicleSnapshot[]) {
+/**
+ * Nodes some vehicle waits at (home) or charges at, with the vehicles that use them. Charge points
+ * of the map are included even when no vehicle names them.
+ */
+export function vehiclePlaces(vehicles: VehicleSnapshot[], map?: MapData) {
   const home = new Map<number, string[]>(), charge = new Map<number, string[]>();
+  for (const n of map?.nodes ?? []) if (n.chargePoint) charge.set(n.id, []);
   for (const v of vehicles) {
     if (v.homeNodeId != null) home.set(v.homeNodeId, [...(home.get(v.homeNodeId) ?? []), v.code]);
     if (v.chargeNodeId != null) charge.set(v.chargeNodeId, [...(charge.get(v.chargeNodeId) ?? []), v.code]);

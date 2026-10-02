@@ -49,6 +49,13 @@ public class SimulatedVehicles {
  }
  private final Map<Long,Sim> vehicles=new ConcurrentHashMap<>();
  /**
+  * State of charge per simulated vehicle, percent: it runs down while driving (and slowly while
+  * standing) and up while charging. Charge commands received wait here for the next step.
+  */
+ private final Map<Long,Double> battery=new ConcurrentHashMap<>();
+ private final Map<Long,String> chargeOrder=new ConcurrentHashMap<>();
+ private static final double DRAIN_DRIVING=0.25, DRAIN_STANDING=0.01, CHARGE_RATE=1.5;
+ /**
   * Held while a vehicle is moved or its state is changed, so a change somebody makes between two
   * motion ticks is not overwritten by a tick that read the vehicle before it.
   */
@@ -70,7 +77,10 @@ public class SimulatedVehicles {
  public VehicleSnapshot place(long siteId,long vehicleId,long nodeId){
   synchronized(motion){
    vehicles.put(vehicleId,new Sim(siteId,vehicleId,List.of(),false,false));
-   return report(siteId,vehicleId,nodeId,"IDLE",false);
+   battery.putIfAbsent(vehicleId,100.0);
+   var placed=report(siteId,vehicleId,nodeId,"IDLE",false);
+   fleet.reportBattery(siteId,ledger.activeRevision(siteId),vehicleId,battery.get(vehicleId));
+   return fleet.find(siteId,ledger.activeRevision(siteId),vehicleId).orElse(placed);
   }
  }
 
@@ -93,7 +103,20 @@ public class SimulatedVehicles {
  }
  public boolean isSimulated(long vehicleId){ return vehicles.containsKey(vehicleId); }
  /** Takes every vehicle out of the simulation. Their last reported state stays as it was. */
- public void clear(){ vehicles.clear(); maps.clear(); }
+ public void clear(){ vehicles.clear(); maps.clear(); battery.clear(); chargeOrder.clear(); }
+
+ /** Sets a simulated vehicle's state of charge, as if it reported it; for trying charging out. */
+ public VehicleSnapshot setBattery(long siteId,long vehicleId,double pct){
+  synchronized(motion){
+   var sim=vehicles.get(vehicleId);
+   if(sim==null||sim.siteId()!=siteId) throw new IllegalArgumentException("NOT_A_SIMULATED_VEHICLE");
+   if(!Double.isFinite(pct)||pct<0||pct>100) throw new IllegalArgumentException("INVALID_BATTERY");
+   battery.put(vehicleId,pct);
+   long revisionId=ledger.activeRevision(siteId);
+   fleet.reportBattery(siteId,revisionId,vehicleId,pct);
+   return fleet.find(siteId,revisionId,vehicleId).orElseThrow();
+  }
+ }
  /** Stops simulating vehicles of sites that are no longer in simulation. */
  public void clearExcept(java.util.Set<Long> sites){ vehicles.values().removeIf(v->!sites.contains(v.siteId())); }
 
@@ -111,7 +134,9 @@ public class SimulatedVehicles {
    var last=reported.get(record.id());
    long node=last!=null&&last.nodeId()!=null?last.nodeId():settings.initialNodeId();
    vehicles.put(record.id(),new Sim(siteId,record.id(),List.of(),last!=null&&last.carrierPresent(),false));
+   battery.put(record.id(),last!=null&&last.batteryPct()!=null?last.batteryPct():100.0);
    report(siteId,record.id(),node,"IDLE",last!=null&&last.carrierPresent());
+   fleet.reportBattery(siteId,revisionId,record.id(),battery.get(record.id()));
   }
  }
  public Set<Long> placed(){ return Set.copyOf(vehicles.keySet()); }
@@ -134,6 +159,9 @@ public class SimulatedVehicles {
     vehicles.computeIfPresent(sim.vehicleId(),(id,s)->s.withAuthority(nodes));
    }catch(Exception e){ return false; }
   }
+  // Starting or stopping a charge is carried out on the vehicle's next step.
+  if("CHARGE_START".equals(command.commandType())||"CHARGE_STOP".equals(command.commandType()))
+   chargeOrder.put(sim.vehicleId(),command.commandType());
   if("STOP".equals(command.commandType())){
    // Stops at the end of the segment it is on; standing, it goes nowhere. It then reports idle.
    vehicles.computeIfPresent(sim.vehicleId(),(id,s)->{
@@ -158,7 +186,13 @@ public class SimulatedVehicles {
    for(var sim:List.copyOf(vehicles.values())){
     if(sim.siteId()!=siteId) continue;
     var state=fleet.find(siteId,revisionId,sim.vehicleId()).orElse(null);
-    if(state==null||state.nodeId()==null||held(state)) continue;
+    if(state==null||state.nodeId()==null) continue;
+    // The battery runs down while it drives and slowly while it stands, and up while it charges.
+    String status=state.effectiveStatus();
+    double rate="CHARGING".equals(status)?CHARGE_RATE
+     :("MOVING".equals(status)||state.betweenNodes())?-DRAIN_DRIVING:-DRAIN_STANDING;
+    battery.compute(sim.vehicleId(),(id,b)->Math.max(0,Math.min(100,(b==null?100:b)+rate*seconds)));
+    if(held(state)) continue;
     driveOne(siteId,revisionId,map,sim.vehicleId(),state,seconds,orderOf.get(sim.vehicleId()));
    }
   }
@@ -242,6 +276,16 @@ public class SimulatedVehicles {
    // The device's acknowledgement arrives after the command went out, never with it.
    for(var c:outbox.unresolvedForVehicle(siteId,sim.vehicleId()))
     if(c.status()==CommandStatus.SENT) outbox.acknowledge(c.commandId());
+   var charge=battery.get(sim.vehicleId());
+   if(charge!=null) fleet.reportBattery(siteId,revisionId,sim.vehicleId(),Math.round(charge*10)/10.0);
+   // A charge command received since the last step: start charging where it stands, or stop.
+   String chargeCommand=chargeOrder.remove(sim.vehicleId());
+   if(chargeCommand!=null&&!state.betweenNodes()){
+    boolean start="CHARGE_START".equals(chargeCommand);
+    fleet.reportModeAndStatus(siteId,revisionId,sim.vehicleId(),"REMOTE",start?"CHARGING":"IDLE");
+    out.add(new Step(sim.vehicleId(),start?"CHARGING_STARTED":"CHARGING_STOPPED",state.nodeId()));
+    continue;
+   }
    var order=Optional.ofNullable(orderOf.get(sim.vehicleId())).flatMap(id->ledger.find(siteId,id)).orElse(null);
    out.add(act(siteId,vehicles.getOrDefault(sim.vehicleId(),sim),state,order,portNode,jump));
   }

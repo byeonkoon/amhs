@@ -480,7 +480,7 @@ class World {
 
   /** Tags on the nodes vehicles wait at (대기) and charge at (충전). Rebuilt only when they change. */
   private setPlaces(vehicles: VehicleSnapshot[], layer: Layer) {
-    const places = vehiclePlaces(vehicles);
+    const places = vehiclePlaces(vehicles, this.map ?? undefined);
     const key = layer + JSON.stringify([...places.home]) + JSON.stringify([...places.charge]);
     if (key === this.placesKey || !this.map) return;
     this.placesKey = key;
@@ -499,7 +499,7 @@ class World {
       this.places.add(pad, label);
     };
     for (const [id, who] of places.home) put(id, `대기 · ${who.join(',')}`, '#5B6B7C', 0);
-    for (const [id, who] of places.charge) put(id, `충전 · ${who.join(',')}`, '#2E7D32', places.home.has(id) ? 0.3 : 0);
+    for (const [id, who] of places.charge) put(id, who.length ? `충전 · ${who.join(',')}` : '충전', '#2E7D32', places.home.has(id) ? 0.3 : 0);
   }
 
   setVehicles(vehicles: VehicleSnapshot[], selectedId: number | null, layer: Layer) {
@@ -532,7 +532,8 @@ class World {
       obj.carrierMark.color.set(mark); obj.carrierMark.emissive.set(mark);
       obj.ring.visible = selectedId === v.id;
       const extra = status !== 'IDLE' && status !== 'MOVING' || !v.online ? ` · ${look.label}` : '';
-      const key = `${v.code} ${modeLetter(v)}${extra}|${look.fill}|${v.carrierPresent ? 1 : 0}`;
+      const battery = v.batteryPct == null ? '' : ` ${Math.round(v.batteryPct)}%`;
+      const key = `${v.code} ${modeLetter(v)}${battery}${extra}|${look.fill}|${v.carrierPresent ? 1 : 0}`;
       if (key !== obj.labelKey) {
         if (obj.label) { obj.group.remove(obj.label); disposeTree(obj.label); }
         obj.label = makeLabel(key.split('|')[0], { dot: look.fill, dark: true, carrier: v.carrierPresent });

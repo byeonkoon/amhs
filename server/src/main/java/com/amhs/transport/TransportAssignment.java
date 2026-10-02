@@ -65,7 +65,9 @@ public class TransportAssignment {
   // being moved out of a zone is busy too: its own move would cross the new one.
   var busy=new java.util.HashSet<>(ledger.assignedVehicleIds(siteId));
   busy.addAll(ledger.relocatingVehicleIds(siteId));
-  // A vehicle with a carrier on board cannot pick up another one.
+  // A vehicle with a carrier on board cannot pick up another one, and one that must charge is not
+  // given work (an ordinary charge request gives way to work).
+  busy.addAll(mustCharge(siteId));
   var free=fleet.snapshot(siteId,order.revisionId()).stream()
    .filter(v->!busy.contains(v.id())&&!v.carrierPresent()).toList();
   // A state nobody has confirmed lately is not a state to dispatch on: the vehicle that said it
@@ -86,7 +88,7 @@ public class TransportAssignment {
   // The proposal was made before the lock, so eligibility is checked again underneath it.
   var vehicle=fleet.find(siteId,order.revisionId(),proposal.vehicleId())
    .orElseThrow(()->new TransportRejected("VEHICLE_NOT_FOUND","assigned vehicle disappeared",true));
-  if(!eligible(vehicle)||!vehicle.reportedSince(cutoff))
+  if(!eligible(vehicle)||!vehicle.reportedSince(cutoff)||mustCharge(siteId).contains(vehicle.id()))
    throw new TransportRejected("VEHICLE_NO_LONGER_ELIGIBLE","vehicle changed state before it was held",true);
   // The route was costed from where the vehicle stood when it was proposed. If it has moved since,
   // that route starts somewhere it no longer is.
@@ -125,10 +127,17 @@ public class TransportAssignment {
  public java.util.Map<com.amhs.platform.VehicleType,Integer> freeVehicles(long siteId){
   var busy=new java.util.HashSet<>(ledger.assignedVehicleIds(siteId));
   busy.addAll(ledger.relocatingVehicleIds(siteId));
+  busy.addAll(mustCharge(siteId));
   var cutoff=staleBefore(siteId);
   var out=new java.util.EnumMap<com.amhs.platform.VehicleType,Integer>(com.amhs.platform.VehicleType.class);
   for(var v:fleet.snapshot(siteId,ledger.activeRevision(siteId)))
    if(!busy.contains(v.id())&&eligible(v)&&v.reportedSince(cutoff)) out.merge(v.vType(),1,Integer::sum);
+  return out;
+ }
+
+ private java.util.Set<Long> mustCharge(long siteId){
+  var out=new java.util.HashSet<Long>();
+  ledger.chargeLevels(siteId).forEach((id,level)->{ if(level>=2) out.add(id); });
   return out;
  }
 

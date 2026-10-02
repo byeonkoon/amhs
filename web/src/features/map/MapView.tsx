@@ -210,13 +210,13 @@ export function MapView(props: {
 
         {/* Where vehicles wait (대기) and charge (충전), as configured per vehicle. */}
         {(() => {
-          const places = vehiclePlaces(vehicles);
+          const places = vehiclePlaces(vehicles, map);
           const tag = (nodeId: number, label: string, color: string, who: string[], dx: number) => {
             const n = node(nodeId);
             if (!n || !visible(typeOfNode(nodeId))) return null;
             return (
               <g key={`${label}-${nodeId}`} pointerEvents="none">
-                <title>{`${label} 장소 · ${who.join(', ')}`}</title>
+                <title>{`${label} 장소${who.length ? ' · ' + who.join(', ') : ''}`}</title>
                 <rect x={n.x + dx} y={n.y - 120} width={330} height={190} rx={40} fill={color} />
                 <text x={n.x + dx + 165} y={n.y + 22} textAnchor="middle" fontSize={120} fontWeight={700}
                   style={{ fill: '#fff' }}>{label}</text>
@@ -243,7 +243,7 @@ export function MapView(props: {
             + ` · ${v.carrierPresent ? '화물 있음' : '화물 없음'} · ${call ? '작업 할당 가능' : '작업 할당 불가'}`;
           // Body at its real place on the segment, about its real size, turned the way it travels.
           const L = 1200, W = 760;
-          const label = `${v.code} ${mode}`;
+          const label = `${v.code} ${mode}${v.batteryPct == null ? '' : ` ${Math.round(v.batteryPct)}%`}`;
           const labelW = label.length * 125 + 120;
           return (
             <g key={v.id} role="button" tabIndex={0} aria-label={`${title} 상세 보기`}

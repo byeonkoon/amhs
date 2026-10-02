@@ -49,9 +49,12 @@ class SimulationController {
  @PutMapping("/vehicles/{vehicleId}/state")
  VehicleSnapshot state(@PathVariable long siteId,@PathVariable long vehicleId,@RequestBody Map<String,Object> body){
   requireSimulation(siteId);
-  Object mode=body.get("mode"), status=body.get("status");
+  Object mode=body.get("mode"), status=body.get("status"), charge=body.get("batteryPct");
+  // A state of charge may come alone, to try charging out; mode and status come together.
+  if(charge instanceof Number pct&&mode==null&&status==null) return vehicles.setBattery(siteId,vehicleId,pct.doubleValue());
   if(!(mode instanceof String m)||!(status instanceof String st)) throw new IllegalArgumentException("mode and status are required");
-  return vehicles.setState(siteId,vehicleId,m,st);
+  var stored=vehicles.setState(siteId,vehicleId,m,st);
+  return charge instanceof Number pct?vehicles.setBattery(siteId,vehicleId,pct.doubleValue()):stored;
  }
 
  @GetMapping("/vehicles")

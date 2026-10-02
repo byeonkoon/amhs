@@ -5,6 +5,8 @@
 export type Node = {
   id: number; code: string; x: number; y: number; enabled: boolean;
   stopNode?: boolean; mergePoint?: boolean;
+  /** An AGV can charge here. */
+  chargePoint?: boolean;
 };
 /** curveMm: how far the segment's middle lies off the straight line (see geometry.ts); 0 is straight. */
 export type Edge = { id: number; fromNodeId: number; toNodeId: number; cost: number; enabled: boolean; curveMm?: number };
@@ -182,6 +184,10 @@ export type VehicleSnapshot = {
   chargeNodeId?: number | null;
   /** Configured travel speed, mm/s. */
   speedMmS?: number;
+  /** State of charge, percent, as last reported; null when it reports none. */
+  batteryPct?: number | null;
+  /** DISABLED, HOME (own charge node) or NEAREST (nearest free charge point). */
+  chargingPolicy?: string | null;
 };
 
 /** A move without an order. stopRequestedAt is set once a stop was asked and it is winding down. */
@@ -288,6 +294,7 @@ export const opsApi = {
 /** A node's editable parameters. Its revision and the segments reaching it are structure, not these. */
 export type NodeSettings = {
   code: string; xMm: number; yMm: number; enabled: boolean; stopNode: boolean; mergePoint: boolean;
+  chargePoint?: boolean;
 };
 /** A segment's editable parameters. Endpoints are what the segment is, so they are read-only here. */
 export type EdgeSettings = { fromNodeId: number; toNodeId: number; cost: number; enabled: boolean; curveMm?: number };
@@ -342,6 +349,11 @@ export function explainDecision(decision: string): string {
     MORE_OUTSTANDING: '앞선 연장 명령의 결과를 아직 모릅니다. 그것이 정리되기 전에는 보내지 않습니다.',
     MOVE_STOPPED: '이동을 중지했습니다. 차량이 선 자리에서 이동을 닫았습니다.',
     YIELDING: '다른 차량이 지나가도록 비켜 서는 중입니다.',
+    CHARGE_STARTED: '충전을 시작했습니다.',
+    CHARGE_COMPLETE: '충전을 마쳤습니다.',
+    CHARGE_STOPPED_FOR_WORK: '대기 중인 작업이 있어 충전을 멈췄습니다.',
+    CHARGE_WAITS_FOR_CARRIER: '화물을 싣고 있어 충전하러 가지 않습니다.',
+    NO_FREE_CHARGER: '비어 있는 충전기가 없습니다.',
     GOING_HOME: '작업이 없어 홈으로 가는 중입니다.',
     GOING_TO_CHARGE: '충전하러 가는 중입니다.',
     NO_PLACE_TO_YIELD: '비켜 설 빈 자리가 없습니다.',
