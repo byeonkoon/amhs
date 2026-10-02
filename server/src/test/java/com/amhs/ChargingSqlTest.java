@@ -23,7 +23,7 @@ import static org.assertj.core.api.Assertions.*;
 class ChargingSqlTest {
  @Autowired SimulatedVehicles simulator; @Autowired SiteSweep sweep; @Autowired TransportOrders orders;
  @Autowired TransportAssignment assignment; @Autowired TransportLedger ledger; @Autowired FleetState fleet;
- @Autowired JdbcTemplate jdbc; @Autowired TransactionTemplate tx;
+ @Autowired JdbcTemplate jdbc; @Autowired TransactionTemplate tx; @Autowired ZoneEvacuation moves;
  private static final long SITE=1, REVISION=1, OHT1=1, AGV1=2, AGV2=4;
 
  @BeforeEach @AfterEach void clean(){
@@ -186,5 +186,24 @@ class ChargingSqlTest {
   for(int i=0;i<4;i++) tick();
   assertThat(now(AGV1).status()).isEqualTo("IDLE");
   assertThat(now(AGV1).mode()).isEqualTo("MANUAL");
+ }
+ @Test void aVehicleStartingToChargeIsNeitherSentHomeNorMovedAside(){
+  simulate();
+  jdbc.update("UPDATE fleet.vehicle_profile SET assignment_enabled=FALSE WHERE site_id=? AND id=?",SITE,AGV2);
+  jdbc.update("UPDATE platform.site_operation SET home_return_seconds=1 WHERE site_id=?",SITE);
+  jdbc.update("UPDATE fleet.vehicle_profile SET home_node_id=203 WHERE site_id=? AND id=?",SITE,AGV1);
+  simulator.place(SITE,AGV1,212L);
+  simulator.setBattery(SITE,AGV1,35);
+  sweep.run(SITE,"test",null);
+  assertThat(ledger.chargingVehicleIds(SITE)).contains(AGV1);
+  // The start command has gone out and been accepted, but the vehicle still reports idle.
+  jdbc.update("UPDATE integration.command_outbox SET status='ACCEPTED' WHERE status IN ('PENDING','DISPATCHING','SENT')");
+  jdbc.update("UPDATE fleet.vehicle_state SET idle_since=now()-interval '1 hour' WHERE site_id=? AND vehicle_id=?",SITE,AGV1);
+  jdbc.update("UPDATE transport.relocation SET finished_at=now()-interval '1 hour' WHERE site_id=? AND vehicle_id=?",SITE,AGV1);
+  jdbc.update("UPDATE transport.assignment SET released_at=now()-interval '1 hour' WHERE vehicle_id=? AND released_at>now()-interval '1 hour'",AGV1);
+  assertThat(now(AGV1).status()).isEqualTo("IDLE");
+  var home=tx.execute(s->moves.returnHome(SITE));
+  assertThat(home).noneSatisfy(st->assertThat(st.vehicleId()).isEqualTo(AGV1));
+  assertThat(moveOf(AGV1)).isEmpty();
  }
 }

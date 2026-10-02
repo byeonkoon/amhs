@@ -372,3 +372,10 @@ migration V27로 운영 옵션에 운전 모드를 추가했다. `scripts/test-p
 - K3: 충전 중에 수동(MANUAL)으로 바꾸고 85%로 올림 → 충전 중지 후 상태는 IDLE, 모드는 MANUAL 유지.
 - K4: 이력 없는 AGV(홈 212, 대기 3600초)를 203에 배치 → 홈으로 보내지 않음. 대기 시작 시각을 2시간 전으로 돌리면 HOME 이동.
 - 기존 홈 복귀 시험은 대기 시작 시각을 1분 전으로 두도록 조정했다(새 기준).
+
+## 2026-10-02 · 충전 세션 차량의 회피·홈 제외 (자체 검토)
+
+`scripts/test-postgres.ps1`: **253개 통과, 실패·오류·skip 0**.
+
+- `ChargingSqlTest.aVehicleStartingToChargeIsNeitherSentHomeNorMovedAside`: 충전 지점 212, 35%에서 CHARGE_START 기록 → 명령 수락 처리, 차량은 아직 IDLE, 대기 시작 1시간 전, 홈 203 → 홈 복귀 없음.
+- 보완 전 코드로 같은 시험을 실행해 실패(홈 이동 생성)를 먼저 확인했다.

@@ -522,6 +522,8 @@ public class ZoneEvacuation {
   if(!vehicle.idle()||!"IDLE".equals(vehicle.effectiveStatus())) return "VEHICLE_NOT_IDLE";
   if(ledger.assignedVehicleIds(siteId).contains(vehicle.id())) return "HAS_ORDER";
   if(ledger.relocatingVehicleIds(siteId).contains(vehicle.id())) return "ALREADY_MOVING";
+  // Told to charge and not yet seen to stop: the charge owns it even while it still reports idle.
+  if(ledger.chargingVehicleIds(siteId).contains(vehicle.id())) return "CHARGING";
   if(!outbox.unresolvedForVehicle(siteId,vehicle.id()).isEmpty()) return "COMMAND_OUTSTANDING";
   return null;
  }
