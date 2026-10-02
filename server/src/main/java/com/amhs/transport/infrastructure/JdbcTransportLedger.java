@@ -354,6 +354,30 @@ class JdbcTransportLedger implements TransportLedger {
   return jdbc.queryForObject("SELECT count(*) FROM transport.order WHERE site_id=? AND status='QUEUED' AND vehicle_type=?",
    Integer.class,siteId,type.name());
  }
+ @Transactional(readOnly=true)
+ public ChargeSession chargeSession(long siteId,long vehicleId){
+  var rows=jdbc.query("SELECT started_at,stop_requested_at FROM transport.charge_session WHERE site_id=? AND vehicle_id=?",
+   (r,n)->new ChargeSession(r.getObject(1,OffsetDateTime.class),r.getObject(2,OffsetDateTime.class)),siteId,vehicleId);
+  return rows.isEmpty()?null:rows.getFirst();
+ }
+ @Transactional(propagation=Propagation.MANDATORY)
+ public void openChargeSession(long siteId,long vehicleId){
+  jdbc.update("INSERT INTO transport.charge_session(site_id,vehicle_id) VALUES(?,?) ON CONFLICT DO NOTHING",siteId,vehicleId);
+ }
+ @Transactional(propagation=Propagation.MANDATORY)
+ public void requestChargeStop(long siteId,long vehicleId){
+  jdbc.update("UPDATE transport.charge_session SET stop_requested_at=COALESCE(stop_requested_at,clock_timestamp())"
+   +" WHERE site_id=? AND vehicle_id=?",siteId,vehicleId);
+ }
+ @Transactional(propagation=Propagation.MANDATORY)
+ public void closeChargeSession(long siteId,long vehicleId){
+  jdbc.update("DELETE FROM transport.charge_session WHERE site_id=? AND vehicle_id=?",siteId,vehicleId);
+ }
+ @Transactional(readOnly=true)
+ public java.util.Set<Long> chargingVehicleIds(long siteId){
+  return new java.util.HashSet<>(jdbc.query("SELECT vehicle_id FROM transport.charge_session WHERE site_id=?",
+   (r,n)->r.getLong(1),siteId));
+ }
  @Transactional(propagation=Propagation.MANDATORY)
  public void lockPlace(long nodeId){
   jdbc.queryForObject("SELECT pg_advisory_xact_lock(hashtext('amhs-place'),CAST(? AS INT))",Object.class,(int)nodeId);

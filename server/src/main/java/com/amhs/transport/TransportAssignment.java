@@ -67,9 +67,11 @@ public class TransportAssignment {
   busy.addAll(ledger.relocatingVehicleIds(siteId));
   // A vehicle with a carrier on board cannot pick up another one, and one that must charge is not
   // given work (an ordinary charge request gives way to work).
-  busy.addAll(mustCharge(siteId));
-  var free=fleet.snapshot(siteId,order.revisionId()).stream()
-   .filter(v->!busy.contains(v.id())&&!v.carrierPresent()).toList();
+  busy.addAll(ledger.chargingVehicleIds(siteId));
+  var snapshot=fleet.snapshot(siteId,order.revisionId());
+  var levels=ledger.chargeLevels(siteId);
+  var free=snapshot.stream()
+   .filter(v->!busy.contains(v.id())&&!v.carrierPresent()&&!mustCharge(siteId,v,levels)).toList();
   // A state nobody has confirmed lately is not a state to dispatch on: the vehicle that said it
   // was idle and online a day ago may be anywhere now. The same line is drawn again under the lock.
   var cutoff=staleBefore(siteId);
@@ -88,7 +90,9 @@ public class TransportAssignment {
   // The proposal was made before the lock, so eligibility is checked again underneath it.
   var vehicle=fleet.find(siteId,order.revisionId(),proposal.vehicleId())
    .orElseThrow(()->new TransportRejected("VEHICLE_NOT_FOUND","assigned vehicle disappeared",true));
-  if(!eligible(vehicle)||!vehicle.reportedSince(cutoff)||mustCharge(siteId).contains(vehicle.id()))
+  // Under the lock: the state of charge and any charge as they are now, not as a sweep left them.
+  if(!eligible(vehicle)||!vehicle.reportedSince(cutoff)||mustCharge(siteId,vehicle,ledger.chargeLevels(siteId))
+    ||ledger.chargingVehicleIds(siteId).contains(vehicle.id()))
    throw new TransportRejected("VEHICLE_NO_LONGER_ELIGIBLE","vehicle changed state before it was held",true);
   // The route was costed from where the vehicle stood when it was proposed. If it has moved since,
   // that route starts somewhere it no longer is.
@@ -127,18 +131,27 @@ public class TransportAssignment {
  public java.util.Map<com.amhs.platform.VehicleType,Integer> freeVehicles(long siteId){
   var busy=new java.util.HashSet<>(ledger.assignedVehicleIds(siteId));
   busy.addAll(ledger.relocatingVehicleIds(siteId));
-  busy.addAll(mustCharge(siteId));
+  busy.addAll(ledger.chargingVehicleIds(siteId));
   var cutoff=staleBefore(siteId);
+  var levels=ledger.chargeLevels(siteId);
   var out=new java.util.EnumMap<com.amhs.platform.VehicleType,Integer>(com.amhs.platform.VehicleType.class);
   for(var v:fleet.snapshot(siteId,ledger.activeRevision(siteId)))
-   if(!busy.contains(v.id())&&eligible(v)&&v.reportedSince(cutoff)) out.merge(v.vType(),1,Integer::sum);
+   if(!busy.contains(v.id())&&eligible(v)&&v.reportedSince(cutoff)&&!mustCharge(siteId,v,levels)) out.merge(v.vType(),1,Integer::sum);
   return out;
  }
 
- private java.util.Set<Long> mustCharge(long siteId){
-  var out=new java.util.HashSet<Long>();
-  ledger.chargeLevels(siteId).forEach((id,level)->{ if(level>=2) out.add(id); });
-  return out;
+ /**
+  * Must charge before any work: it is at the must-charge level and not yet charged past release, or
+  * an AGV that charges reports, right now, less than the critical charge with no carrier on board.
+  * The current reading counts even before the charging pass has recorded the level.
+  */
+ private boolean mustCharge(long siteId,VehicleSnapshot v,java.util.Map<Long,Integer> levels){
+  var s=operations.get(siteId).settings();
+  boolean charges=v.vType()==com.amhs.platform.VehicleType.AGV&&v.chargingPolicy()!=null&&!"DISABLED".equals(v.chargingPolicy());
+  if(!charges) return false;
+  Double b=v.batteryPct();
+  if(levels.getOrDefault(v.id(),0)>=2&&(b==null||b<=s.chargeReleasePct())) return true;
+  return b!=null&&b<s.chargeCriticalPct()&&!v.carrierPresent();
  }
 
  private static DispatchEvaluator.Candidate candidate(VehicleSnapshot v){

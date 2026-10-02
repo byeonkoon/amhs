@@ -365,6 +365,8 @@ public class ZoneEvacuation {
    .filter(v->v.homeNodeId()!=null&&v.nodeId()!=null&&!v.homeNodeId().equals(v.nodeId())&&!v.carrierPresent())
    .sorted(Comparator.comparingLong(VehicleSnapshot::id)).toList();
   for(var seen:candidates){
+   // Idle long enough: since it last became idle on a node, and since its last work or move ended.
+   if(seen.idleSince()==null||seen.idleSince().isAfter(quietSince)) continue;
    var ended=ledger.lastActivityEnded(siteId,seen.id());
    if(ended!=null&&ended.isAfter(quietSince)) continue;
    fleet.lockForAssignment(siteId,List.of(seen.id()));
@@ -424,11 +426,29 @@ public class ZoneEvacuation {
    if(next!=level) ledger.setChargeLevel(siteId,v.id(),next);
 
    boolean idleCommands=outbox.unresolvedForVehicle(siteId,v.id()).isEmpty();
-   if("CHARGING".equals(v.effectiveStatus())){
+   boolean charging="CHARGING".equals(v.effectiveStatus());
+   var session=ledger.chargeSession(siteId,v.id());
+   // A charge owns the vehicle from being told to start until it is seen to have stopped.
+   if(session!=null&&!charging){
+    var stop=session.stopRequestedAt();
+    if(stop!=null&&idleCommands&&v.reportedAt()!=null&&v.reportedAt().isAfter(stop)){
+     ledger.closeChargeSession(siteId,v.id());
+     out.add(none(v.id(),"CHARGE_ENDED"));
+    }else if(stop==null&&idleCommands&&v.reportedAt()!=null
+      &&v.reportedAt().isAfter(session.startedAt().plusSeconds(10))){
+     // Told to start, the command settled, and well afterwards the vehicle still is not charging.
+     ledger.closeChargeSession(siteId,v.id());
+     out.add(none(v.id(),"CHARGE_NOT_STARTED"));
+    }else out.add(none(v.id(),stop==null?"CHARGE_STARTING":"CHARGE_STOPPING"));
+    continue;
+   }
+   if(charging){
     boolean full=b>settings.chargeReleasePct();
     boolean workWaits=next<2&&ledger.queuedCount(siteId,v.vType())>0&&freeByKind.getOrDefault(v.vType(),0)<=0;
-    if((full||workWaits||next==0)&&idleCommands){
+    if((full||workWaits||next==0)&&idleCommands&&(session==null||session.stopRequestedAt()==null)){
      if(workWaits&&next!=0) ledger.setChargeLevel(siteId,v.id(),0);
+     if(session==null) ledger.openChargeSession(siteId,v.id());
+     ledger.requestChargeStop(siteId,v.id());
      chargeCommand(siteId,v,"CHARGE_STOP",full?"CHARGED":"WORK_WAITING");
      out.add(none(v.id(),full||next==0?"CHARGE_COMPLETE":"CHARGE_STOPPED_FOR_WORK"));
     }
@@ -441,6 +461,7 @@ public class ZoneEvacuation {
    var charger=chooseCharger(siteId,revisionId,map,v);
    if(charger==null){ out.add(none(v.id(),"NO_FREE_CHARGER")); continue; }
    if(charger.route().size()<=1){
+    ledger.openChargeSession(siteId,v.id());
     chargeCommand(siteId,v,"CHARGE_START",next==2?"MUST_CHARGE":"CHARGE_REQUEST");
     out.add(none(v.id(),"CHARGE_STARTED"));
     continue;

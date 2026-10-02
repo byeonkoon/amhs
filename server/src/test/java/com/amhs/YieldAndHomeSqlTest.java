@@ -106,6 +106,8 @@ class YieldAndHomeSqlTest {
   jdbc.update("UPDATE transport.relocation SET finished_at=now()-interval '1 hour' WHERE site_id=? AND vehicle_id=?",SITE,AGV1);
   jdbc.update("UPDATE transport.assignment SET released_at=now()-interval '1 hour' WHERE vehicle_id=? AND released_at>now()-interval '1 hour'",AGV1);
   simulator.place(SITE,AGV1,203L);
+  // It has stood idle there for a minute already.
+  jdbc.update("UPDATE fleet.vehicle_state SET idle_since=now()-interval '1 minute' WHERE site_id=? AND vehicle_id=?",SITE,AGV1);
   boolean sent=false;
   for(int i=0;i<40&&now(AGV1).nodeId()!=212L;i++){
    tick();
@@ -132,5 +134,21 @@ class YieldAndHomeSqlTest {
   fleet.report(SITE,REVISION,AGV1,new VehicleReport(203L,true,true,true,true,"SIMULATED"));
   assertThat(home()).isEmpty();
   assertThat(moveOf(AGV1)).isEmpty();
+ }
+
+ @Test void aVehicleWithNoHistoryStillWaitsTheHomeDelay(){
+  simulate();
+  jdbc.update("UPDATE platform.site_operation SET home_return_seconds=3600 WHERE site_id=?",SITE);
+  jdbc.update("UPDATE fleet.vehicle_profile SET home_node_id=212 WHERE site_id=? AND id=?",SITE,AGV1);
+  jdbc.update("DELETE FROM transport.relocation WHERE site_id=? AND vehicle_id=?",SITE,AGV1);
+  jdbc.update("UPDATE transport.assignment SET released_at=now()-interval '2 hour' WHERE vehicle_id=? AND released_at>now()-interval '2 hour'",AGV1);
+  simulator.place(SITE,AGV1,203L);
+  // Just became idle: an hour has not passed, so it stays.
+  assertThat(home()).isEmpty();
+  assertThat(moveOf(AGV1)).isEmpty();
+  // Idle for two hours: now it goes home.
+  jdbc.update("UPDATE fleet.vehicle_state SET idle_since=now()-interval '2 hour' WHERE site_id=? AND vehicle_id=?",SITE,AGV1);
+  assertThat(home()).anySatisfy(st->assertThat(st.vehicleId()).isEqualTo(AGV1));
+  assertThat(moveOf(AGV1)).hasValueSatisfying(r->assertThat(r.purpose()).isEqualTo(Relocation.HOME));
  }
 }

@@ -279,10 +279,21 @@ public class SimulatedVehicles {
    var charge=battery.get(sim.vehicleId());
    if(charge!=null) fleet.reportBattery(siteId,revisionId,sim.vehicleId(),Math.round(charge*10)/10.0);
    // A charge command received since the last step: start charging where it stands, or stop.
+   // Its control mode is never changed by it: a vehicle somebody switched to manual stays manual.
    String chargeCommand=chargeOrder.remove(sim.vehicleId());
    if(chargeCommand!=null&&!state.betweenNodes()){
+    String mode=state.mode()==null?"REMOTE":state.mode();
     boolean start="CHARGE_START".equals(chargeCommand);
-    fleet.reportModeAndStatus(siteId,revisionId,sim.vehicleId(),"REMOTE",start?"CHARGING":"IDLE");
+    if(start&&(!"REMOTE".equals(mode)||!"IDLE".equals(state.effectiveStatus()))){
+     // Checked again when it would act: only a vehicle under remote control standing idle starts.
+     out.add(new Step(sim.vehicleId(),"CHARGE_START_REFUSED",state.nodeId()));
+     continue;
+    }
+    if(!start&&!"CHARGING".equals(state.effectiveStatus())){
+     out.add(new Step(sim.vehicleId(),"NOT_CHARGING",state.nodeId()));
+     continue;
+    }
+    fleet.reportModeAndStatus(siteId,revisionId,sim.vehicleId(),mode,start?"CHARGING":"IDLE");
     out.add(new Step(sim.vehicleId(),start?"CHARGING_STARTED":"CHARGING_STOPPED",state.nodeId()));
     continue;
    }

@@ -41,14 +41,18 @@ class JdbcFleetState implements FleetState {
   // The wall clock, not the transaction's start: a report must be orderable against a decision
   // taken earlier in the same transaction (a stop asked of the vehicle, for one).
   jdbc.update("INSERT INTO fleet.vehicle_state(site_id,vehicle_id,revision_id,node_id,online,remote,idle,carrier_present,"
-   +"source,destination_change_enabled,mode,status,reported_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,clock_timestamp())"
+   +"source,destination_change_enabled,mode,status,reported_at,idle_since) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,clock_timestamp(),"
+   +"CASE WHEN ? THEN clock_timestamp() END)"
    +" ON CONFLICT(site_id,vehicle_id) DO UPDATE SET"
    +" revision_id=EXCLUDED.revision_id,node_id=EXCLUDED.node_id,online=EXCLUDED.online,remote=EXCLUDED.remote,"
    +" idle=EXCLUDED.idle,carrier_present=EXCLUDED.carrier_present,source=EXCLUDED.source,"
    +" destination_change_enabled=EXCLUDED.destination_change_enabled,mode=EXCLUDED.mode,status=EXCLUDED.status,"
-   +" x_mm=NULL,y_mm=NULL,reported_at=clock_timestamp(),version=fleet.vehicle_state.version+1",
+   +" x_mm=NULL,y_mm=NULL,reported_at=clock_timestamp(),version=fleet.vehicle_state.version+1,"
+   // Idle since it first said so standing on a node; a later idle report keeps that time.
+   +" idle_since=CASE WHEN EXCLUDED.idle THEN COALESCE(CASE WHEN fleet.vehicle_state.idle AND fleet.vehicle_state.x_mm IS NULL"
+   +"  THEN fleet.vehicle_state.idle_since END,clock_timestamp()) END",
    siteId,vehicleId,revisionId,report.nodeId(),report.online(),report.remote(),report.idle(),
-   report.carrierPresent(),report.source(),report.destinationChangeEnabled(),report.mode(),report.status());
+   report.carrierPresent(),report.source(),report.destinationChangeEnabled(),report.mode(),report.status(),report.idle());
   return find(siteId,revisionId,vehicleId).orElseThrow();
  }
 
@@ -58,9 +62,10 @@ class JdbcFleetState implements FleetState {
   var checked=new VehicleReport(null,true,false,false,false,"SIMULATED",null,mode,status);
   int changed=jdbc.update("UPDATE fleet.vehicle_state SET mode=?,remote=?,"
    +"status=CASE WHEN x_mm IS NOT NULL AND ?='REMOTE' AND ?='IDLE' THEN 'MOVING' ELSE ? END,"
+   +"idle_since=CASE WHEN x_mm IS NULL AND ?='IDLE' THEN COALESCE(CASE WHEN idle THEN idle_since END,clock_timestamp()) END,"
    +"idle=(x_mm IS NULL AND ?='IDLE'),reported_at=clock_timestamp(),version=version+1"
    +" WHERE site_id=? AND vehicle_id=? AND revision_id=? AND node_id IS NOT NULL",
-   checked.mode(),checked.remote(),checked.mode(),checked.status(),checked.status(),checked.status(),
+   checked.mode(),checked.remote(),checked.mode(),checked.status(),checked.status(),checked.status(),checked.status(),
    siteId,vehicleId,revisionId);
   if(changed==0) throw new IllegalArgumentException("POSITION_UNKNOWN");
   return find(siteId,revisionId,vehicleId).orElseThrow();
@@ -75,7 +80,7 @@ class JdbcFleetState implements FleetState {
 
  @Transactional
  public VehicleSnapshot reportDriving(long siteId,long revisionId,long vehicleId,double xMm,double yMm){
-  int changed=jdbc.update("UPDATE fleet.vehicle_state SET x_mm=?,y_mm=?,status='MOVING',idle=FALSE,"
+  int changed=jdbc.update("UPDATE fleet.vehicle_state SET x_mm=?,y_mm=?,status='MOVING',idle=FALSE,idle_since=NULL,"
    +"reported_at=clock_timestamp(),version=version+1 WHERE site_id=? AND vehicle_id=? AND revision_id=? AND node_id IS NOT NULL",
    xMm,yMm,siteId,vehicleId,revisionId);
   if(changed==0) throw new IllegalArgumentException("POSITION_UNKNOWN");
@@ -109,7 +114,7 @@ class JdbcFleetState implements FleetState {
   // Between two nodes a vehicle is not idle, whatever it says: nothing may treat it as standing.
   +"COALESCE(s.online,FALSE),COALESCE(s.remote,FALSE),COALESCE(s.idle,FALSE) AND s.x_mm IS NULL,COALESCE(s.carrier_present,FALSE),"
   +"COALESCE(s.source,'INITIAL_CONFIGURATION'),s.reported_at,s.destination_change_enabled,p.home_node_id,s.mode,s.status,"
-  +"s.x_mm,s.y_mm,p.charge_node_id,p.speed_mm_s,s.battery_pct,p.charging_policy"
+  +"s.x_mm,s.y_mm,p.charge_node_id,p.speed_mm_s,s.battery_pct,p.charging_policy,s.idle_since"
   +" FROM fleet.vehicle_profile p LEFT JOIN fleet.vehicle_state s ON s.site_id=p.site_id AND s.vehicle_id=p.id"
   +" WHERE p.site_id=? AND p.revision_id=?";
  // reported_at stays null until something reports, so a screen can tell "never" from "a while ago".
@@ -119,5 +124,6 @@ class JdbcFleetState implements FleetState {
   r.getBoolean(5),r.getBoolean(6),r.getBoolean(7),r.getBoolean(8),r.getBoolean(9),r.getBoolean(10),r.getString(11),
   r.getObject(12,java.time.OffsetDateTime.class),r.getObject(13,Boolean.class),r.getObject(14,Long.class),
   r.getString(15),r.getString(16),r.getObject(17,Double.class),r.getObject(18,Double.class),
-  r.getObject(19,Long.class),r.getInt(20),r.getObject(21,Double.class),r.getString(22));
+  r.getObject(19,Long.class),r.getInt(20),r.getObject(21,Double.class),r.getString(22),
+  r.getObject(23,java.time.OffsetDateTime.class));
 }

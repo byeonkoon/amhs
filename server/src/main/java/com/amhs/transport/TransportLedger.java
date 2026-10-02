@@ -70,6 +70,14 @@ public interface TransportLedger {
  void setChargeLevel(long siteId,long vehicleId,int level);
  /** How many orders for this kind of vehicle are waiting to be assigned. */
  int queuedCount(long siteId,com.amhs.platform.VehicleType type);
+ /** A vehicle's open charge: when it was told to start, and when to stop (null until then). */
+ record ChargeSession(java.time.OffsetDateTime startedAt,java.time.OffsetDateTime stopRequestedAt){}
+ ChargeSession chargeSession(long siteId,long vehicleId);
+ void openChargeSession(long siteId,long vehicleId);
+ void requestChargeStop(long siteId,long vehicleId);
+ void closeChargeSession(long siteId,long vehicleId);
+ /** Vehicles a charge owns now: told to start and not yet seen to have stopped. */
+ java.util.Set<Long> chargingVehicleIds(long siteId);
  /** Takes the claim on a place (a charge point) for the rest of the transaction. */
  void lockPlace(long nodeId);
  /** When the vehicle last finished work or a move, whichever is later; null when it never had either. */

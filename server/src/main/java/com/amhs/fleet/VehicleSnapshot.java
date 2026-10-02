@@ -11,7 +11,8 @@ import com.amhs.platform.VehicleType;
  * when the vehicle arrives at the next one. {@code homeNodeId} is where it waits, {@code
  * chargeNodeId} where it charges, {@code speedMmS} its configured travel speed. {@code batteryPct}
  * is its state of charge as last reported (null when it reports none); {@code chargingPolicy} is
- * DISABLED, HOME (its own charge node) or NEAREST (the nearest free charge point).
+ * DISABLED, HOME (its own charge node) or NEAREST (the nearest free charge point). {@code idleSince}
+ * is when it last became idle on a node, null while it is not idle.
  */
 public record VehicleSnapshot(long id, String code, VehicleType vType, Long nodeId,
                               boolean enabled, boolean assignmentEnabled,
@@ -20,7 +21,7 @@ public record VehicleSnapshot(long id, String code, VehicleType vType, Long node
                               Boolean destinationChangeEnabled, Long homeNodeId,
                               String mode, String status,
                               Double xMm, Double yMm, Long chargeNodeId, int speedMmS,
-                              Double batteryPct, String chargingPolicy) {
+                              Double batteryPct, String chargingPolicy, java.time.OffsetDateTime idleSince) {
     /**
      * Whether the last report came at or after {@code cutoff}. Configuration alone is never a
      * report: a vehicle nobody has heard from is not somewhere just because it was set up there.

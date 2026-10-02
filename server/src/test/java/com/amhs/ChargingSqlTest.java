@@ -34,6 +34,7 @@ class ChargingSqlTest {
   jdbc.update("DELETE FROM traffic.reservation_wait");
   jdbc.update("DELETE FROM traffic.node_reservation");
   jdbc.update("DELETE FROM transport.charge_request");
+  jdbc.update("DELETE FROM transport.charge_session");
   jdbc.update("UPDATE integration.command_outbox SET status='WITHDRAWN' WHERE status IN ('PENDING','DISPATCHING','FAILED')");
   jdbc.update("UPDATE integration.command_outbox SET status='ACCEPTED' WHERE status='SENT'");
   jdbc.update("DELETE FROM fleet.vehicle_state WHERE site_id=?",SITE);
@@ -135,5 +136,55 @@ class ChargingSqlTest {
   for(int i=0;i<3;i++) tick();
   assertThat(level(OHT1)).isZero();
   assertThat(moveOf(OHT1)).isEmpty();
+ }
+
+ private long agvOrder(){
+  return tx.execute(s->orders.accept(SITE,new OrderRequest("CHG",UUID.randomUUID().toString(),"AGV-A","AGV-B",
+   "CHG-"+UUID.randomUUID(),50),"test",null).order().id());
+ }
+
+ @Test void aBatteryJustBelowCriticalIsNotGivenWorkEvenBeforeItsLevelIsRecorded(){
+  simulate();
+  jdbc.update("UPDATE fleet.vehicle_profile SET assignment_enabled=FALSE WHERE site_id=? AND id=?",SITE,AGV2);
+  jdbc.update("UPDATE platform.site_operation SET auto_dispatch=TRUE WHERE site_id=?",SITE);
+  simulator.place(SITE,AGV1,201L);
+  simulator.setBattery(SITE,AGV1,15);
+  long id=agvOrder();
+  // The first pass dispatches before the charging part has recorded anything for AGV-01.
+  var pass=sweep.run(SITE,"test",null);
+  assertThat(pass.assigned()).doesNotContain(id);
+  assertThat(orders.find(SITE,id).orElseThrow().status()).isEqualTo(OrderStatus.QUEUED);
+  assertThat(level(AGV1)).isEqualTo(2);
+  assertThat(moveOf(AGV1)).hasValueSatisfying(r->assertThat(r.purpose()).isEqualTo(Relocation.CHARGE));
+ }
+
+ @Test void aVehicleToldToStartChargingIsNotGivenWork(){
+  simulate();
+  jdbc.update("UPDATE fleet.vehicle_profile SET assignment_enabled=FALSE WHERE site_id=? AND id=?",SITE,AGV2);
+  simulator.place(SITE,AGV1,212L);
+  simulator.setBattery(SITE,AGV1,35);
+  // Standing on its charge point: the pass only writes CHARGE_START; the vehicle is still idle.
+  sweep.run(SITE,"test",null);
+  assertThat(now(AGV1).status()).isEqualTo("IDLE");
+  assertThat(ledger.chargingVehicleIds(SITE)).contains(AGV1);
+  long id=agvOrder();
+  assertThatThrownBy(()->tx.execute(s->assignment.assign(SITE,id,"test",null)))
+   .isInstanceOf(TransportRejected.class);
+  assertThat(ledger.assignedVehicleIds(SITE)).doesNotContain(AGV1);
+ }
+
+ @Test void stoppingTheChargeKeepsTheControlModeTheVehicleIsIn(){
+  simulate();
+  jdbc.update("UPDATE fleet.vehicle_profile SET assignment_enabled=FALSE WHERE site_id=? AND id=?",SITE,AGV2);
+  simulator.place(SITE,AGV1,212L);
+  simulator.setBattery(SITE,AGV1,35);
+  for(int i=0;i<5&&!"CHARGING".equals(now(AGV1).status());i++) tick();
+  assertThat(now(AGV1).status()).isEqualTo("CHARGING");
+  // Somebody takes it to manual while it charges; then it is charged.
+  simulator.setState(SITE,AGV1,"MANUAL","CHARGING");
+  simulator.setBattery(SITE,AGV1,85);
+  for(int i=0;i<4;i++) tick();
+  assertThat(now(AGV1).status()).isEqualTo("IDLE");
+  assertThat(now(AGV1).mode()).isEqualTo("MANUAL");
  }
 }
