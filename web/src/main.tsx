@@ -21,6 +21,7 @@ import { DiagnosticsScreen } from './features/operations/DiagnosticsScreen';
 import { SignInScreen, SystemOptionsScreen } from './features/system/SystemOptionsScreen';
 import { EquipmentScreen } from './features/equipment/EquipmentScreen';
 import { HistoryScreen } from './features/history/HistoryScreen';
+import { useLive, type Live, type LiveParts } from './live';
 
 const REVISION_ID = 1;
 const ANONYMOUS: Session = { authenticated: false, code: 'anonymous', role: 'VIEWER', allows: [] };
@@ -32,6 +33,16 @@ type Loaded = {
   moves: VehicleMove[];
   headings: VehicleHeading[];
 };
+
+/** The live parts laid over what was read, under the names the screens use. */
+function withLive(d: Loaded, p: LiveParts): Loaded {
+  return {
+    ...d,
+    state: p.vehicles ?? d.state, holds: p.holds ?? d.holds, headings: p.headings ?? d.headings,
+    moves: p.moves ?? d.moves, assignments: p.assignments ?? d.assignments, orders: p.orders ?? d.orders,
+    deadlocks: p.deadlocks ?? d.deadlocks, zones: p.zones ?? d.zones, inDoubt: p.inDoubt ?? d.inDoubt,
+  };
+}
 
 /** One failing read must not blank the whole screen, so optional data falls back to empty. */
 const softly = <T,>(promise: Promise<T>, fallback: T) => promise.catch(() => fallback);
@@ -48,15 +59,24 @@ function App() {
   // Live screens follow the site by themselves; the reading keeps what is on screen until the
   // next answer arrives instead of blanking it.
   const [autoRefresh, setAutoRefresh] = React.useState(true);
+  // While the live feed is in step, what moves comes from it; the reading below then only keeps the
+  // rest (map, configuration, options) current, and never puts an older answer over a live one.
+  const live = useLive(autoRefresh);
+  const inStep = live.status === 'live';
+  const liveRef = React.useRef<Live>(live);
+  liveRef.current = live;
+  React.useEffect(() => {
+    if (inStep) setData(d => d ? withLive(d, live.parts) : d);
+  }, [live, inStep]);
   React.useEffect(() => {
     if (!autoRefresh) return;
-    const timer = setInterval(() => setReload(v => v + 1), 2000);
+    const timer = setInterval(() => setReload(v => v + 1), inStep ? 10000 : 2000);
     return () => clearInterval(timer);
-  }, [autoRefresh]);
-  // On the layout screen, vehicle positions are read more often than the rest so a vehicle driving
-  // between nodes is seen moving rather than jumping every two seconds.
+  }, [autoRefresh, inStep]);
+  // Without the live feed, on the layout screen vehicle positions are read more often than the rest
+  // so a vehicle driving between nodes is seen moving rather than jumping every two seconds.
   React.useEffect(() => {
-    if (!autoRefresh || menu !== 'fleet') return;
+    if (!autoRefresh || menu !== 'fleet' || inStep) return;
     let busy = false;
     const controller = new AbortController();
     const timer = setInterval(() => {
@@ -68,7 +88,7 @@ function App() {
         .finally(() => { busy = false; });
     }, 300);
     return () => { clearInterval(timer); controller.abort(); };
-  }, [autoRefresh, menu]);
+  }, [autoRefresh, menu, inStep]);
 
   React.useEffect(() => {
     const controller = new AbortController();
@@ -90,7 +110,9 @@ function App() {
       softly(get<VehicleHeading[]>(opsApi.vehicleHeadings(), signal), [] as VehicleHeading[]),
     ])
       .then(([map, vehicles, orders, state, holds, deadlocks, inDoubt, assignments, options, zones, moves, headings]) => {
-        setData({ map, vehicles, orders, state, holds, deadlocks, inDoubt, assignments, options, zones, moves, headings });
+        const read: Loaded = { map, vehicles, orders, state, holds, deadlocks, inDoubt, assignments, options, zones, moves, headings };
+        const now = liveRef.current;
+        setData(now.status === 'live' ? withLive(read, now.parts) : read);
         setLoadedAt(new Date());
       })
       .catch(cause => { if ((cause as Error).name !== 'AbortError') setError(cause); });
@@ -125,9 +147,22 @@ function App() {
                           inDoubt={data.inDoubt} onChanged={retry} />
                       : <MonitorScreen data={data} selected={selected} onSelect={setSelected}
                           layer={layer} onLayer={setLayer} loadedAt={loadedAt} onRetry={retry}
-                          autoRefresh={autoRefresh} onAutoRefresh={setAutoRefresh} />}
+                          autoRefresh={autoRefresh} onAutoRefresh={setAutoRefresh} live={live} />}
     </AppShell>
   );
+}
+
+/**
+ * Whether what is on screen is following the site. Out of step or disconnected is never shown as
+ * normal: the screen says it is reading every two seconds instead, or that it is not following at all.
+ */
+function LiveBadge(props: { live: Live; enabled: boolean }) {
+  const look = !props.enabled ? { tone: 'id', label: '갱신 꺼짐', title: '자동 갱신을 끄면 새로고침할 때만 바뀝니다.' }
+    : props.live.status === 'live' ? { tone: 'ok', label: `실시간 #${props.live.seq}`, title: '서버가 바뀐 내용을 바로 보냅니다. 번호가 이어지지 않으면 전체를 다시 받습니다.' }
+      : props.live.status === 'resyncing' ? { tone: 'wr', label: '재동기화 중', title: '빠진 변경이 있어 전체를 다시 받는 중입니다.' }
+        : props.live.status === 'connecting' ? { tone: 'wr', label: '실시간 연결 중', title: '연결되기 전까지 2초마다 조회합니다.' }
+          : { tone: 'er', label: '실시간 끊김 · 2초 조회', title: '실시간 연결이 끊겨 2초마다 조회합니다. 다시 연결을 시도합니다.' };
+  return <span style={{ marginLeft: 6 }} title={look.title}><Chip tone={look.tone}>{look.label}</Chip></span>;
 }
 
 const PAGES: Record<MenuKey | 'system' | 'signin', { title: string; subtitle: string; crumb: string }> = {
@@ -155,6 +190,7 @@ function MonitorScreen(props: {
   layer: 'all' | 'OHT' | 'AGV'; onLayer: (l: 'all' | 'OHT' | 'AGV') => void;
   loadedAt: Date | null; onRetry: () => void;
   autoRefresh: boolean; onAutoRefresh: (on: boolean) => void;
+  live: Live;
 }) {
   const { map, vehicles, state, orders, holds, assignments, deadlocks, options } = props.data;
   const [target, setTarget] = React.useState<number | null>(null);
@@ -195,8 +231,9 @@ function MonitorScreen(props: {
           <span className="d mono">{props.loadedAt ? props.loadedAt.toLocaleTimeString('ko-KR', { hour12: false }) : '—'}</span>
           <button type="button" onClick={props.onRetry} style={tiny}>새로고침</button>
           <label style={{ fontSize: 11, marginLeft: 6, display: 'inline-flex', gap: 4, alignItems: 'center' }}>
-            <input type="checkbox" checked={props.autoRefresh} onChange={e => props.onAutoRefresh(e.target.checked)} />자동 2초
-          </label></span>
+            <input type="checkbox" checked={props.autoRefresh} onChange={e => props.onAutoRefresh(e.target.checked)} />자동 갱신
+          </label>
+          <LiveBadge live={props.live} enabled={props.autoRefresh} /></span>
       </div>
 
       <div className="grid g-mon">

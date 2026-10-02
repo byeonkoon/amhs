@@ -379,3 +379,20 @@ migration V27로 운영 옵션에 운전 모드를 추가했다. `scripts/test-p
 
 - `ChargingSqlTest.aVehicleStartingToChargeIsNeitherSentHomeNorMovedAside`: 충전 지점 212, 35%에서 CHARGE_START 기록 → 명령 수락 처리, 차량은 아직 IDLE, 대기 시작 1시간 전, 홈 203 → 홈 복귀 없음.
 - 보완 전 코드로 같은 시험을 실행해 실패(홈 이동 생성)를 먼저 확인했다.
+
+## 2026-10-02 · 실시간 피드 (A08)
+
+`scripts/test-postgres.ps1`: **257개 통과, 실패·오류·skip 0**.
+
+- `LiveFeedSqlTest`(실제 WebSocket, 임의 포트):
+  - 두 화면이 같은 epoch·seq의 snapshot을 받는다. 차량 위치를 바꾸면 두 화면 모두 seq+1 delta를 받고, delta에는 바뀐 부분만 있다.
+  - 한 화면을 닫아도 다른 화면은 seq+2를 이어 받고, 차량 원장은 그대로다.
+  - resync는 현재 seq의 snapshot을 준다. 그 밖의 메시지는 무시된다.
+  - 조용하면 같은 seq의 heartbeat를 보낸다. 다시 접속하면 같은 epoch에서 더 큰 seq의 snapshot을 받는다.
+  - 다른 Origin과 사이트 번호가 아닌 경로는 거부된다.
+- 화면 판정(`applyLive`): Node로 12가지 경우를 확인했다. snapshot 전 delta 무시, 다음 번호 적용, 중복·지난 번호 버림(후퇴 없음), 번호 건너뜀·다른 epoch·앞선 heartbeat는 재동기화, 재동기화 대기 중 delta 무시, snapshot으로 복구.
+- 개발 서버(5173) 확인:
+  - 배지 `실시간 #n`. 4초 동안 차량 상태 조회 1회(이전에는 0.3초마다).
+  - 두 번째 탭도 같은 번호(#33). 탭을 닫아도 첫 탭은 계속된다.
+  - 서버를 내리면 오류 화면이 뜬다. 다시 올리면 새로고침 없이 새 epoch로 다시 붙는다(#15).
+  - Vite 프록시 경유 Origin 5173 → 101. 서버에 직접 Origin 5173 → 403.
