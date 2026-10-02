@@ -2,9 +2,9 @@ import React from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { STATUS_LABEL, type MapData, type VehicleSnapshot } from '../../api';
-import { AGV, CALL_OFF, CALL_ON, CARRIER_OFF, CARRIER_ON, OHT, layerOfNode, vehicleLook, callable } from './MapView';
-import { portTitle, segmentPoints, vehiclePlaces, vehiclePoint } from './geometry';
+import { STATUS_LABEL, type MapData, type NodeHold, type VehicleHeading, type VehicleSnapshot } from '../../api';
+import { AGV, CALL_OFF, CALL_ON, CARRIER_OFF, CARRIER_ON, DESTINATION, HELD, OHT, layerOfNode, vehicleLook, callable } from './MapView';
+import { nodeHeading, portTitle, segmentBetween, segmentPoints, vehiclePlaces, vehiclePoint } from './geometry';
 import { MotionBuffer } from './motion';
 
 /** Map coordinates are millimetres; the scene is in metres. */
@@ -25,6 +25,8 @@ type Props = {
   layer: Layer;
   targetNodeId?: number | null;
   onNodeSelect?: (nodeId: number) => void;
+  holds?: NodeHold[];
+  headings?: VehicleHeading[];
 };
 
 // ---- optional vehicle models ----
@@ -156,6 +158,8 @@ class World {
   private motion = new MotionBuffer();
   private places = new THREE.Group();
   private placesKey = '';
+  private overlays = new THREE.Group();
+  private overlaysKey = '';
   private pickable: THREE.Object3D[] = [];
   private centre = new THREE.Vector2();
   private span = 20;
@@ -519,7 +523,12 @@ class World {
         this.vehicles.set(v.id, obj);
         this.fleet.add(obj.group);
       }
-      if (!obj.placed) { obj.group.position.set(p.x, 0, p.z); obj.placed = true; }
+      if (!obj.placed) {
+        obj.group.position.set(p.x, 0, p.z); obj.placed = true;
+        // Until it is seen to move, it faces the way the track leaves the node it stands on.
+        const along = this.map ? nodeHeading(this.map, v.nodeId) : null;
+        if (along != null) { obj.yaw = obj.targetYaw = -along * Math.PI / 180; }
+      }
       const status = statusOf(v);
       const look = vehicleLook(v);
       const color = new THREE.Color(look.fill);
@@ -547,6 +556,68 @@ class World {
       this.fleet.remove(obj.group);
       disposeTree(obj.group);
       this.vehicles.delete(id);
+    }
+  }
+
+  /** Held nodes as a fluorescent band along the track; each way to a destination as a thin red line. */
+  setOverlays(holds: NodeHold[], headings: VehicleHeading[], layer: Layer) {
+    const key = layer + JSON.stringify(holds.map(h => [h.vehicleId, h.nodeId, h.sequence]))
+      + JSON.stringify(headings.map(h => [h.vehicleId, h.targetNodeId, h.remainingNodeIds]));
+    if (key === this.overlaysKey || !this.map) return;
+    this.overlaysKey = key;
+    this.overlays.parent?.remove(this.overlays);
+    disposeTree(this.overlays);
+    this.overlays = new THREE.Group();
+    this.scene.add(this.overlays);
+    const map = this.map;
+    const visible = (id: number) => layer === 'all' || layer === layerOfNode(map, id);
+    const lift = (id: number) => (layerOfNode(map, id) === 'OHT' ? RAIL + 0.1 : 0.03);
+    // Points along the track from one node to the next, at the height of that track.
+    const along = (ids: number[]) => {
+      const out: THREE.Vector3[] = [];
+      for (let i = 1; i < ids.length; i++) {
+        const a = map.nodes.find(n => n.id === ids[i - 1]), b = map.nodes.find(n => n.id === ids[i]);
+        const seg = segmentBetween(map, ids[i - 1], ids[i]);
+        if (!a || !b || !seg) continue;
+        for (const p of segmentPoints(a.x, a.y, b.x, b.y, seg.curveMm)) out.push(this.at(p.x, p.y, lift(ids[i])));
+      }
+      return out;
+    };
+    const glow = new THREE.MeshBasicMaterial({ color: HELD, transparent: true, opacity: 0.55, depthWrite: false });
+    const runs = new Map<number, NodeHold[]>();
+    for (const h of holds) runs.set(h.vehicleId, [...(runs.get(h.vehicleId) ?? []), h]);
+    for (const run of runs.values()) {
+      const ids = run.sort((a, b) => a.sequence - b.sequence).map(h => h.nodeId);
+      if (!ids.every(visible)) continue;
+      const pts = along(ids);
+      for (let i = 1; i < pts.length; i++) {
+        const a = pts[i - 1], b = pts[i];
+        const len = a.distanceTo(b);
+        if (len < 1e-3) continue;
+        const band = new THREE.Mesh(new THREE.BoxGeometry(len + 0.02, 0.05, 0.32), glow);
+        band.position.set((a.x + b.x) / 2, (a.y + b.y) / 2 + 0.01, (a.z + b.z) / 2);
+        band.rotation.y = Math.atan2(-(b.z - a.z), b.x - a.x);
+        this.overlays.add(band);
+      }
+      for (const id of ids) {
+        const n = map.nodes.find(x => x.id === id);
+        if (!n) continue;
+        const dot = new THREE.Mesh(new THREE.SphereGeometry(0.16, 12, 10), glow);
+        dot.position.copy(this.at(n.x, n.y, lift(id)));
+        this.overlays.add(dot);
+      }
+    }
+    const red = new THREE.LineBasicMaterial({ color: DESTINATION });
+    for (const h of headings) {
+      if (!visible(h.targetNodeId)) continue;
+      const pts = along(h.remainingNodeIds).map(p => p.clone().setY(p.y + 0.04));
+      if (pts.length > 1) this.overlays.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), red));
+      const goal = map.nodes.find(n => n.id === h.targetNodeId);
+      if (!goal) continue;
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(0.28, 0.03, 8, 40), new THREE.MeshBasicMaterial({ color: DESTINATION }));
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.copy(this.at(goal.x, goal.y, lift(goal.id) + 0.05));
+      this.overlays.add(ring);
     }
   }
 
@@ -670,7 +741,11 @@ export default function MapView3D(props: Props) {
     w.setLayout(p.map, p.layer);
     w.setVehicles(p.vehicles, p.selectedId, p.layer);
     w.setTarget(p.targetNodeId ?? null);
+    w.setOverlays(p.holds ?? [], p.headings ?? [], p.layer);
   }, [layoutKey, models]);
+  React.useEffect(() => {
+    world.current?.setOverlays(props.holds ?? [], props.headings ?? [], props.layer);
+  }, [props.holds, props.headings, props.layer]);
   React.useEffect(() => {
     world.current?.setVehicles(props.vehicles, props.selectedId, props.layer);
   }, [props.vehicles, props.selectedId, props.layer]);

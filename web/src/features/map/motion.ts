@@ -3,8 +3,11 @@ import type { MapData, VehicleSnapshot } from '../../api';
 import { vehiclePoint } from './geometry';
 
 type Sample = { t: number; x: number; y: number };
-/** A drawn position; heading is the direction of travel in degrees, as drawn on the plan (y down). */
-export type Placed = { x: number; y: number; heading: number };
+/**
+ * A drawn position; heading is the direction of travel in degrees, as drawn on the plan (y down),
+ * or null while the vehicle has not been seen to move (the caller then uses the track's direction).
+ */
+export type Placed = { x: number; y: number; heading: number | null };
 
 /**
  * Positions as they were reported, replayed a little behind real time so that every frame lies
@@ -55,7 +58,7 @@ export class MotionBuffer {
 
   /** Where to draw the vehicle at browser time `now`. */
   at(id: number, now = Date.now()): Placed | null {
-    const kept = this.heading.get(id) ?? 0;
+    const kept = this.heading.get(id) ?? null;
     const list = this.samples.get(id);
     if (!list || list.length === 0) {
       const p = this.placed.get(id);
@@ -69,7 +72,7 @@ export class MotionBuffer {
         const b = list[i + 1];
         if (!b) return { x: a.x, y: a.y, heading: kept };
         const f = (rt - a.t) / (b.t - a.t);
-        let heading = kept;
+        let heading: number | null = kept;
         if (b.x !== a.x || b.y !== a.y) {
           heading = Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI;
           this.heading.set(id, heading);
@@ -99,7 +102,7 @@ export function useSmoothPositions(map: MapData, vehicles: VehicleSnapshot[]) {
         if (p) next.set(v.id, p);
       }
       // Re-render only when something moved by more than a millimetre.
-      const key = [...next].map(([id, p]) => `${id}:${Math.round(p.x)}:${Math.round(p.y)}:${Math.round(p.heading)}`).join('|');
+      const key = [...next].map(([id, p]) => `${id}:${Math.round(p.x)}:${Math.round(p.y)}:${Math.round(p.heading ?? 0)}`).join('|');
       if (key !== previous) { previous = key; setFrame(next); }
       raf = requestAnimationFrame(tick);
     };

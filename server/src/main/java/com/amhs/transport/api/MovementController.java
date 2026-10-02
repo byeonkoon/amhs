@@ -47,6 +47,11 @@ class MovementController {
     ZoneEvacuation.Step stop(@PathVariable long siteId,@PathVariable long vehicleId) {
         return moves.stopMove(siteId,vehicleId);
     }
+    /** Where every vehicle with work or a move is going, and the nodes still ahead of it. */
+    @GetMapping("/vehicle-headings")
+    java.util.List<ZoneEvacuation.Heading> headings(@PathVariable long siteId) {
+        return moves.headings(siteId);
+    }
     /** Open moves without an order, so a screen can show who is being moved and offer to stop it. */
     @GetMapping("/vehicle-moves")
     java.util.List<com.amhs.transport.Relocation> openMoves(@PathVariable long siteId) {

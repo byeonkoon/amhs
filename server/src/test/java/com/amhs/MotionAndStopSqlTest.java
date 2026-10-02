@@ -288,6 +288,28 @@ class MotionAndStopSqlTest {
   assertThat(outbox.unresolvedForVehicle(SITE,OHT)).anyMatch(c->c.commandType().equals("STOP"));
  }
 
+ // ---- MORE on a move without an order ----
+
+ @Test void aLongMoveIsExtendedOnTheWayInsteadOfStoppingAtEachGrant(){
+  jdbc.update("UPDATE platform.site_operation SET node_count=4,more_remaining_nodes=2,more_min_remaining_nodes=0,"
+   +"more_enabled=TRUE,more_type='NODE',more_vehicle_signal=FALSE WHERE site_id=?",SITE);
+  jdbc.update("UPDATE platform.site_operation SET run_mode='SIMULATION' WHERE site_id=?",SITE);
+  simulator.place(SITE,OHT,118L);
+  tx.execute(s->moves.moveTo(SITE,OHT,105L));
+  int stops=0;
+  for(int i=0;i<60&&now().nodeId()!=105L;i++){
+   sweep.run(SITE,"test",null);
+   simulator.settle(SITE);
+   simulator.drive(SITE,1.0);
+   if("IDLE".equals(now().status())&&now().nodeId()!=105L) stops++;
+  }
+  assertThat(now().nodeId()).isEqualTo(105L);
+  // Eight nodes on grants of four: extended on the way, never stopped short of the target.
+  assertThat(stops).isZero();
+  assertThat(jdbc.queryForObject("SELECT count(*) FROM integration.command_outbox WHERE vehicle_id=? AND command_type='MORE'"
+   +" AND command_id LIKE 'relocation-%' AND created_at>now()-interval '5 minutes'",Integer.class,OHT)).isPositive();
+ }
+
  // ---- an operator stops their move ----
 
  @Test void stoppingAMoveThatNeverLeftEndsItWhereTheVehicleStands(){

@@ -216,7 +216,7 @@ public class ContinuousMovement {
   * little is left compared with a whole grant. Distance is measured between node coordinates
   * because this model stores no separate segment length; a real one would replace this.
   */
- private static boolean thresholdReached(MapSnapshot map,OperationOptions options,
+ static boolean thresholdReached(MapSnapshot map,OperationOptions options,
                                          List<Long> heldFromHere,List<Long> remainingRoute){
   if("NODE".equals(options.moreType())) return heldFromHere.size()-1<=options.moreRemainingNodes();
   var window=remainingRoute.subList(0,Math.min(remainingRoute.size(),options.nodeCount()));
@@ -231,7 +231,7 @@ public class ContinuousMovement {
  private static OffsetDateTime staleBefore(OperationOptions options){
   return OffsetDateTime.now().minusSeconds(options.positionStaleSeconds());
  }
- private static boolean isStopNode(MapSnapshot map,long nodeId){
+ static boolean isStopNode(MapSnapshot map,long nodeId){
   for(var node:map.nodes()) if(node.id()==nodeId) return node.stopNode();
   return false;
  }

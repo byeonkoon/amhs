@@ -133,6 +133,9 @@ public class ZoneEvacuation {
   if(vehicle.nodeId()==null) return none(vehicleId,"POSITION_UNKNOWN");
   if(!vehicle.reportedSince(cutoff)) return none(vehicleId,"POSITION_STALE");
   if(!vehicle.online()||!vehicle.remote()) return none(vehicleId,"VEHICLE_NOT_CONTROLLABLE");
+  // Driving on an open move: lengthen its authority the way an order's is (MORE), so it does not
+  // stop at the end of every grant.
+  if(relocation!=null&&"MOVING".equals(vehicle.effectiveStatus())) return extendMove(siteId,revisionId,vehicle,relocation);
   if(!vehicle.idle()) return none(vehicleId,"VEHICLE_MOVING");
   if(!outbox.unresolvedForVehicle(siteId,vehicleId).isEmpty()) return none(vehicleId,"COMMAND_OUTSTANDING");
   var held=traffic.heldBy(siteId,vehicleId);
@@ -211,6 +214,66 @@ public class ZoneEvacuation {
   for(ZoneOccupancy zone:traffic.zones(siteId))
    if(zone.enabled()&&zone.revisionId()==revisionId) for(Long node:zone.nodeIds()) zoneOf.put(node,zone.id());
   return step(siteId,revisionId,vehicleId,zoneOf,fleet.snapshot(siteId,revisionId),cutoff);
+ }
+
+ /**
+  * MORE for a move without an order, by the same rules as an order's: when it is enabled, the
+  * vehicle drives on what it holds, no command of it is unsettled, the vehicle accepts a changed
+  * destination where the site waits for that, the remaining authority has reached the threshold
+  * and is not below the floor, and it does not end at a stop node on purpose.
+  */
+ private Step extendMove(long siteId,long revisionId,VehicleSnapshot vehicle,Relocation relocation){
+  long vehicleId=vehicle.id();
+  var options=operations.get(siteId).settings();
+  if(!options.moreEnabled()) return none(vehicleId,"MORE_DISABLED");
+  if(!outbox.unresolvedForVehicle(siteId,vehicleId).isEmpty()) return none(vehicleId,"MORE_OUTSTANDING");
+  if(options.moreVehicleSignal()&&!Boolean.TRUE.equals(vehicle.destinationChangeEnabled()))
+   return none(vehicleId,"VEHICLE_NOT_ACCEPTING_CHANGE");
+  var held=traffic.heldBy(siteId,vehicleId);
+  int heldIndex=indexOfNode(held,vehicle.nodeId());
+  if(heldIndex<0) return none(vehicleId,"POSITION_OUTSIDE_AUTHORITY");
+  var route=relocation.routeNodeIds();
+  int at=route.indexOf(vehicle.nodeId());
+  if(at<0) return none(vehicleId,"POSITION_OFF_ROUTE");
+  var remaining=route.subList(at,route.size());
+  var heldFromHere=held.subList(heldIndex,held.size()).stream().map(NodeHold::nodeId).toList();
+  if(heldFromHere.size()>=remaining.size()) return none(vehicleId,"ROUTE_COMPLETE");
+  var map=topology.getMap(siteId,revisionId);
+  if(heldFromHere.size()>1&&ContinuousMovement.isStopNode(map,heldFromHere.getLast())) return none(vehicleId,"STOP_NODE_AHEAD");
+  if(heldFromHere.size()-1<options.moreMinRemainingNodes()) return none(vehicleId,"BELOW_MORE_FLOOR");
+  if(!ContinuousMovement.thresholdReached(map,options,heldFromHere,remaining)) return none(vehicleId,"NOT_NEEDED");
+  var grant=traffic.request(siteId,revisionId,vehicleId,null,remaining);
+  var added=new ArrayList<>(grant.nodeIds()); added.removeAll(heldFromHere);
+  if(added.isEmpty()) return none(vehicleId,grant.reason()==null?"NOTHING_TO_ADD":grant.reason());
+  String commandId="relocation-"+relocation.id()+"-more-seq-"+traffic.heldBy(siteId,vehicleId).getLast().sequence();
+  outbox.enqueueForVehicle(siteId,vehicleId,commandId,"MORE",payload(vehicle,relocation,grant,added));
+  return new Step(vehicleId,"EXTENDED",added,commandId);
+ }
+
+ /** Where each vehicle with an open move is going and the nodes still ahead of it on that move. */
+ public record Heading(long vehicleId,String purpose,long targetNodeId,List<Long> remainingNodeIds){}
+ @Transactional(readOnly=true)
+ public List<Heading> headings(long siteId){
+  long revisionId=ledger.activeRevision(siteId);
+  var where=new HashMap<Long,Long>();
+  for(var v:fleet.snapshot(siteId,revisionId)) if(v.nodeId()!=null) where.put(v.id(),v.nodeId());
+  var out=new ArrayList<Heading>();
+  for(var a:ledger.activeAssignments(siteId)){
+   var route=ledger.plannedRoute(a.orderId());
+   if(route.isEmpty()) continue;
+   int from=Math.max(0,Math.min(ledger.routeCursor(a.orderId()),route.size()-1));
+   Long at=where.get(a.vehicleId());
+   // The cursor follows the vehicle; if it lags, start where the vehicle actually is.
+   if(at!=null){ int i=route.subList(from,route.size()).indexOf(at); if(i>=0) from+=i; }
+   out.add(new Heading(a.vehicleId(),"ORDER",route.getLast(),List.copyOf(route.subList(from,route.size()))));
+  }
+  for(var r:ledger.openRelocations(siteId)){
+   var route=r.routeNodeIds();
+   Long at=where.get(r.vehicleId());
+   int from=at==null?0:Math.max(0,route.indexOf(at));
+   out.add(new Heading(r.vehicleId(),r.purpose(),r.targetNodeId(),List.copyOf(route.subList(from,route.size()))));
+  }
+  return out;
  }
 
  /**

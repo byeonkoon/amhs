@@ -58,3 +58,41 @@ export function vehiclePlaces(vehicles: VehicleSnapshot[], map?: MapData) {
   }
   return { home, charge };
 }
+
+/** The map segment joining two nodes in either direction; the curve is given as seen from a to b. */
+export function segmentBetween(map: MapData, a: number, b: number) {
+  for (const e of map.edges) {
+    if (e.fromNodeId === a && e.toNodeId === b) return { curveMm: e.curveMm ?? 0 };
+    if (e.fromNodeId === b && e.toNodeId === a) return { curveMm: -(e.curveMm ?? 0) };
+  }
+  return null;
+}
+
+/** One SVG path along consecutive nodes, following each segment's curve; breaks where no segment joins. */
+export function pathAlong(map: MapData, nodeIds: number[]): string {
+  const at = (id: number) => map.nodes.find(n => n.id === id);
+  let d = '';
+  for (let i = 1; i < nodeIds.length; i++) {
+    const a = at(nodeIds[i - 1]), b = at(nodeIds[i]);
+    const seg = segmentBetween(map, nodeIds[i - 1], nodeIds[i]);
+    if (!a || !b || !seg) continue;
+    d += ' ' + segmentPath(a.x, a.y, b.x, b.y, seg.curveMm);
+  }
+  return d.trim();
+}
+
+/**
+ * The direction of the track leaving a node, degrees as drawn on the plan (y down): the first
+ * segment out of it, taken at its start so a curve points the right way. Null when none leaves.
+ * A vehicle standing still faces this way; on a one-way rail every vehicle faces the same way.
+ */
+export function nodeHeading(map: MapData, nodeId: number | null): number | null {
+  if (nodeId == null) return null;
+  const a = map.nodes.find(n => n.id === nodeId);
+  const e = map.edges.find(x => x.fromNodeId === nodeId && x.enabled) ?? map.edges.find(x => x.fromNodeId === nodeId);
+  const b = e ? map.nodes.find(n => n.id === e.toNodeId) : undefined;
+  if (!a || !b || !e) return null;
+  const c = controlPoint(a.x, a.y, b.x, b.y, e.curveMm ?? 0);
+  const tx = (e.curveMm ? c.x : b.x) - a.x, ty = (e.curveMm ? c.y : b.y) - a.y;
+  return Math.atan2(ty, tx) * 180 / Math.PI;
+}

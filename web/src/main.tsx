@@ -6,7 +6,7 @@ import {
   api, cfgApi, explainDecision, freshness, get, getAs, hasWriteToken, opsApi, send, ApiError, MODE_LABEL, STATUS_LABEL,
   type AssignmentView, type Cfg, type Deadlock, type DeviceCommand, type MapData, type NodeHold,
   type OperationOptions, type Session, type TransportOrder, type Vehicle, type VehicleSnapshot,
-  type VehicleMove, type ZoneOccupancy,
+  type VehicleHeading, type VehicleMove, type ZoneOccupancy,
 } from './api';
 import { AppShell, type MenuKey, type ServerState } from './shell/AppShell';
 import { Chip, Empty, Failed, Loading } from './shell/States';
@@ -30,6 +30,7 @@ type Loaded = {
   holds: NodeHold[]; deadlocks: Deadlock[]; inDoubt: DeviceCommand[];
   assignments: AssignmentView[]; options: OperationOptions | null; zones: ZoneOccupancy[];
   moves: VehicleMove[];
+  headings: VehicleHeading[];
 };
 
 /** One failing read must not blank the whole screen, so optional data falls back to empty. */
@@ -86,9 +87,10 @@ function App() {
       softly(get<Cfg<OperationOptions>>(cfgApi.system(), signal).then(r => r.settings), null),
       softly(get<ZoneOccupancy[]>(opsApi.zones(), signal), [] as ZoneOccupancy[]),
       softly(get<VehicleMove[]>(opsApi.vehicleMoves(), signal), [] as VehicleMove[]),
+      softly(get<VehicleHeading[]>(opsApi.vehicleHeadings(), signal), [] as VehicleHeading[]),
     ])
-      .then(([map, vehicles, orders, state, holds, deadlocks, inDoubt, assignments, options, zones, moves]) => {
-        setData({ map, vehicles, orders, state, holds, deadlocks, inDoubt, assignments, options, zones, moves });
+      .then(([map, vehicles, orders, state, holds, deadlocks, inDoubt, assignments, options, zones, moves, headings]) => {
+        setData({ map, vehicles, orders, state, holds, deadlocks, inDoubt, assignments, options, zones, moves, headings });
         setLoadedAt(new Date());
       })
       .catch(cause => { if ((cause as Error).name !== 'AbortError') setError(cause); });
@@ -217,11 +219,11 @@ function MonitorScreen(props: {
             ? <Empty title="등록된 지도 노드가 없습니다" hint="이 지도 revision에 노드가 없습니다." />
             : mapMode === '3D'
               ? <React.Suspense fallback={<Loading what="3D 보기" />}>
-                  <MapView3D map={map} vehicles={state} selectedId={props.selected}
+                  <MapView3D map={map} vehicles={state} selectedId={props.selected} holds={holds} headings={props.data.headings}
                     onSelect={v => props.onSelect(v.id === props.selected ? null : v.id)} layer={props.layer}
                     targetNodeId={target} onNodeSelect={setTarget} />
                 </React.Suspense>
-              : <MapView map={map} vehicles={state} selectedId={props.selected}
+              : <MapView map={map} vehicles={state} selectedId={props.selected} holds={holds} headings={props.data.headings}
                   onSelect={v => props.onSelect(v.id === props.selected ? null : v.id)} layer={props.layer}
                   targetNodeId={target} onNodeSelect={setTarget} />}
           <MapLegend mode={mapMode} />

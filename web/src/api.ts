@@ -224,6 +224,8 @@ export type TrafficProgress = { vehicleId: number; nodeId: number; authorized: b
 export type VehicleReportResult = { vehicle: VehicleSnapshot; traffic?: TrafficProgress };
 
 /** One node a vehicle may occupy. sequence orders the run it was granted. */
+/** Where a vehicle with work or a move is going, and the nodes still ahead of it. */
+export type VehicleHeading = { vehicleId: number; purpose: string; targetNodeId: number; remainingNodeIds: number[] };
 export type NodeHold = {
   id: number; siteId: number; revisionId: number; nodeId: number;
   vehicleId: number; orderId: number | null; sequence: number; grantedAt: string;
@@ -288,6 +290,8 @@ export const opsApi = {
   stopMove: (vehicleId: number) => `/api/v1/sites/${SITE_ID}/vehicles/${vehicleId}/move/stop`,
   /** Open moves without an order: an operator's moves and moves out of a zone. */
   vehicleMoves: () => `/api/v1/sites/${SITE_ID}/vehicle-moves`,
+  /** Destination and remaining route of every vehicle with work or a move. */
+  vehicleHeadings: () => `/api/v1/sites/${SITE_ID}/vehicle-headings`,
   session: () => `/api/v1/session`,
 };
 

@@ -353,3 +353,12 @@ migration V27로 운영 옵션에 운전 모드를 추가했다. `scripts/test-p
 - OHT는 배터리 5%여도 요청·이동이 없다.
 
 브라우저·API 확인(확인용 DB): AGV-01 배터리를 35%로 넣으면 충전 지점 205로 이동한다. 도착 후 충전을 시작하고, 약 40초 뒤 83.1%에서 대기로 돌아온다. 차량 목록의 배터리 열과 지도 라벨을 확인했다.
+
+## 2026-10-02 · 작업 없는 이동의 MORE, 점유·목적지 표시
+
+`scripts/test-postgres.ps1`: **248개 통과, 실패·오류·skip 0**. `web npm run build` 성공.
+
+- `MotionAndStopSqlTest.aLongMoveIsExtendedOnTheWayInsteadOfStoppingAtEachGrant`: 허가 노드 수 4로 118→105(8노드) 수동 이동. 목표 전에 대기로 선 적 없음, `relocation-…` MORE 명령 발행.
+- 확인용 DB(허가 노드 수 6): OHT-01 수동 이동 120→112 중 1.5초 간격 상태가 101~110까지 계속 MOVING. 이전에는 허가마다 섰다.
+- 반송 MORE 확인: 긴 경로 작업(OHT-D→OHT-B)에서 실행 스윕 판정이 `NOT_NEEDED` 뒤 `EXTENDED`, 이후 `AUTHORIZED_TO_PICKUP`.
+- 화면: 이동 중 형광 점유 띠, 목적지까지 붉은 실선과 고리, 정지 OHT의 레일 방향 표시를 확인했다.

@@ -1,6 +1,6 @@
 import React from 'react';
-import { MODE_LABEL, STATUS_LABEL, type MapData, type VehicleSnapshot } from '../../api';
-import { portTitle, segmentPath, vehiclePlaces, vehiclePoint } from './geometry';
+import { MODE_LABEL, STATUS_LABEL, type MapData, type NodeHold, type VehicleHeading, type VehicleSnapshot } from '../../api';
+import { nodeHeading, pathAlong, portTitle, segmentPath, vehiclePlaces, vehiclePoint } from './geometry';
 import { useSmoothPositions } from './motion';
 
 export const OHT = '#1D6FD8';
@@ -16,6 +16,8 @@ export const VEHICLE_COLOR = {
   IDLE: '#D9D25B', MOVE: '#228B22', ALARM: '#FF0000', PAUSE: '#C0C0C0', CHARGE: '#FF00FF',
   LOAD: '#17F9F9', MANUAL: '#FF8000', DISCONNECTED: '#666463',
 } as const;
+/** Nodes a vehicle holds (its permitted road): fluorescent. Its way to the destination: a thin red line. */
+export const HELD = '#39FF14', DESTINATION = '#E11D48';
 /** Outline: green while the vehicle may be given work (callable), grey while it may not. */
 export const CALL_ON = '#16A34A', CALL_OFF = '#9AA5B1';
 /** Carrier mark: green with a carrier on board, the inactive colour without. */
@@ -86,6 +88,8 @@ export function MapView(props: {
   layer: 'all' | 'OHT' | 'AGV';
   targetNodeId?: number | null;
   onNodeSelect?: (nodeId: number) => void;
+  holds?: NodeHold[];
+  headings?: VehicleHeading[];
 }) {
   const { map, vehicles, layer } = props;
   const node = (id: number) => map.nodes.find(n => n.id === id);
@@ -208,6 +212,35 @@ export function MapView(props: {
           );
         })}
 
+        {/* What each vehicle holds, fluorescent; under it, its way to the destination, a thin red line. */}
+        {(() => {
+          const runs = new Map<number, NodeHold[]>();
+          for (const h of props.holds ?? []) runs.set(h.vehicleId, [...(runs.get(h.vehicleId) ?? []), h]);
+          return [...runs].map(([vehicleId, holds]) => {
+            const ids = holds.sort((a, b) => a.sequence - b.sequence).map(h => h.nodeId);
+            if (!ids.every(id => visible(typeOfNode(id)))) return null;
+            return (
+              <g key={`held-${vehicleId}`} pointerEvents="none">
+                <path d={pathAlong(map, ids)} fill="none" stroke={HELD} strokeWidth={130} strokeOpacity={0.55}
+                  strokeLinecap="round" strokeLinejoin="round" />
+                {ids.map(id => { const n = node(id); return n && <circle key={id} cx={n.x} cy={n.y} r={110} fill={HELD} fillOpacity={0.7} />; })}
+              </g>
+            );
+          });
+        })()}
+        {(props.headings ?? []).map(h => {
+          const goal = node(h.targetNodeId);
+          if (!goal || !visible(typeOfNode(h.targetNodeId))) return null;
+          return (
+            <g key={`dest-${h.vehicleId}`} pointerEvents="none">
+              <path d={pathAlong(map, h.remainingNodeIds)} fill="none" stroke={DESTINATION} strokeWidth={22}
+                strokeLinecap="round" strokeLinejoin="round" />
+              <circle cx={goal.x} cy={goal.y} r={170} fill="none" stroke={DESTINATION} strokeWidth={26} />
+              <circle cx={goal.x} cy={goal.y} r={45} fill={DESTINATION} />
+            </g>
+          );
+        })}
+
         {/* Where vehicles wait (대기) and charge (충전), as configured per vehicle. */}
         {(() => {
           const places = vehiclePlaces(vehicles, map);
@@ -233,7 +266,8 @@ export function MapView(props: {
           const drawn = smooth.get(v.id);
           const at = drawn ?? vehiclePoint(map, v);
           if (!at || !visible(v.vType)) return null;
-          const heading = drawn?.heading ?? 0;
+          // Moving: the way it goes. Standing and not yet seen to move: the way the track leaves its node.
+          const heading = drawn?.heading ?? nodeHeading(map, v.nodeId) ?? 0;
           const selected = props.selectedId === v.id;
           const status = v.status ?? (v.idle ? 'IDLE' : 'MOVING');
           const look = vehicleLook(v);
@@ -296,6 +330,8 @@ export function MapLegend({ mode = '2D' }: { mode?: '2D' | '3D' }) {
       {swatch(CALL_ON, '테두리: 작업 할당 가능')}{swatch(CALL_OFF, '테두리: 할당 불가')}
       <span className="li"><svg width="12" height="12"><circle cx="6" cy="6" r="5" fill={CARRIER_ON} stroke="#172231" strokeWidth="1" /></svg>화물 있음</span>
       <span className="li"><svg width="12" height="12"><circle cx="6" cy="6" r="5" fill={CARRIER_OFF} stroke="#172231" strokeWidth="1" /></svg>화물 없음</span>
+      <span className="li"><svg width="26" height="10"><line x1="1" y1="5" x2="25" y2="5" stroke={HELD} strokeWidth="6" strokeOpacity="0.6" strokeLinecap="round" /></svg>점유 경로</span>
+      <span className="li"><svg width="26" height="10"><line x1="1" y1="5" x2="21" y2="5" stroke={DESTINATION} strokeWidth="1.5" /><circle cx="23" cy="5" r="2.5" fill={DESTINATION} /></svg>목적지 경로</span>
       <span className="li"><svg width="16" height="10"><rect width="16" height="10" rx="2" fill="#5B6B7C" /></svg>대기 장소</span>
       <span className="li"><svg width="16" height="10"><rect width="16" height="10" rx="2" fill="#2E7D32" /></svg>충전 장소</span>
       <span className="li">R 원격 · S 반자동 · M 수동 · {mode === '3D'
