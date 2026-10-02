@@ -86,13 +86,9 @@ public class SimulatedVehicles {
    long revisionId=ledger.activeRevision(siteId);
    var state=fleet.find(siteId,revisionId,vehicleId).orElseThrow(()->new IllegalArgumentException("VEHICLE_NOT_FOUND"));
    if(state.nodeId()==null) throw new IllegalArgumentException("POSITION_UNKNOWN");
-   // Given back to the controller between two nodes, it is not idle: it carries on driving.
-   if(state.betweenNodes()&&"REMOTE".equalsIgnoreCase(mode)&&"IDLE".equalsIgnoreCase(status)) status="MOVING";
-   var stored=fleet.report(siteId,revisionId,vehicleId,
-    new VehicleReport(state.nodeId(),true,true,false,state.carrierPresent(),"SIMULATED",null,mode,status));
-   if(state.xMm()!=null&&state.yMm()!=null)
-    stored=fleet.reportBetweenNodes(siteId,revisionId,vehicleId,state.xMm(),state.yMm());
-   return stored;
+   // One statement: the place it is in, between nodes or on one, is never cleared on the way.
+   // Given back to the controller between two nodes it carries on driving, so it is stored moving.
+   return fleet.reportModeAndStatus(siteId,revisionId,vehicleId,mode,status);
   }
  }
  public boolean isSimulated(long vehicleId){ return vehicles.containsKey(vehicleId); }
@@ -262,10 +258,8 @@ public class SimulatedVehicles {
   // resetting: it stays put and keeps saying so until it is reported back to remote and idle.
   String mode=state.mode()==null?"REMOTE":state.mode();
   if(held(state)){
-   reportAs(siteId,sim.vehicleId(),at,mode,state.effectiveStatus(),sim.carrier());
-   // Stopped between two nodes, it is still there: the report keeps that place.
-   if(state.xMm()!=null&&state.yMm()!=null)
-    fleet.reportBetweenNodes(siteId,ledger.activeRevision(siteId),sim.vehicleId(),state.xMm(),state.yMm());
+   // Saying again that it is held, in one statement that keeps where it is, between nodes too.
+   fleet.reportModeAndStatus(siteId,ledger.activeRevision(siteId),sim.vehicleId(),mode,state.effectiveStatus());
    return new Step(sim.vehicleId(),"HELD_"+(!"REMOTE".equals(mode)?mode:state.effectiveStatus()),at);
   }
   int i=sim.authority().indexOf(at);

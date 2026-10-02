@@ -242,6 +242,52 @@ class MotionAndStopSqlTest {
    .isGreaterThan(Math.hypot(paused.xMm()-shape.ax(),paused.yMm()-shape.ay()));
  }
 
+ // ---- I1: a state change never passes through "no place" ----
+
+ private long version(){
+  return jdbc.queryForObject("SELECT version FROM fleet.vehicle_state WHERE site_id=? AND vehicle_id=?",Long.class,SITE,OHT);
+ }
+
+ @Test void aStateChangeOrAHeldReportIsOneWriteThatKeepsThePlace() throws Exception {
+  drivingFrom118();
+  long next=held().get(1);
+  var shape=SegmentShape.between(topology.getMap(SITE,REVISION),118L,next);
+  simulator.drive(SITE,shape.length()*0.4/2000.0);
+  var before=now();
+  long v0=version();
+  setStateLikeTheScreen("MANUAL","IDLE");
+  assertThat(version()).isEqualTo(v0+1);
+  assertThat(now().xMm()).isEqualTo(before.xMm());
+  assertThat(now().mode()).isEqualTo("MANUAL");
+  long v1=version();
+  simulator.settle(SITE);
+  assertThat(version()).isEqualTo(v1+1);
+  assertThat(now().xMm()).isEqualTo(before.xMm());
+ }
+
+ @Test void aStopDecidedWhileTheStateChangesNeverClosesTheMoveBetweenNodes() throws Exception {
+  drivingFrom118();
+  long next=held().get(1);
+  var shape=SegmentShape.between(topology.getMap(SITE,REVISION),118L,next);
+  simulator.drive(SITE,shape.length()*0.4/2000.0);
+  assertThat(tx.execute(t->moves.stopMove(SITE,OHT)).decision()).isEqualTo("MOVE_STOPPED_STOPPING");
+  var road=held();
+  // One thread changes the state back and forth while the other keeps deciding the stop.
+  var failure=new java.util.concurrent.atomic.AtomicReference<Throwable>();
+  var changer=new Thread(()->{
+   try{ for(int i=0;i<60;i++) simulator.setState(SITE,OHT,i%2==0?"MANUAL":"REMOTE",i%2==0?"IDLE":"PAUSED"); }
+   catch(Throwable e){ failure.set(e); }
+  });
+  changer.start();
+  for(int i=0;i<60;i++) tx.execute(t->moves.evacuateAll(SITE));
+  changer.join();
+  assertThat(failure.get()).isNull();
+  assertThat(now().betweenNodes()).isTrue();
+  assertThat(ledger.relocatingVehicleIds(SITE)).contains(OHT);
+  assertThat(held()).isEqualTo(road);
+  assertThat(outbox.unresolvedForVehicle(SITE,OHT)).anyMatch(c->c.commandType().equals("STOP"));
+ }
+
  // ---- an operator stops their move ----
 
  @Test void stoppingAMoveThatNeverLeftEndsItWhereTheVehicleStands(){

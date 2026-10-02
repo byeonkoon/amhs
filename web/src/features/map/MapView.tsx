@@ -8,6 +8,48 @@ export const AGV = '#9A4A9E';
 const PAD = 900;
 const MIN_SCALE = 1, MAX_SCALE = 12;
 
+/**
+ * Vehicle body colours, as the existing system paints them: idle, moving (also while extended),
+ * alarm, pause, charge, load and unload, manual, and a lost connection.
+ */
+export const VEHICLE_COLOR = {
+  IDLE: '#D9D25B', MOVE: '#228B22', ALARM: '#FF0000', PAUSE: '#C0C0C0', CHARGE: '#FF00FF',
+  LOAD: '#17F9F9', MANUAL: '#FF8000', DISCONNECTED: '#666463',
+} as const;
+/** Outline: green while the vehicle may be given work (callable), grey while it may not. */
+export const CALL_ON = '#16A34A', CALL_OFF = '#9AA5B1';
+/** Carrier mark: green with a carrier on board, the inactive colour without. */
+export const CARRIER_ON = '#22C55E', CARRIER_OFF = '#E0E3ED';
+
+/**
+ * The body colour and what it means. Under manual (or semi-automatic) control a vehicle is shown
+ * as manual, or as an alarm when it reports one (grey if it is also disconnected). Under remote
+ * control a disconnected vehicle is grey; otherwise the colour follows its status. RESET has no
+ * colour of its own in the existing system and is shown like a pause.
+ */
+export function vehicleLook(v: VehicleSnapshot): { fill: string; label: string } {
+  const mode = v.mode ?? (v.remote ? 'REMOTE' : 'MANUAL');
+  const status = v.status ?? (v.idle ? 'IDLE' : 'MOVING');
+  if (mode !== 'REMOTE') {
+    if (status === 'ERROR') return v.online ? { fill: VEHICLE_COLOR.ALARM, label: '알람' } : { fill: VEHICLE_COLOR.DISCONNECTED, label: '연결 끊김' };
+    return { fill: VEHICLE_COLOR.MANUAL, label: mode === 'SEMI_AUTO' ? '반자동' : '수동' };
+  }
+  if (!v.online) return { fill: VEHICLE_COLOR.DISCONNECTED, label: '연결 끊김' };
+  switch (status) {
+    case 'IDLE': return { fill: VEHICLE_COLOR.IDLE, label: '대기' };
+    case 'MOVING': return { fill: VEHICLE_COLOR.MOVE, label: '이동' };
+    case 'ERROR': return { fill: VEHICLE_COLOR.ALARM, label: '알람' };
+    case 'PAUSED': return { fill: VEHICLE_COLOR.PAUSE, label: '일시정지' };
+    case 'RESET': return { fill: VEHICLE_COLOR.PAUSE, label: '리셋' };
+    case 'CHARGING': return { fill: VEHICLE_COLOR.CHARGE, label: '충전' };
+    case 'LOADING': return { fill: VEHICLE_COLOR.LOAD, label: '적재' };
+    case 'UNLOADING': return { fill: VEHICLE_COLOR.LOAD, label: '하역' };
+    default: return { fill: VEHICLE_COLOR.PAUSE, label: status };
+  }
+}
+/** Whether work may be given to it: in use and allowed to take work. */
+export const callable = (v: VehicleSnapshot) => v.enabled && v.assignmentEnabled;
+
 /** Status colours: what an operator has to notice first is a fault, then a stop, then work. */
 export const STATUS_COLOR: Record<string, string> = {
   ERROR: '#C62828', PAUSED: '#E0A100', RESET: '#E0A100', CHARGING: '#2E7D32',
@@ -28,10 +70,11 @@ export function layerOfNode(map: MapData, id: number): 'OHT' | 'AGV' {
  * dashed for the floor route, and different vehicle shapes. They are never joined by an edge,
  * because the graphs themselves are not connected.
  *
- * Vehicles are drawn where they last reported, not where they were configured, with their status
- * as the outline colour, a dot when they carry, and their mode as a letter (R remote, S semi-auto,
- * M manual). Both kinds are boxes; the colour says which. Between nodes they are drawn where they
- * say they are and glide there. Segments may be curved. A port is named by its equipment. Nodes a
+ * Vehicles are drawn on the segment, at the point they report, turned the way they travel: the
+ * body colour is their state as the existing system paints it, the outline says whether they may
+ * be given work (green) or not (grey), the round mark in the middle whether they carry (green) or
+ * not, and the label their code and mode (R remote, S semi-auto, M manual). Positions are replayed
+ * smoothly from the reported track. Segments may be curved. A port is named by its equipment. Nodes a
  * vehicle waits at (대기) or charges at (충전) carry a tag. The wheel zooms around the pointer,
  * dragging pans, and a node can be picked as a target by clicking it.
  */
@@ -187,36 +230,46 @@ export function MapView(props: {
         })()}
 
         {vehicles.map(v => {
-          const at = smooth.get(v.id) ?? vehiclePoint(map, v);
+          const drawn = smooth.get(v.id);
+          const at = drawn ?? vehiclePoint(map, v);
           if (!at || !visible(v.vType)) return null;
-          // Drawn around the origin and moved into place, so a new position is a glide, not a jump.
-          const n = { x: 0, y: 0 };
+          const heading = drawn?.heading ?? 0;
           const selected = props.selectedId === v.id;
-          const fill = !v.online ? '#9AA5B1' : v.vType === 'OHT' ? OHT : AGV;
           const status = v.status ?? (v.idle ? 'IDLE' : 'MOVING');
-          const ring = STATUS_COLOR[status] ?? '#5B6B7C';
+          const look = vehicleLook(v);
+          const call = callable(v);
           const mode = v.mode === 'REMOTE' ? 'R' : v.mode === 'SEMI_AUTO' ? 'S' : v.mode === 'MANUAL' ? 'M' : '?';
-          const title = `${v.code} · ${MODE_LABEL[v.mode ?? ''] ?? '모드 불명'} · ${STATUS_LABEL[status] ?? status}`
-            + ` · ${v.carrierPresent ? '화물 있음' : '화물 없음'}${v.online ? '' : ' · 오프라인'}`;
+          const title = `${v.code} · ${MODE_LABEL[v.mode ?? ''] ?? '모드 불명'} · ${look.label}`
+            + ` · ${v.carrierPresent ? '화물 있음' : '화물 없음'} · ${call ? '작업 할당 가능' : '작업 할당 불가'}`;
+          // Body at its real place on the segment, about its real size, turned the way it travels.
+          const L = 1200, W = 760;
+          const label = `${v.code} ${mode}`;
+          const labelW = label.length * 125 + 120;
           return (
             <g key={v.id} role="button" tabIndex={0} aria-label={`${title} 상세 보기`}
               style={{ cursor: 'pointer', transform: `translate(${at.x}px, ${at.y}px)` }}
               onClick={() => { if (clicked()) props.onSelect(v); }}
               onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); props.onSelect(v); } }}>
               <title>{title}</title>
-              {/* Both kinds are the same box; OHT blue, AGV purple. The outline is the status. */}
-              <rect x={n.x - 340} y={n.y - 620} width={680} height={330} rx={50} fill={fill}
-                stroke={selected ? '#172231' : ring} strokeWidth={selected ? 40 : 34} />
-              <text x={n.x - 40} y={n.y - 410} textAnchor="middle" fontSize={140} fontWeight={800}
-                style={{ fill: '#fff' }}>{v.code}</text>
-              {/* Mode letter, top right; a filled dot when the vehicle carries something. */}
-              <text x={n.x + 255} y={n.y - 505} textAnchor="middle" fontSize={96} fontWeight={700} style={{ fill: '#fff' }}>{mode}</text>
-              {v.carrierPresent && <circle cx={n.x + 255} cy={n.y - 375} r={52} fill="#FFD54F" stroke="#172231" strokeWidth={12} />}
-              {status !== 'IDLE' && status !== 'MOVING' && (
-                <text x={n.x} y={n.y - 690} textAnchor="middle" fontSize={120} fontWeight={700} style={{ fill: ring }}>
-                  {STATUS_LABEL[status] ?? status}
-                </text>
-              )}
+              {selected && <circle r={880} fill="none" stroke="#1D6FD8" strokeWidth={36} strokeDasharray="90 60" />}
+              <g style={{ transform: `rotate(${heading}deg)` }}>
+                <rect x={-L / 2} y={-W / 2} width={L} height={W} rx={90} fill={look.fill}
+                  stroke={call ? CALL_ON : CALL_OFF} strokeWidth={70} />
+                {/* Front, so the direction of travel reads at a glance. */}
+                <path d={`M ${L / 2 - 230} ${-W / 2 + 120} L ${L / 2 - 90} 0 L ${L / 2 - 230} ${W / 2 - 120}`}
+                  fill="none" stroke="#172231" strokeOpacity={0.55} strokeWidth={46} strokeLinecap="round" strokeLinejoin="round" />
+              </g>
+              {/* Carrier on board: green; none: the inactive colour. */}
+              <circle r={200} fill={v.carrierPresent ? CARRIER_ON : CARRIER_OFF} stroke="#172231" strokeWidth={30} />
+              <g pointerEvents="none">
+                <rect x={-labelW / 2} y={-W / 2 - 520} width={labelW} height={300} rx={70} fill="#172231" fillOpacity={0.88} />
+                <text y={-W / 2 - 320} textAnchor="middle" fontSize={190} fontWeight={800} style={{ fill: '#fff' }}>{label}</text>
+                {status !== 'IDLE' && status !== 'MOVING' && (
+                  <text y={W / 2 + 300} textAnchor="middle" fontSize={170} fontWeight={800} style={{ fill: look.fill === VEHICLE_COLOR.PAUSE ? '#5B6B7C' : look.fill }}>
+                    {look.label}
+                  </text>
+                )}
+              </g>
             </g>
           );
         })}
@@ -229,14 +282,20 @@ export function MapLegend({ mode = '2D' }: { mode?: '2D' | '3D' }) {
   const swatch = (color: string, label: string) => (
     <span className="li"><svg width="14" height="12"><rect x="1" y="1" width="12" height="10" rx="2" fill="#fff" stroke={color} strokeWidth="2.5" /></svg>{label}</span>
   );
+  const fillSwatch = (color: string, label: string) => (
+    <span className="li"><svg width="14" height="12"><rect x="1" y="1" width="12" height="10" rx="2" fill={color} stroke="#5B6B7C" strokeWidth="0.8" /></svg>{label}</span>
+  );
   return (
     <div className="maplegend">
       <span className="li"><svg width="26" height="8"><line x1="0" y1="4" x2="26" y2="4" stroke={OHT} strokeWidth="3" /></svg>OHT 레일 · 천장</span>
       <span className="li"><svg width="26" height="8"><line x1="0" y1="4" x2="26" y2="4" stroke={AGV} strokeWidth="3" strokeDasharray="7 5" /></svg>AGV 주행로 · 바닥</span>
       <span className="li"><svg width="14" height="12"><rect x="0" y="1" width="14" height="10" rx="2" fill="#fff" stroke={OHT} strokeWidth="2" /></svg>포트</span>
-      {swatch(STATUS_COLOR.MOVING, '이동')}{swatch(STATUS_COLOR.IDLE, '대기')}{swatch(STATUS_COLOR.LOADING, '적재·하역')}
-      {swatch(STATUS_COLOR.CHARGING, '충전')}{swatch(STATUS_COLOR.PAUSED, '일시정지·리셋')}{swatch(STATUS_COLOR.ERROR, '에러')}
-      <span className="li"><svg width="12" height="12"><circle cx="6" cy="6" r="5" fill="#FFD54F" stroke="#172231" strokeWidth="1" /></svg>화물 있음</span>
+      {fillSwatch(VEHICLE_COLOR.IDLE, '대기')}{fillSwatch(VEHICLE_COLOR.MOVE, '이동')}{fillSwatch(VEHICLE_COLOR.LOAD, '적재·하역')}
+      {fillSwatch(VEHICLE_COLOR.CHARGE, '충전')}{fillSwatch(VEHICLE_COLOR.PAUSE, '일시정지')}{fillSwatch(VEHICLE_COLOR.ALARM, '알람')}
+      {fillSwatch(VEHICLE_COLOR.MANUAL, '수동')}{fillSwatch(VEHICLE_COLOR.DISCONNECTED, '연결 끊김')}
+      {swatch(CALL_ON, '테두리: 작업 할당 가능')}{swatch(CALL_OFF, '테두리: 할당 불가')}
+      <span className="li"><svg width="12" height="12"><circle cx="6" cy="6" r="5" fill={CARRIER_ON} stroke="#172231" strokeWidth="1" /></svg>화물 있음</span>
+      <span className="li"><svg width="12" height="12"><circle cx="6" cy="6" r="5" fill={CARRIER_OFF} stroke="#172231" strokeWidth="1" /></svg>화물 없음</span>
       <span className="li"><svg width="16" height="10"><rect width="16" height="10" rx="2" fill="#5B6B7C" /></svg>대기 장소</span>
       <span className="li"><svg width="16" height="10"><rect width="16" height="10" rx="2" fill="#2E7D32" /></svg>충전 장소</span>
       <span className="li">R 원격 · S 반자동 · M 수동 · {mode === '3D'

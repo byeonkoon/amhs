@@ -12,6 +12,12 @@ public interface FleetState {
      * also clears the coordinates again.
      */
     VehicleSnapshot reportBetweenNodes(long siteId, long revisionId, long vehicleId, double xMm, double yMm);
+    /**
+     * Mode and status only, in one statement on the vehicle's row: where it is (node or between
+     * nodes) and what it carries stay exactly as stored. Between two nodes a vehicle given back to
+     * remote control as idle is still on its way, so it is stored as moving.
+     */
+    VehicleSnapshot reportModeAndStatus(long siteId, long revisionId, long vehicleId, String mode, String status);
     /** A vehicle driving between nodes: where it is, and that it is moving, in one report. */
     VehicleSnapshot reportDriving(long siteId, long revisionId, long vehicleId, double xMm, double yMm);
     /** Locks the given vehicles in ascending id order so two assignments cannot deadlock. */

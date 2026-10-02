@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { STATUS_LABEL, type MapData, type VehicleSnapshot } from '../../api';
-import { AGV, OHT, STATUS_COLOR, layerOfNode } from './MapView';
+import { AGV, CALL_OFF, CALL_ON, CARRIER_ON, OHT, layerOfNode, vehicleLook, callable } from './MapView';
 import { portTitle, segmentPoints, vehiclePlaces, vehiclePoint } from './geometry';
 import { MotionBuffer } from './motion';
 
@@ -108,6 +108,7 @@ type VehicleObject = {
   group: THREE.Group;
   type: 'OHT' | 'AGV';
   shell: THREE.MeshStandardMaterial;
+  outline: THREE.LineBasicMaterial;
   band: THREE.MeshStandardMaterial;
   lamp: THREE.MeshStandardMaterial;
   marker: THREE.MeshBasicMaterial;
@@ -164,7 +165,8 @@ class World {
     host.appendChild(this.renderer.domElement);
     this.renderer.domElement.style.display = 'block';
 
-    this.scene.background = new THREE.Color('#E9EEF4');
+    // A mid-tone ground, so the white vehicles stand out from it.
+    this.scene.background = new THREE.Color('#C3CCD7');
     this.scene.add(new THREE.HemisphereLight('#ffffff', '#B8C2CE', 1.6));
     const sun = new THREE.DirectionalLight('#ffffff', 1.4);
     sun.position.set(-12, 25, 14);
@@ -241,12 +243,12 @@ class World {
     // Floor and grid, a metre per cell.
     const floorW = maxX - minX + 8, floorD = maxY - minY + 8;
     const floor = new THREE.Mesh(new THREE.PlaneGeometry(floorW, floorD),
-      new THREE.MeshStandardMaterial({ color: '#F7F9FB', roughness: 0.95 }));
+      new THREE.MeshStandardMaterial({ color: '#D3DAE2', roughness: 0.95 }));
     floor.rotation.x = -Math.PI / 2;
     floor.receiveShadow = true;
     this.layout.add(floor);
     const cells = Math.ceil(Math.max(floorW, floorD));
-    const grid = new THREE.GridHelper(cells, cells, '#C9D3E0', '#E1E7EE');
+    const grid = new THREE.GridHelper(cells, cells, '#AEB9C6', '#C2CBD5');
     grid.position.y = 0.002;
     this.layout.add(grid);
 
@@ -329,7 +331,7 @@ class World {
       const size = port.accessVehicleType === 'OHT' ? new THREE.Vector3(0.7, 0.9, 0.6) : new THREE.Vector3(0.8, 0.7, 0.6);
       if (port.accessVehicleType === 'AGV') base.z += 0.9;
       const box = new THREE.Mesh(new THREE.BoxGeometry(size.x, size.y, size.z),
-        new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.7 }));
+        new THREE.MeshStandardMaterial({ color: '#9FB0C3', roughness: 0.7 }));
       box.position.copy(base).setY(size.y / 2);
       box.castShadow = true; box.receiveShadow = true;
       const edges = new THREE.LineSegments(new THREE.EdgesGeometry(box.geometry), new THREE.LineBasicMaterial({ color }));
@@ -370,7 +372,10 @@ class World {
 
   private build(type: 'OHT' | 'AGV'): VehicleObject {
     const group = new THREE.Group();
-    const shell = new THREE.MeshStandardMaterial({ color: type === 'OHT' ? OHT : AGV, roughness: 0.45, metalness: 0.15 });
+    // Both kinds are white; the band, lamp and floor patch carry the state colour, the body's
+    // outline whether it may be given work.
+    const shell = new THREE.MeshStandardMaterial({ color: '#F6F8FA', roughness: 0.5, metalness: 0.05 });
+    const outline = new THREE.LineBasicMaterial({ color: CALL_OFF });
     const band = new THREE.MeshStandardMaterial({ color: '#5B6B7C', emissive: '#5B6B7C', emissiveIntensity: 0.6 });
     const lamp = new THREE.MeshStandardMaterial({ color: '#5B6B7C', emissive: '#5B6B7C', emissiveIntensity: 1.4 });
     const dark = new THREE.MeshStandardMaterial({ color: '#2A3542', roughness: 0.6 });
@@ -393,7 +398,9 @@ class World {
         const box = new THREE.Mesh(new THREE.BoxGeometry(l, h, w), shell);
         box.position.y = bottom + h / 2;
         box.castShadow = true;
-        body.add(box);
+        const edges = new THREE.LineSegments(new THREE.EdgesGeometry(box.geometry), outline);
+        edges.position.copy(box.position);
+        body.add(box, edges);
       }
       const ring = new THREE.Mesh(new THREE.BoxGeometry(l + 0.03, 0.07, w + 0.03), band);
       ring.position.y = bottom + 0.1;
@@ -412,7 +419,9 @@ class World {
         const box = new THREE.Mesh(new THREE.BoxGeometry(l, h, w), shell);
         box.position.y = lift + h / 2;
         box.castShadow = true;
-        body.add(box);
+        const edges = new THREE.LineSegments(new THREE.EdgesGeometry(box.geometry), outline);
+        edges.position.copy(box.position);
+        body.add(box, edges);
         for (const [x, z] of [[0.32, 0.36], [-0.32, 0.36], [0.32, -0.36], [-0.32, -0.36]]) {
           const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.06, 16), dark);
           wheel.rotation.x = Math.PI / 2;
@@ -433,7 +442,7 @@ class World {
     body.add(bulb);
     // The carrier: under the hoist for OHT, on the deck for AGV.
     const carrier = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.32, 0.34),
-      new THREE.MeshStandardMaterial({ color: '#FFD54F', roughness: 0.6 }));
+      new THREE.MeshStandardMaterial({ color: CARRIER_ON, roughness: 0.6 }));
     carrier.position.y = carrierY;
     carrier.castShadow = true;
     body.add(carrier);
@@ -451,7 +460,7 @@ class World {
     ring.visible = false;
     group.add(ring);
 
-    return { group, type, shell, band, lamp, marker, ring, carrier, label: null, labelKey: '', labelY,
+    return { group, type, shell, outline, band, lamp, marker, ring, carrier, label: null, labelKey: '', labelY,
       target: new THREE.Vector3(), yaw: 0, targetYaw: 0, placed: false };
   }
 
@@ -498,18 +507,19 @@ class World {
       }
       if (!obj.placed) { obj.group.position.set(p.x, 0, p.z); obj.placed = true; }
       const status = statusOf(v);
-      const color = new THREE.Color(STATUS_COLOR[status] ?? '#5B6B7C');
+      const look = vehicleLook(v);
+      const color = new THREE.Color(look.fill);
       obj.band.color.copy(color); obj.band.emissive.copy(color);
       obj.lamp.color.copy(color); obj.lamp.emissive.copy(color);
       obj.marker.color.copy(color);
-      obj.shell.color.set(!v.online ? '#9AA5B1' : v.vType === 'OHT' ? OHT : AGV);
+      obj.outline.color.set(callable(v) ? CALL_ON : CALL_OFF);
       obj.carrier.visible = v.carrierPresent;
       obj.ring.visible = selectedId === v.id;
-      const extra = status !== 'IDLE' && status !== 'MOVING' ? ` · ${STATUS_LABEL[status] ?? status}` : '';
-      const key = `${v.code} ${modeLetter(v)}${extra}${v.online ? '' : ' · 오프라인'}|${status}`;
+      const extra = status !== 'IDLE' && status !== 'MOVING' || !v.online ? ` · ${look.label}` : '';
+      const key = `${v.code} ${modeLetter(v)}${extra}|${look.fill}`;
       if (key !== obj.labelKey) {
         if (obj.label) { obj.group.remove(obj.label); disposeTree(obj.label); }
-        obj.label = makeLabel(key.split('|')[0], { dot: STATUS_COLOR[status] ?? '#5B6B7C', dark: true });
+        obj.label = makeLabel(key.split('|')[0], { dot: look.fill, dark: true });
         obj.label.position.y = obj.labelY;
         obj.group.add(obj.label);
         obj.labelKey = key;

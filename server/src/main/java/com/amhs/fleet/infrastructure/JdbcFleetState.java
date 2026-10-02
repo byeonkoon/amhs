@@ -53,6 +53,20 @@ class JdbcFleetState implements FleetState {
  }
 
  @Transactional
+ public VehicleSnapshot reportModeAndStatus(long siteId,long revisionId,long vehicleId,String mode,String status){
+  // The same names and checks as any report.
+  var checked=new VehicleReport(null,true,false,false,false,"SIMULATED",null,mode,status);
+  int changed=jdbc.update("UPDATE fleet.vehicle_state SET mode=?,remote=?,"
+   +"status=CASE WHEN x_mm IS NOT NULL AND ?='REMOTE' AND ?='IDLE' THEN 'MOVING' ELSE ? END,"
+   +"idle=(x_mm IS NULL AND ?='IDLE'),reported_at=clock_timestamp(),version=version+1"
+   +" WHERE site_id=? AND vehicle_id=? AND revision_id=? AND node_id IS NOT NULL",
+   checked.mode(),checked.remote(),checked.mode(),checked.status(),checked.status(),checked.status(),
+   siteId,vehicleId,revisionId);
+  if(changed==0) throw new IllegalArgumentException("POSITION_UNKNOWN");
+  return find(siteId,revisionId,vehicleId).orElseThrow();
+ }
+
+ @Transactional
  public VehicleSnapshot reportDriving(long siteId,long revisionId,long vehicleId,double xMm,double yMm){
   int changed=jdbc.update("UPDATE fleet.vehicle_state SET x_mm=?,y_mm=?,status='MOVING',idle=FALSE,"
    +"reported_at=clock_timestamp(),version=version+1 WHERE site_id=? AND vehicle_id=? AND revision_id=? AND node_id IS NOT NULL",

@@ -3,6 +3,8 @@ import type { MapData, VehicleSnapshot } from '../../api';
 import { vehiclePoint } from './geometry';
 
 type Sample = { t: number; x: number; y: number };
+/** A drawn position; heading is the direction of travel in degrees, as drawn on the plan (y down). */
+export type Placed = { x: number; y: number; heading: number };
 
 /**
  * Positions as they were reported, replayed a little behind real time so that every frame lies
@@ -14,8 +16,13 @@ type Sample = { t: number; x: number; y: number };
  * `delayMs` behind the browser's clock.
  */
 export class MotionBuffer {
+  /** Positions with the server's time of report. */
   private samples = new Map<number, Sample[]>();
+  /** Where vehicles nobody has reported yet are configured to be; they have no time on any clock. */
+  private placed = new Map<number, { x: number; y: number }>();
   private offset = Number.POSITIVE_INFINITY;
+  /** The last direction each vehicle was seen to travel, kept while it stands. */
+  private heading = new Map<number, number>();
 
   constructor(private delayMs = 600) {}
 
@@ -25,8 +32,12 @@ export class MotionBuffer {
       const p = vehiclePoint(map, v);
       if (!p) continue;
       seen.add(v.id);
-      const t = v.reportedAt ? Date.parse(v.reportedAt) : receivedAt;
-      if (Number.isFinite(t)) this.offset = Math.min(this.offset, receivedAt - t);
+      const t = v.reportedAt ? Date.parse(v.reportedAt) : Number.NaN;
+      // Only a real report says anything about the server's clock. A vehicle nobody has reported
+      // is drawn where it is configured, kept apart from the timed track.
+      if (!Number.isFinite(t)) { this.placed.set(v.id, p); continue; }
+      this.placed.delete(v.id);
+      this.offset = Math.min(this.offset, receivedAt - t);
       const list = this.samples.get(v.id) ?? [];
       const last = list[list.length - 1];
       if (last && t <= last.t) continue;
@@ -39,24 +50,34 @@ export class MotionBuffer {
       this.samples.set(v.id, list);
     }
     for (const id of [...this.samples.keys()]) if (!seen.has(id)) this.samples.delete(id);
+    for (const id of [...this.placed.keys()]) if (!seen.has(id)) this.placed.delete(id);
   }
 
   /** Where to draw the vehicle at browser time `now`. */
-  at(id: number, now = Date.now()): { x: number; y: number } | null {
+  at(id: number, now = Date.now()): Placed | null {
+    const kept = this.heading.get(id) ?? 0;
     const list = this.samples.get(id);
-    if (!list || list.length === 0) return null;
+    if (!list || list.length === 0) {
+      const p = this.placed.get(id);
+      return p ? { ...p, heading: kept } : null;
+    }
     const rt = now - (Number.isFinite(this.offset) ? this.offset : 0) - this.delayMs;
-    if (rt <= list[0].t) return { x: list[0].x, y: list[0].y };
+    if (rt <= list[0].t) return { x: list[0].x, y: list[0].y, heading: kept };
     for (let i = list.length - 1; i >= 0; i--) {
       const a = list[i];
       if (a.t <= rt) {
         const b = list[i + 1];
-        if (!b) return { x: a.x, y: a.y };
+        if (!b) return { x: a.x, y: a.y, heading: kept };
         const f = (rt - a.t) / (b.t - a.t);
-        return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f };
+        let heading = kept;
+        if (b.x !== a.x || b.y !== a.y) {
+          heading = Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI;
+          this.heading.set(id, heading);
+        }
+        return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f, heading };
       }
     }
-    return { x: list[0].x, y: list[0].y };
+    return { x: list[0].x, y: list[0].y, heading: kept };
   }
 }
 
@@ -66,19 +87,19 @@ export class MotionBuffer {
  */
 export function useSmoothPositions(map: MapData, vehicles: VehicleSnapshot[]) {
   const buffer = React.useRef(new MotionBuffer());
-  const [frame, setFrame] = React.useState<Map<number, { x: number; y: number }>>(new Map());
+  const [frame, setFrame] = React.useState<Map<number, Placed>>(new Map());
   React.useEffect(() => { buffer.current.push(map, vehicles); }, [map, vehicles]);
   React.useEffect(() => {
     let raf = 0;
     let previous = '';
     const tick = () => {
-      const next = new Map<number, { x: number; y: number }>();
+      const next = new Map<number, Placed>();
       for (const v of vehicles) {
         const p = buffer.current.at(v.id);
         if (p) next.set(v.id, p);
       }
       // Re-render only when something moved by more than a millimetre.
-      const key = [...next].map(([id, p]) => `${id}:${Math.round(p.x)}:${Math.round(p.y)}`).join('|');
+      const key = [...next].map(([id, p]) => `${id}:${Math.round(p.x)}:${Math.round(p.y)}:${Math.round(p.heading)}`).join('|');
       if (key !== previous) { previous = key; setFrame(next); }
       raf = requestAnimationFrame(tick);
     };
