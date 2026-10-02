@@ -115,8 +115,9 @@ public class LiveFeed implements DisposableBean {
   channel.passes++;
   var parts=new ArrayList<>(LiveSite.FAST);
   if(slow) parts.addAll(LiveSite.SLOW);
+  var reading=site.read(channel.siteId,parts);
   var changed=new LinkedHashMap<String,String>();
-  site.read(channel.siteId,parts).forEach((part,value)->{
+  reading.parts().forEach((part,value)->{
    String text=write(value);
    if(text!=null&&!text.equals(channel.last.get(part))) changed.put(part,text);
   });
@@ -124,7 +125,12 @@ public class LiveFeed implements DisposableBean {
    channel.seq++;
    channel.last.putAll(changed);
    broadcast(channel,message("delta",channel.seq,changed));
-  }else if(System.nanoTime()-channel.lastSentAt>=heartbeatMs*1_000_000L){
+  }
+  // What could not be read is said, not left to look like nothing changed. A screen that keeps
+  // calling itself live while the site cannot be read is showing the past as the present.
+  if(!reading.complete()){
+   broadcast(channel,message("stale",channel.seq,Map.of()));
+  }else if(changed.isEmpty()&&System.nanoTime()-channel.lastSentAt>=heartbeatMs*1_000_000L){
    broadcast(channel,message("heartbeat",channel.seq,Map.of()));
   }
  }
@@ -136,7 +142,9 @@ public class LiveFeed implements DisposableBean {
   var out=new StringBuilder(256);
   out.append("{\"type\":\"").append(type).append("\",\"epoch\":\"").append(epoch).append("\",\"seq\":").append(seq)
    .append(",\"at\":\"").append(OffsetDateTime.now()).append('"');
-  if(!"heartbeat".equals(type)){
+  // A heartbeat and a stale notice both carry no data: one says nothing changed, the other says
+  // nothing could be read.
+  if(!"heartbeat".equals(type)&&!"stale".equals(type)){
    out.append(",\"data\":{");
    boolean first=true;
    for(var e:parts.entrySet()){

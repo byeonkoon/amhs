@@ -46,6 +46,18 @@ public interface CommandOutbox {
      * the vehicle since {@code since} is reported.
      */
     VehicleWithdrawal withdrawForVehicle(long siteId, long vehicleId, String reason, java.time.OffsetDateTime since);
+
+    /**
+     * Takes back every movement the vehicle has not been sent, whether or not it belongs to an
+     * order, and marks the one being sent so a failed send ends WITHDRAWN rather than FAILED.
+     *
+     * <p>Commands for one vehicle leave in the order they were written, so a movement left FAILED
+     * holds back everything behind it — including the stop that was meant to settle the vehicle
+     * down. An order's movement is as much in the way as an order-less one, so both are covered
+     * here. Only movements are: a transfer the order is part-way through is a different decision
+     * and is not taken back on the strength of a vehicle being told to stop.
+     */
+    VehicleWithdrawal withdrawMovementForVehicle(long siteId, long vehicleId, String reason);
     /** Withdraws one command if it has not left yet (pending, or failed and waiting to be tried again). */
     void withdrawIfUnsent(String commandId, String reason);
     /**

@@ -84,6 +84,35 @@ class JdbcCommandOutbox implements CommandOutbox {
   return new VehicleWithdrawal(withdrawn,inFlight,delivered);
  }
 
+ /**
+  * Movements only, order-bound or not. A movement left FAILED blocks everything written after it
+  * for the same vehicle, so taking back an order's movement is what lets the stop behind it out.
+  */
+ @Transactional(propagation=Propagation.MANDATORY)
+ public VehicleWithdrawal withdrawMovementForVehicle(long siteId,long vehicleId,String reason){
+  record Row(CommandStatus status){}
+  var rows=jdbc.query("SELECT status FROM integration.command_outbox WHERE site_id=? AND vehicle_id=?"
+   +" AND command_type IN ('MOVE','MORE') ORDER BY id FOR UPDATE",
+   (r,n)->new Row(CommandStatus.valueOf(r.getString(1))),siteId,vehicleId);
+  int withdrawn=jdbc.update("UPDATE integration.command_outbox SET status='WITHDRAWN',settled_at=now(),"
+   +"last_outcome='WITHDRAWN',last_error=? WHERE site_id=? AND vehicle_id=?"
+   +" AND command_type IN ('MOVE','MORE') AND status IN ('PENDING','FAILED')",
+   truncate(reason),siteId,vehicleId);
+  // Being sent right now: the request is recorded so the send's own result decides. A send that
+  // provably failed ends WITHDRAWN; one that arrived keeps the vehicle's road until it stops.
+  jdbc.update("UPDATE integration.command_outbox SET withdraw_requested_at=now() WHERE site_id=? AND vehicle_id=?"
+   +" AND command_type IN ('MOVE','MORE') AND status='DISPATCHING' AND withdraw_requested_at IS NULL",siteId,vehicleId);
+  boolean inFlight=rows.stream().anyMatch(r->r.status()==CommandStatus.DISPATCHING||r.status()==CommandStatus.SENT);
+  boolean delivered=rows.stream().anyMatch(r->r.status()==CommandStatus.DISPATCHING
+   ||r.status()==CommandStatus.SENT||r.status()==CommandStatus.ACCEPTED);
+  return new VehicleWithdrawal(withdrawn,inFlight,delivered);
+ }
+
+ /** Reasons are stored for a person to read, and the column is not the place to lose a write over. */
+ private static String truncate(String reason){
+  return reason==null?null:reason.length()<=256?reason:reason.substring(0,256);
+ }
+
  @Transactional(propagation=Propagation.MANDATORY)
  public void withdrawIfUnsent(String commandId,String reason){
   jdbc.update("UPDATE integration.command_outbox SET status='WITHDRAWN',settled_at=now(),last_outcome='WITHDRAWN',last_error=?"

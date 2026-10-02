@@ -3,6 +3,7 @@ import com.amhs.traffic.*;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import java.time.OffsetDateTime;
 import java.util.*;
@@ -196,6 +197,21 @@ class JdbcTrafficControl implements TrafficControl {
   Long next=kept.size()<wanted.size()?wanted.get(kept.size()):null;
   return new ReservationGrant(vehicleId,kept,next==null,next,null,next==null?null:"DEADLOCK_RECOVERY");
  }
+
+ /**
+  * An advisory lock rather than a row: what is being guarded is the decision, which has no row of
+  * its own until it is made. It is held to the end of the transaction, so the plans read after it
+  * are the plans the decision is made on.
+  */
+ @Transactional(propagation=Propagation.MANDATORY)
+ public void lockRecoveryDecisions(long siteId){
+  // One bigint key rather than the two-int form: a bare parameter leaves the server unable to tell
+  // the overloads apart. The lock returns nothing, so the row is read and discarded.
+  jdbc.query("SELECT pg_advisory_xact_lock(?)",(r,n)->null,
+   (RECOVERY_LOCK_NAMESPACE<<32)|(siteId&0xFFFF_FFFFL));
+ }
+ /** Any constant distinct from other advisory lock users; nothing else in this system takes one. */
+ private static final long RECOVERY_LOCK_NAMESPACE=0x414D_4853L;
 
  @Transactional(readOnly=true)
  public List<DeadlockPlan> deadlockPlans(long siteId){

@@ -64,6 +64,16 @@ public interface TrafficControl {
     /** Every vehicle at the site waiting for a node another vehicle holds or stands on now. */
     List<WaitingFor> waitingFor(long siteId);
 
+    /**
+     * Serialises recovery decisions for this site until the transaction ends.
+     *
+     * <p>One recovery per chain is a statement about the chain, and a chain has several vehicles.
+     * Locking the vehicle somebody named is not enough: two requests naming different vehicles of
+     * the same chain lock different rows, both read that nothing is open, and both start one.
+     * Taken before any vehicle or node lock, so it introduces no new ordering to get wrong.
+     */
+    void lockRecoveryDecisions(long siteId);
+
     /** Every deadlock at this site with its links, and which vehicles could give way to break it. */
     List<DeadlockPlan> deadlockPlans(long siteId);
     /** Open recoveries at this site and the most recent finished ones, newest first. */

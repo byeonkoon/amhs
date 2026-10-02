@@ -49,22 +49,36 @@ class LiveSite {
  }
 
  /**
-  * The named parts as they are now. A part that cannot be read is left out, so the screen keeps
-  * what it had for that part rather than being told it became empty.
+  * What was read, and what could not be.
+  *
+  * <p>A part that cannot be read is left out so the screen keeps what it had rather than being
+  * told it became empty — but it is also named here. Leaving it out silently makes a failed read
+  * look exactly like a read where nothing changed, and the screen then goes on calling data that
+  * cannot be refreshed current.
   */
- Map<String,Object> read(long siteId,java.util.Collection<String> parts){
+ record Reading(Map<String,Object> parts,java.util.List<String> failed){
+  boolean complete(){ return failed.isEmpty(); }
+ }
+
+ /** The named parts as they are now, with the ones that could not be read reported as such. */
+ Reading read(long siteId,java.util.Collection<String> parts){
   var out=new LinkedHashMap<String,Object>();
+  var failed=new java.util.ArrayList<String>();
   try{
    tx.executeWithoutResult(status->{
     for(String part:parts){
      try{ out.put(part,reads.get(part).apply(siteId)); }
-     catch(RuntimeException e){ LiveFeed.log.debug("live read {} failed for site {}: {}",part,siteId,e.getMessage()); }
+     catch(RuntimeException e){
+      failed.add(part);
+      LiveFeed.log.debug("live read {} failed for site {}: {}",part,siteId,e.getMessage());
+     }
     }
    });
   }catch(RuntimeException e){
-   // Nothing was written, so a failed commit changes nothing about what was read.
+   // The transaction itself could not run, so nothing was read at all — not "nothing changed".
+   for(String part:parts) if(!out.containsKey(part)&&!failed.contains(part)) failed.add(part);
    LiveFeed.log.debug("live read for site {} ended badly: {}",siteId,e.getMessage());
   }
-  return out;
+  return new Reading(out,java.util.List.copyOf(failed));
  }
 }

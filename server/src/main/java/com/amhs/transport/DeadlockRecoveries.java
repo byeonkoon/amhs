@@ -49,6 +49,12 @@ public class DeadlockRecoveries {
  public DeadlockRecovery start(long siteId,long vehicleId,String reason,String actor){
   if(reason==null||reason.isBlank())
    throw new TransportRejected("REASON_REQUIRED","say why this vehicle gives way (X-Amhs-Reason)",false);
+  // One recovery per chain is a decision about the chain, not about the vehicle, so the boundary
+  // has to be the chain too. Locking only the chosen vehicle lets two requests naming different
+  // vehicles of the same chain each read "no recovery open" and each start one, and both vehicles
+  // give way. The decision is serialised per site and the plans are read inside it; the site lock
+  // is taken before any vehicle or node lock, so it adds no new order to get wrong.
+  traffic.lockRecoveryDecisions(siteId);
   fleet.lockForAssignment(siteId,List.of(vehicleId));
   var plan=traffic.deadlockPlans(siteId).stream().filter(p->p.vehicleIds().contains(vehicleId)).findFirst()
    .orElseThrow(()->new TransportRejected("NOT_IN_DEADLOCK","the vehicle is not part of a deadlock now",true));
@@ -63,14 +69,10 @@ public class DeadlockRecoveries {
   if(!vehicle.online()||!vehicle.remote())
    throw new TransportRejected("VEHICLE_NOT_CONTROLLABLE","the vehicle is offline or not under remote control",true);
 
-  // Movement it has not been sent yet is taken back; what it may already have keeps its road until it stops.
-  for(var a:ledger.activeAssignments(siteId)){
-   if(a.vehicleId()!=vehicleId) continue;
-   for(String type:List.of("MOVE","MORE"))
-    for(var c:outbox.unresolved(siteId,a.orderId(),type))
-     if(c.status()==CommandStatus.PENDING||c.status()==CommandStatus.FAILED) outbox.withdrawIfUnsent(c.commandId(),"DEADLOCK_RECOVERY");
-  }
-  outbox.withdrawForVehicle(siteId,vehicleId,"DEADLOCK_RECOVERY",java.time.OffsetDateTime.now());
+  // Movement it has not been sent yet is taken back; what it may already have keeps its road until
+  // it stops. An order's movement counts: commands for one vehicle leave in the order they were
+  // written, so a movement left behind holds back the stop that was meant to follow it.
+  outbox.withdrawMovementForVehicle(siteId,vehicleId,"DEADLOCK_RECOVERY");
   String stopId="deadlock-recovery-"+vehicleId+"-"+UUID.randomUUID().toString().substring(0,8)+"-stop";
   DeadlockRecovery recovery;
   try{

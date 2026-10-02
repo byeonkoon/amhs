@@ -170,6 +170,9 @@ function App() {
 function LiveBadge(props: { live: Live; enabled: boolean }) {
   const look = !props.enabled ? { tone: 'id', label: '갱신 꺼짐', title: '자동 갱신을 끄면 새로고침할 때만 바뀝니다.' }
     : props.live.status === 'live' ? { tone: 'ok', label: `실시간 #${props.live.seq}`, title: '서버가 바뀐 내용을 바로 보냅니다. 번호가 이어지지 않으면 전체를 다시 받습니다.' }
+      // Connected and in step, but the server said it could not read the site: what is shown is the
+      // last thing it could read, so it must not be presented as the present.
+      : props.live.status === 'stale' ? { tone: 'er', label: '조회 불가 · 과거 상태', title: '연결은 되어 있지만 서버가 사이트를 읽지 못했습니다. 화면의 내용은 마지막으로 읽힌 상태이며 현재가 아닙니다.' }
       : props.live.status === 'resyncing' ? { tone: 'wr', label: '재동기화 중', title: '빠진 변경이 있어 전체를 다시 받는 중입니다.' }
         : props.live.status === 'connecting' ? { tone: 'wr', label: '실시간 연결 중', title: '연결되기 전까지 2초마다 조회합니다.' }
           : { tone: 'er', label: '실시간 끊김 · 2초 조회', title: '실시간 연결이 끊겨 2초마다 조회합니다. 다시 연결을 시도합니다.' };

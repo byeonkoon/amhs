@@ -10,8 +10,13 @@ export type LiveParts = Partial<{
   moves: VehicleMove[]; assignments: AssignmentView[]; orders: TransportOrder[]; deadlocks: Deadlock[];
   zones: ZoneOccupancy[]; inDoubt: DeviceCommand[]; deadlockPlans: DeadlockPlan[]; recoveries: DeadlockRecovery[];
 }>;
+/**
+ * `stale` says the server could not read part of the site. It is not `heartbeat`: a heartbeat means
+ * nothing changed, which is a statement about the site; this one is a statement about the server's
+ * ability to look at it, and the screen must stop calling what it shows current.
+ */
 export type LiveMessage = {
-  type: 'snapshot' | 'delta' | 'heartbeat'; epoch: string; seq: number; at: string; data?: LiveParts;
+  type: 'snapshot' | 'delta' | 'heartbeat' | 'stale'; epoch: string; seq: number; at: string; data?: LiveParts;
 };
 /** Where a screen stands: the server run (epoch) and number it has applied, and whether it is in step. */
 export type LiveState = { epoch: string | null; seq: number; parts: LiveParts; synced: boolean };
@@ -31,14 +36,21 @@ export function applyLive(state: LiveState, msg: LiveMessage): { state: LiveStat
   if (!state.synced) return { state, resync: false, changed: false };
   const outOfStep = { state: { ...state, synced: false }, resync: true, changed: false };
   if (msg.epoch !== state.epoch) return outOfStep;
+  // Neither carries data. A heartbeat still confirms the server read the site; a stale notice says
+  // it could not, so it never counts as being in step.
   if (msg.type === 'heartbeat') return msg.seq > state.seq ? outOfStep : { state, resync: false, changed: false };
+  if (msg.type === 'stale') return msg.seq > state.seq ? outOfStep : { state, resync: false, changed: false };
   if (msg.seq <= state.seq) return { state, resync: false, changed: false };
   if (msg.seq !== state.seq + 1) return outOfStep;
   return { state: { ...state, seq: msg.seq, parts: { ...state.parts, ...(msg.data ?? {}) } }, resync: false, changed: true };
 }
 
-/** live: in step with the server. resyncing: asked again, waiting. down: no connection; trying again. */
-export type LiveStatus = 'connecting' | 'live' | 'resyncing' | 'down';
+/**
+ * live: in step with the server. resyncing: asked again, waiting. down: no connection; trying
+ * again. stale: connected and in step, but the server said it could not read the site, so what is
+ * on screen is the last thing it could read and not the present.
+ */
+export type LiveStatus = 'connecting' | 'live' | 'resyncing' | 'down' | 'stale';
 export type Live = { status: LiveStatus; parts: LiveParts; seq: number; at: Date | null };
 
 const SILENCE_MS = 12_000;     // the server sends at least a heartbeat every 5 s
@@ -81,6 +93,9 @@ export function useLive(enabled: boolean): Live {
           askedAt = Date.now();
           try { ws.send(JSON.stringify({ type: 'resync' })); } catch { ws.close(); }
           publish('resyncing');
+        } else if (msg.type === 'stale') {
+          // The connection is fine and the numbers line up; the site is what could not be read.
+          publish('stale');
         } else if (step.changed) {
           askedAt = 0;
           publish('live');
