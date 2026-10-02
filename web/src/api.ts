@@ -130,14 +130,28 @@ export const cfgApi = {
   /** Site-wide options: not one machine's parameters, so they sit apart and need ADMIN. */
   system: () => `/api/v1/sites/${SITE_ID}/configuration/system`,
   vdaProfiles: () => `/api/v1/sites/${SITE_ID}/configuration/vda-profiles`,
+  /** Who may do what. ADMIN, and the issued token appears only in the reply that issues it. */
+  accounts: () => `/api/v1/sites/${SITE_ID}/configuration/accounts`,
 };
+
+/**
+ * An account as it may be shown. It carries neither the token nor its hash: `hasToken` says one
+ * was issued, which is all a screen needs, because the token is readable only once at issue.
+ */
+export type AccountView = {
+  id: number; siteId: number; code: string; displayName: string; role: Role;
+  enabled: boolean; hasToken: boolean; version: number;
+};
+export type AccountSettings = { code: string; displayName: string; role: Role; enabled: boolean };
+/** The one place a token ever appears. Show it once; it cannot be fetched again. */
+export type IssuedAccount = { account: AccountView; token: string };
 
 /** Write token is kept in memory only: it is never stored and never rendered back. */
 let writeToken: string | null = null;
 export const setWriteToken = (v: string | null) => { writeToken = v && v.trim() ? v.trim() : null; };
 export const hasWriteToken = () => writeToken !== null;
 
-export async function send<T>(url: string, method: 'POST' | 'PUT', body: unknown, reason?: string,
+export async function send<T>(url: string, method: 'POST' | 'PUT' | 'DELETE', body: unknown, reason?: string,
   extraHeaders?: Record<string, string>): Promise<T> {
   if (!writeToken) throw new ApiError(401, url, '설정 변경 토큰이 없습니다. 먼저 토큰을 입력해 주세요.');
   const res = await fetch(url, {

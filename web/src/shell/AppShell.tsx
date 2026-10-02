@@ -165,7 +165,7 @@ function AccountMenu({ session, onSelect }: { session: Session; onSelect: (item:
           <button type="button" role="menuitem" disabled={!may('system')} onClick={() => pick('system')}>
             시스템 옵션<span className="lv">ADMIN</span>
           </button>
-          <button type="button" role="menuitem" disabled title="계정 관리 화면은 아직 구현하지 않았습니다.">
+          <button type="button" role="menuitem" disabled={!may('accounts')} onClick={() => pick('accounts')}>
             계정·권한<span className="lv">ADMIN</span>
           </button>
           <div className="sep" />

@@ -19,11 +19,15 @@ import { TransportScreen } from './features/transport/TransportScreen';
 import { TrafficScreen } from './features/traffic/TrafficScreen';
 import { DiagnosticsScreen } from './features/operations/DiagnosticsScreen';
 import { SignInScreen, SystemOptionsScreen } from './features/system/SystemOptionsScreen';
+import { AccountsScreen } from './features/system/AccountsScreen';
 import { EquipmentScreen } from './features/equipment/EquipmentScreen';
 import { HistoryScreen } from './features/history/HistoryScreen';
 import { useLive, type Live, type LiveParts } from './live';
 
 const REVISION_ID = 1;
+/** Pages reached from the account menu rather than the sidebar, so no sidebar entry is current. */
+type AccountPage = 'system' | 'accounts' | 'signin';
+const ACCOUNT_PAGES = new Set<string>(['system', 'accounts', 'signin']);
 const ANONYMOUS: Session = { authenticated: false, code: 'anonymous', role: 'VIEWER', allows: [] };
 
 type Loaded = {
@@ -50,7 +54,7 @@ function withLive(d: Loaded, p: LiveParts): Loaded {
 const softly = <T,>(promise: Promise<T>, fallback: T) => promise.catch(() => fallback);
 
 function App() {
-  const [menu, setMenu] = React.useState<MenuKey | 'system' | 'signin'>('fleet');
+  const [menu, setMenu] = React.useState<MenuKey | AccountPage>('fleet');
   const [data, setData] = React.useState<Loaded | null>(null);
   const [error, setError] = React.useState<unknown>(null);
   const [session, setSession] = React.useState<Session>(ANONYMOUS);
@@ -130,15 +134,16 @@ function App() {
   const page = PAGES[menu];
 
   return (
-    <AppShell active={menu === 'system' || menu === 'signin' ? 'overview' : menu}
+    <AppShell active={ACCOUNT_PAGES.has(menu) ? 'overview' : (menu as MenuKey)}
       onSelect={k => { setMenu(k); setSelected(null); }}
-      onAccount={item => setMenu(item === 'accounts' ? 'system' : item)}
+      onAccount={setMenu}
       session={session} runMode={data?.options?.runMode ?? null}
       crumb={['Home', page.crumb, page.title]} title={page.title} subtitle={page.subtitle} server={server}>
       {menu === 'signin' ? <SignInScreen onChanged={retry} />
         : error ? <div className="card"><Failed error={error} onRetry={retry} /></div>
           : !data ? <div className="card"><Loading what={page.title} /></div>
             : menu === 'system' ? <SystemOptionsScreen session={session} />
+              : menu === 'accounts' ? <AccountsScreen session={session} />
               : menu === 'resources' ? <ConfigurationScreen map={data.map} session={session} />
               : menu === 'equipment' ? <EquipmentScreen session={session} revisionId={REVISION_ID} />
               : menu === 'history' ? <HistoryScreen map={data.map} />
@@ -171,7 +176,7 @@ function LiveBadge(props: { live: Live; enabled: boolean }) {
   return <span style={{ marginLeft: 6 }} title={look.title}><Chip tone={look.tone}>{look.label}</Chip></span>;
 }
 
-const PAGES: Record<MenuKey | 'system' | 'signin', { title: string; subtitle: string; crumb: string }> = {
+const PAGES: Record<MenuKey | AccountPage, { title: string; subtitle: string; crumb: string }> = {
   overview: { title: '개요', subtitle: 'Overview · Status / KPI', crumb: 'Overview' },
   fleet: { title: '운전 현황', subtitle: 'Fleet · Map / Vehicles / Jobs', crumb: 'Fleet' },
   resources: { title: '자원 구성', subtitle: 'Resources · Vehicle / Node / Segment / Port', crumb: 'Resources' },
@@ -183,6 +188,7 @@ const PAGES: Record<MenuKey | 'system' | 'signin', { title: string; subtitle: st
   history: { title: '이력', subtitle: 'History · Log / Trace', crumb: 'History' },
   diagnostics: { title: '장비 명령·상태 보고', subtitle: 'Diagnostics · Health / Recovery', crumb: 'Diagnostics' },
   system: { title: '시스템 옵션', subtitle: 'System · Site-wide options', crumb: 'Account' },
+  accounts: { title: '계정·권한', subtitle: 'Accounts · Who may do what', crumb: 'Account' },
   signin: { title: '접속 토큰', subtitle: 'Session · Access token', crumb: 'Account' },
 };
 
