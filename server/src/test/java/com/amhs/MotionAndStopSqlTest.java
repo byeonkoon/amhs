@@ -47,7 +47,8 @@ class MotionAndStopSqlTest {
   jdbc.update("DELETE FROM fleet.vehicle_state WHERE site_id=? AND vehicle_id<>?",SITE,OHT);
   jdbc.update("UPDATE fleet.vehicle_profile SET enabled=TRUE,assignment_enabled=FALSE,home_node_id=NULL,speed_mm_s=2000 WHERE site_id=?",SITE);
   jdbc.update("UPDATE topology.edge SET curve_mm=0 WHERE site_id=?",SITE);
-  jdbc.update("UPDATE platform.site_operation SET node_count=20,auto_dispatch=FALSE,run_mode='OPERATION' WHERE site_id=?",SITE);
+  jdbc.update("UPDATE platform.site_operation SET node_count=20,more_remaining_nodes=3,more_min_remaining_nodes=1,"
+   +"auto_dispatch=FALSE,run_mode='OPERATION' WHERE site_id=?",SITE);
  }
  private VehicleSnapshot report(Long node,String status){
   return tx.execute(s->fleet.report(SITE,REVISION,OHT,new VehicleReport(node,true,true,false,false,"SIMULATED",null,"REMOTE",status)));
@@ -175,6 +176,63 @@ class MotionAndStopSqlTest {
   mvc.perform(put("/api/v1/sites/1/simulation/vehicles/1/state").header("Authorization",TOKEN)
     .contentType("application/json").content("{\"mode\":\"REMOTE\",\"status\":\"PAUSED\"}"))
    .andExpect(status().isUnprocessableEntity()).andExpect(jsonPath("$.code").value("NOT_A_SIMULATED_VEHICLE"));
+ }
+
+ // ---- an operator stops their move ----
+
+ @Test void stoppingAMoveThatNeverLeftEndsItWhereTheVehicleStands(){
+  report(118L,"IDLE");
+  tx.execute(s->moves.moveTo(SITE,OHT,105L));
+  var step=tx.execute(s->moves.stopMove(SITE,OHT));
+  assertThat(step.decision()).isEqualTo("MOVE_STOPPED");
+  assertThat(outbox.unresolvedForVehicle(SITE,OHT)).isEmpty();
+  assertThat(ledger.relocatingVehicleIds(SITE)).doesNotContain(OHT);
+  assertThat(held()).containsOnly(118L);
+ }
+
+ @Test void aStoppedMoveHaltsAtTheEndOfTheSegmentItIsOnAndClosesThere(){
+  drivingFrom118();
+  var granted=held();
+  long next=granted.get(1);
+  assertThat(granted).contains(105L);
+  var shape=SegmentShape.between(topology.getMap(SITE,REVISION),118L,next);
+  simulator.drive(SITE,shape.length()*0.4/2000.0);
+  // Stopped while it drives on what it was given: the move stays open, its road kept, a STOP queued.
+  assertThat(tx.execute(s->moves.stopMove(SITE,OHT)).decision()).isEqualTo("MOVE_STOPPED_STOPPING");
+  assertThat(ledger.openRelocations(SITE)).anySatisfy(r->{
+   assertThat(r.vehicleId()).isEqualTo(OHT);
+   assertThat(r.stopRequestedAt()).isNotNull();
+  });
+  assertThat(outbox.unresolvedForVehicle(SITE,OHT)).anyMatch(c->c.commandType().equals("STOP"));
+  assertThat(held()).isEqualTo(granted);
+  // The MOVE is acknowledged, then the STOP goes out and reaches it before it drives on.
+  simulator.settle(SITE);
+  sweep.run(SITE,"test",null);
+  assertThat(now().nodeId()).isEqualTo(118L);
+  // It finishes the segment it is on and stands there, idle.
+  for(int i=0;i<10;i++){
+   simulator.settle(SITE);
+   simulator.drive(SITE,1.0);
+   sweep.run(SITE,"test",null);
+  }
+  assertThat(now().nodeId()).isEqualTo(next);
+  assertThat(now().status()).isEqualTo("IDLE");
+  // Standing idle after the stop was asked: the move closes there, short of its target, and what
+  // lay ahead is free again.
+  tx.execute(t->moves.evacuateAll(SITE));
+  assertThat(ledger.relocatingVehicleIds(SITE)).doesNotContain(OHT);
+  assertThat(held()).containsOnly(next);
+  assertThat(outbox.unresolvedForVehicle(SITE,OHT)).isEmpty();
+ }
+
+ @Test void onlyAnOperatorsOpenMoveCanBeStopped(){
+  report(118L,"IDLE");
+  assertThatThrownBy(()->tx.execute(s->moves.stopMove(SITE,OHT)))
+   .isInstanceOfSatisfying(TransportRejected.class,e->assertThat(e.code()).isEqualTo("NO_MOVE"));
+  jdbc.update("INSERT INTO transport.relocation(site_id,revision_id,vehicle_id,zone_id,route_node_ids,target_node_id,purpose)"
+   +" VALUES(?,?,?,NULL,ARRAY[118,119]::BIGINT[],119,'ZONE_EVACUATION')",SITE,REVISION,OHT);
+  assertThatThrownBy(()->tx.execute(s->moves.stopMove(SITE,OHT)))
+   .isInstanceOfSatisfying(TransportRejected.class,e->assertThat(e.code()).isEqualTo("NOT_A_MANUAL_MOVE"));
  }
 
  // ---- layout facts the map shows ----

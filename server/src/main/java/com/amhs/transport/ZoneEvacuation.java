@@ -96,8 +96,12 @@ public class ZoneEvacuation {
   // own initiative either. It stays where it is until an operator moves it or turns it back on.
   // An operator's own move is the operator deciding, so only taking it out of use stops that.
   boolean manual=relocation!=null&&Relocation.MANUAL.equals(relocation.purpose());
-  if(!vehicle.enabled()||(!manual&&!vehicle.assignmentEnabled())){
-   String decision=vehicle.enabled()?"ASSIGNMENT_DISABLED":"VEHICLE_DISABLED";
+  // Taken out of use or out of automatic work, or an operator asked the move to stop: whichever
+  // came, the move is wound down the same way.
+  String decision=!vehicle.enabled()?"VEHICLE_DISABLED"
+   :!manual&&!vehicle.assignmentEnabled()?"ASSIGNMENT_DISABLED"
+   :relocation!=null&&relocation.stopRequestedAt()!=null?"MOVE_STOPPED":null;
+  if(decision!=null){
    if(relocation!=null){
     // The move stops here: what never left is taken back and nothing new is sent. If nothing of
     // this move ever reached the vehicle, it never started and the move simply ends. Otherwise the
@@ -106,12 +110,20 @@ public class ZoneEvacuation {
     // decided. An acknowledgement or an older idle report is not that answer.
     var stopAt=ledger.requestRelocationStop(relocation.id());
     var withdrawal=outbox.withdrawForVehicle(siteId,vehicleId,decision,relocation.startedAt());
+    String stopCommand="relocation-"+relocation.id()+"-stop";
     if(withdrawal.delivered()){
+     // Tell the vehicle to stop where it can, once: the same id is not queued twice. What a STOP
+     // is on the wire is the communication contract's to decide; a simulated vehicle stops at the
+     // end of the segment it is on.
+     outbox.enqueueForVehicle(siteId,vehicleId,stopCommand,"STOP",
+      "{\"relocationId\":"+relocation.id()+",\"vehicleId\":"+vehicleId+",\"reason\":\""+decision+"\"}");
      boolean stopped=!withdrawal.inFlight()&&vehicle.online()&&vehicle.nodeId()!=null
       &&"IDLE".equals(vehicle.effectiveStatus())&&vehicle.reportedAt()!=null&&vehicle.reportedAt().isAfter(stopAt)
       &&vehicle.reportedSince(cutoff);
      if(!stopped) return none(vehicleId,decision+"_STOPPING");
     }
+    // A STOP that never left must not reach the vehicle later and cut short its next move.
+    outbox.withdrawIfUnsent(stopCommand,"MOVE_CLOSED");
     ledger.finishRelocation(relocation.id(),decision);
     traffic.releaseAhead(siteId,vehicleId,vehicle.nodeId(),"MOVE_"+decision);
    }
@@ -195,6 +207,33 @@ public class ZoneEvacuation {
    if(zone.enabled()&&zone.revisionId()==revisionId) for(Long node:zone.nodeIds()) zoneOf.put(node,zone.id());
   return step(siteId,revisionId,vehicleId,zoneOf,fleet.snapshot(siteId,revisionId),cutoff);
  }
+
+ /**
+  * An operator stops a vehicle's move to a node. Nothing more is granted or sent; what never left
+  * is taken back. A vehicle that may already be driving on what it was given keeps that road until
+  * it reports, after this request, that it stands idle; then the move closes. Refused when the
+  * vehicle has no such move. A move out of a zone is not stopped here: the next sweep would only
+  * start it again; taking the vehicle out of automatic work is how that is stopped.
+  */
+ @Transactional
+ public Step stopMove(long siteId,long vehicleId){
+  long revisionId=ledger.activeRevision(siteId);
+  fleet.lockForAssignment(siteId,List.of(vehicleId));
+  var relocation=ledger.openRelocations(siteId).stream().filter(r->r.vehicleId()==vehicleId).findFirst()
+   .orElseThrow(()->new TransportRejected("NO_MOVE","vehicle has no move under way",false));
+  if(!Relocation.MANUAL.equals(relocation.purpose()))
+   throw new TransportRejected("NOT_A_MANUAL_MOVE","only an operator's move can be stopped here",false);
+  ledger.requestRelocationStop(relocation.id());
+  var cutoff=OffsetDateTime.now().minusSeconds(operations.get(siteId).settings().positionStaleSeconds());
+  var zoneOf=new HashMap<Long,Long>();
+  for(ZoneOccupancy zone:traffic.zones(siteId))
+   if(zone.enabled()&&zone.revisionId()==revisionId) for(Long node:zone.nodeIds()) zoneOf.put(node,zone.id());
+  return step(siteId,revisionId,vehicleId,zoneOf,fleet.snapshot(siteId,revisionId),cutoff);
+ }
+
+ /** Open moves without an order at the site: who is going where, why, and whether a stop was asked. */
+ @Transactional(readOnly=true)
+ public List<Relocation> openMoves(long siteId){ return ledger.openRelocations(siteId); }
 
  /**
   * Where the vehicle goes. Its home node comes first: somebody chose that place for it. It is used

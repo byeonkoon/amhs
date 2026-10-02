@@ -46,6 +46,8 @@ public interface CommandOutbox {
      * the vehicle since {@code since} is reported.
      */
     VehicleWithdrawal withdrawForVehicle(long siteId, long vehicleId, String reason, java.time.OffsetDateTime since);
+    /** Withdraws one command if it has not left yet (pending, or failed and waiting to be tried again). */
+    void withdrawIfUnsent(String commandId, String reason);
     /**
      * Records what the channel reported for a claimed command. A result never moves a command back:
      * after an acknowledgement it is only recorded, and a command whose withdrawal was asked for

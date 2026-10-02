@@ -136,6 +136,13 @@ public class SimulatedVehicles {
     vehicles.computeIfPresent(sim.vehicleId(),(id,s)->s.withAuthority(nodes));
    }catch(Exception e){ return false; }
   }
+  if("STOP".equals(command.commandType())){
+   // Stops at the end of the segment it is on; standing, it goes nowhere. It then reports idle.
+   vehicles.computeIfPresent(sim.vehicleId(),(id,s)->{
+    int j=s.segmentTo()==null?-1:s.authority().indexOf(s.segmentTo());
+    return s.withAuthority(j<0?List.of():s.authority().subList(0,j+1));
+   });
+  }
   return true;
  }
 

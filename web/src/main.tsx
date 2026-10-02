@@ -6,7 +6,7 @@ import {
   api, cfgApi, explainDecision, freshness, get, getAs, hasWriteToken, opsApi, send, ApiError, MODE_LABEL, STATUS_LABEL,
   type AssignmentView, type Cfg, type Deadlock, type DeviceCommand, type MapData, type NodeHold,
   type OperationOptions, type Session, type TransportOrder, type Vehicle, type VehicleSnapshot,
-  type ZoneOccupancy,
+  type VehicleMove, type ZoneOccupancy,
 } from './api';
 import { AppShell, type MenuKey, type ServerState } from './shell/AppShell';
 import { Chip, Empty, Failed, Loading } from './shell/States';
@@ -29,6 +29,7 @@ type Loaded = {
   map: MapData; vehicles: Vehicle[]; orders: TransportOrder[]; state: VehicleSnapshot[];
   holds: NodeHold[]; deadlocks: Deadlock[]; inDoubt: DeviceCommand[];
   assignments: AssignmentView[]; options: OperationOptions | null; zones: ZoneOccupancy[];
+  moves: VehicleMove[];
 };
 
 /** One failing read must not blank the whole screen, so optional data falls back to empty. */
@@ -84,9 +85,10 @@ function App() {
       softly(get<AssignmentView[]>(opsApi.assignments(), signal), [] as AssignmentView[]),
       softly(get<Cfg<OperationOptions>>(cfgApi.system(), signal).then(r => r.settings), null),
       softly(get<ZoneOccupancy[]>(opsApi.zones(), signal), [] as ZoneOccupancy[]),
+      softly(get<VehicleMove[]>(opsApi.vehicleMoves(), signal), [] as VehicleMove[]),
     ])
-      .then(([map, vehicles, orders, state, holds, deadlocks, inDoubt, assignments, options, zones]) => {
-        setData({ map, vehicles, orders, state, holds, deadlocks, inDoubt, assignments, options, zones });
+      .then(([map, vehicles, orders, state, holds, deadlocks, inDoubt, assignments, options, zones, moves]) => {
+        setData({ map, vehicles, orders, state, holds, deadlocks, inDoubt, assignments, options, zones, moves });
         setLoadedAt(new Date());
       })
       .catch(cause => { if ((cause as Error).name !== 'AbortError') setError(cause); });
@@ -246,7 +248,7 @@ function MonitorScreen(props: {
 
           <Panel id="mon-move" title="수동 이동" aux="차량과 목표 노드를 골라 보냅니다" defaultOpen padded>
             <ManualMove map={map} vehicles={state} selected={props.selected} onSelect={props.onSelect}
-              target={target} onTarget={setTarget} onDone={props.onRetry} />
+              target={target} onTarget={setTarget} onDone={props.onRetry} moves={props.data.moves} />
           </Panel>
 
           <Panel id="mon-jobs" title="작업 진행" aux={`진행 ${active.length}건`} defaultOpen>
@@ -423,10 +425,25 @@ function modeTone(v: VehicleSnapshot): string {
 function ManualMove(props: {
   map: MapData; vehicles: VehicleSnapshot[]; selected: number | null; onSelect: (id: number | null) => void;
   target: number | null; onTarget: (id: number | null) => void; onDone: () => void;
+  moves: VehicleMove[];
 }) {
   const [busy, setBusy] = React.useState(false);
   const [notice, setNotice] = React.useState<{ tone: string; text: string } | null>(null);
   const vehicle = props.vehicles.find(v => v.id === props.selected) ?? null;
+  const open = vehicle ? props.moves.find(m => m.vehicleId === vehicle.id) ?? null : null;
+  const nodeCode = (id: number) => props.map.nodes.find(n => n.id === id)?.code ?? `#${id}`;
+
+  async function stop() {
+    if (!vehicle) return;
+    setBusy(true); setNotice(null);
+    try {
+      const res = await send<{ decision: string }>(opsApi.stopMove(vehicle.id), 'POST', {}, '수동 이동 중지');
+      setNotice({ tone: res.decision === 'MOVE_STOPPED' ? 'ok' : 'wr', text: explainDecision(res.decision) });
+      props.onDone();
+    } catch (cause) {
+      setNotice({ tone: 'er', text: cause instanceof ApiError ? explainDecision(cause.message) : '중지하지 못했습니다.' });
+    } finally { setBusy(false); }
+  }
   const networkOf = (nodeId: number) => {
     const port = props.map.ports.find(p => p.linkedNodeId === nodeId);
     if (port) return port.accessVehicleType;
@@ -476,6 +493,18 @@ function ManualMove(props: {
         </button>
         {blocker && <span className="hint">{blocker}</span>}
       </div>
+      {open && (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <Chip tone={open.stopRequestedAt ? 'wr' : 'ok'}>{open.stopRequestedAt ? '중지 중' : '이동 중'}</Chip>
+          <span>{open.purpose === 'MANUAL' ? '수동 이동' : 'Zone 퇴출'} → {nodeCode(open.targetNodeId)}</span>
+          {open.purpose === 'MANUAL' && !open.stopRequestedAt && (
+            <button type="button" disabled={busy || !hasWriteToken()} onClick={stop} style={{
+              border: '1px solid var(--crit)', background: 'var(--srf)', color: 'var(--crit)', borderRadius: 5,
+              padding: '3px 12px', fontSize: 12, cursor: 'pointer' }}>이동 중지</button>
+          )}
+          {open.stopRequestedAt && <span className="hint">이미 받은 허가 끝에서 서면 이동을 닫습니다.</span>}
+        </div>
+      )}
       {notice && <p style={{ margin: 0 }}><Chip tone={notice.tone}>{notice.tone === 'er' ? '거부' : '완료'}</Chip> {notice.text}</p>}
     </div>
   );

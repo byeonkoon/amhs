@@ -178,6 +178,12 @@ export type VehicleSnapshot = {
   speedMmS?: number;
 };
 
+/** A move without an order. stopRequestedAt is set once a stop was asked and it is winding down. */
+export type VehicleMove = {
+  id: number; vehicleId: number; zoneId: number | null; targetNodeId: number; purpose: 'MANUAL' | 'ZONE_EVACUATION';
+  startedAt: string; stopRequestedAt: string | null;
+};
+
 /** The vehicle's mode and status as the existing system names them. */
 export const MODE_LABEL: Record<string, string> = { MANUAL: '수동', SEMI_AUTO: '반자동', REMOTE: '원격' };
 export const STATUS_LABEL: Record<string, string> = {
@@ -266,6 +272,10 @@ export const opsApi = {
   simulatedState: (vehicleId: number) => `/api/v1/sites/${SITE_ID}/simulation/vehicles/${vehicleId}/state`,
   /** An operator sends a vehicle to a node. */
   moveVehicle: (vehicleId: number) => `/api/v1/sites/${SITE_ID}/vehicles/${vehicleId}/move`,
+  /** Stops an operator's move: nothing more is granted, and it closes once the vehicle has stopped. */
+  stopMove: (vehicleId: number) => `/api/v1/sites/${SITE_ID}/vehicles/${vehicleId}/move/stop`,
+  /** Open moves without an order: an operator's moves and moves out of a zone. */
+  vehicleMoves: () => `/api/v1/sites/${SITE_ID}/vehicle-moves`,
   session: () => `/api/v1/session`,
 };
 
@@ -324,6 +334,10 @@ export function explainDecision(decision: string): string {
     ROUTE_COMPLETE: '경로 끝까지 이미 확보해 연장할 것이 없습니다.',
     MORE_DISABLED: '연장 기능이 꺼져 있습니다.',
     MORE_OUTSTANDING: '앞선 연장 명령의 결과를 아직 모릅니다. 그것이 정리되기 전에는 보내지 않습니다.',
+    MOVE_STOPPED: '이동을 중지했습니다. 차량이 선 자리에서 이동을 닫았습니다.',
+    MOVE_STOPPED_STOPPING: '이동 중지를 요청했습니다. 더 허가하지 않으며, 이미 받은 허가 끝에서 차량이 서면 이동을 닫습니다.',
+    NO_MOVE: '이 차량에는 진행 중인 이동이 없습니다.',
+    NOT_A_MANUAL_MOVE: 'Zone 퇴출 이동은 여기서 중지하지 않습니다. 차량을 자동 작업에서 제외하세요.',
     VEHICLE_NOT_MOVING: '차량이 정지 상태입니다. 연장이 아니라 새 이동 명령이 필요합니다.',
     VEHICLE_NOT_CONTROLLABLE: '차량이 오프라인이거나 원격 제어 상태가 아닙니다.',
     VEHICLE_NOT_FOUND: '차량을 찾지 못했습니다.',

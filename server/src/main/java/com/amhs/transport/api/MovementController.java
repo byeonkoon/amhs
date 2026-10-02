@@ -42,6 +42,16 @@ class MovementController {
             throw new TransportRejected("TARGET_NODE_INVALID","targetNodeId is required",false);
         return moves.moveTo(siteId,vehicleId,target.longValue());
     }
+    /** Stops a vehicle's open move: no more road is granted, and it closes once the vehicle has stopped. */
+    @PostMapping("/vehicles/{vehicleId}/move/stop")
+    ZoneEvacuation.Step stop(@PathVariable long siteId,@PathVariable long vehicleId) {
+        return moves.stopMove(siteId,vehicleId);
+    }
+    /** Open moves without an order, so a screen can show who is being moved and offer to stop it. */
+    @GetMapping("/vehicle-moves")
+    java.util.List<com.amhs.transport.Relocation> openMoves(@PathVariable long siteId) {
+        return moves.openMoves(siteId);
+    }
     @ExceptionHandler(TransportRejected.class)
     ResponseEntity<Map<String,String>> rejected(TransportRejected ex) {
         var status="VEHICLE_NOT_FOUND".equals(ex.code())?HttpStatus.NOT_FOUND
