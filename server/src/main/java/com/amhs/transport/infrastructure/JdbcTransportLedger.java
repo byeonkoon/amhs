@@ -49,9 +49,17 @@ class JdbcTransportLedger implements TransportLedger {
    +" ORDER BY id DESC LIMIT ?",MAPPER,siteId,limit);
  }
  @Transactional(readOnly=true)
- public List<TransportOrder> dispatchQueue(long siteId,int limit){
+ public List<TransportOrder> dispatchQueue(long siteId,int limit){ return dispatchQueue(siteId,null,limit); }
+ @Transactional(readOnly=true)
+ public List<TransportOrder> dispatchQueue(long siteId,TransportOrder after,int limit){
+  if(after==null)
+   return jdbc.query("SELECT "+COLS+" FROM transport.order WHERE site_id=? AND status='QUEUED'"
+    +" ORDER BY priority DESC,created_at,id LIMIT ?",MAPPER,siteId,limit);
+  // The next page in the same order, starting just past the last order of the previous one.
   return jdbc.query("SELECT "+COLS+" FROM transport.order WHERE site_id=? AND status='QUEUED'"
-   +" ORDER BY priority DESC,created_at,id LIMIT ?",MAPPER,siteId,limit);
+   +" AND (priority<? OR (priority=? AND (created_at>? OR (created_at=? AND id>?))))"
+   +" ORDER BY priority DESC,created_at,id LIMIT ?",MAPPER,siteId,after.priority(),after.priority(),
+   after.createdAt(),after.createdAt(),after.id(),limit);
  }
  @Transactional(readOnly=true)
  public List<TransportOrder> list(long siteId,OrderStatus status,int limit){
@@ -312,7 +320,10 @@ class JdbcTransportLedger implements TransportLedger {
   // Held means holding a vehicle: an order whose assignment was released no longer uses anything.
   return jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM transport.order o JOIN transport.assignment a"
    +" ON a.order_id=o.id AND a.released_at IS NULL WHERE o.site_id=? AND o.id<>? AND ("
-   +" (o.source_port_id IN (?,?) AND o.status IN ('ASSIGNED','TO_SOURCE','LOADING','CANCEL_REQUESTED','RECOVERY_REQUIRED'))"
+   // The source is used until the carrier has been picked up. A cancel or recovery keeps it only
+   // while the carrier has not been shown to be on the vehicle or delivered.
+   +" (o.source_port_id IN (?,?) AND (o.status IN ('ASSIGNED','TO_SOURCE','LOADING')"
+   +"  OR (o.status IN ('CANCEL_REQUESTED','RECOVERY_REQUIRED') AND o.carrier_location NOT IN ('VEHICLE','DESTINATION'))))"
    +" OR (o.destination_port_id IN (?,?) AND o.status IN ('ASSIGNED','TO_SOURCE','LOADING','TO_DESTINATION','UNLOADING',"
    +"'CANCEL_REQUESTED','RECOVERY_REQUIRED'))))",Boolean.class,
    siteId,orderId,sourcePortId,destinationPortId,sourcePortId,destinationPortId);

@@ -147,6 +147,10 @@ public class TransportOrders {
  public Optional<TransportOrder> find(long siteId,long orderId){return ledger.find(siteId,orderId);}
  /** Waiting orders in dispatch order: priority, then acceptance time, then id. */
  public List<TransportOrder> dispatchQueue(long siteId,int limit){return ledger.dispatchQueue(siteId,Math.min(Math.max(limit,1),200));}
+ /** The page that follows {@code after} in the same order. */
+ public List<TransportOrder> dispatchQueue(long siteId,TransportOrder after,int limit){
+  return ledger.dispatchQueue(siteId,after,Math.min(Math.max(limit,1),200));
+ }
  public List<TransportOrder> list(long siteId,OrderStatus status,int limit){return ledger.list(siteId,status,Math.min(Math.max(limit,1),200));}
  /** Orders still being worked on. Finished ones belong to the history, not to the work list. */
  public List<TransportOrder> listActive(long siteId,int limit){return ledger.listActive(siteId,Math.min(Math.max(limit,1),500));}

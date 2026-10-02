@@ -117,6 +117,21 @@ public class TransportAssignment {
   return new Assigned(assigned,ledger.activeAssignment(siteId,orderId).orElseThrow(),commandId,true);
  }
 
+ /**
+  * How many vehicles of each kind could be given work right now: in use, taking work, controllable,
+  * idle on a node, fresh, empty, and holding no order or move. Zero for a kind means no order of
+  * that kind can be assigned this time round, whatever its place in the queue.
+  */
+ public java.util.Map<com.amhs.platform.VehicleType,Integer> freeVehicles(long siteId){
+  var busy=new java.util.HashSet<>(ledger.assignedVehicleIds(siteId));
+  busy.addAll(ledger.relocatingVehicleIds(siteId));
+  var cutoff=staleBefore(siteId);
+  var out=new java.util.EnumMap<com.amhs.platform.VehicleType,Integer>(com.amhs.platform.VehicleType.class);
+  for(var v:fleet.snapshot(siteId,ledger.activeRevision(siteId)))
+   if(!busy.contains(v.id())&&eligible(v)&&v.reportedSince(cutoff)) out.merge(v.vType(),1,Integer::sum);
+  return out;
+ }
+
  private static DispatchEvaluator.Candidate candidate(VehicleSnapshot v){
   return new DispatchEvaluator.Candidate(v.id(),v.vType(),v.nodeId(),v.enabled(),v.assignmentEnabled(),
    v.online(),v.remote(),v.idle());

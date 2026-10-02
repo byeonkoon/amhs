@@ -183,4 +183,35 @@ class MixedFleetSqlTest {
   assertThatThrownBy(()->tx.execute(s->assignment.assign(SITE,third,"test",null)))
    .isInstanceOfSatisfying(TransportRejected.class,e->assertThat(e.code()).isEqualTo("NO_AVAILABLE_VEHICLE"));
  }
+
+ @Test void ordersNobodyCanTakeDoNotHideTheOnesBehindThem(){
+  fourVehicles(101L,112L,201L,208L);
+  // No OHT takes work; two hundred and one OHT orders come first, one AGV order after them.
+  jdbc.update("UPDATE fleet.vehicle_profile SET assignment_enabled=(v_type='AGV') WHERE site_id=?",SITE);
+  jdbc.update("UPDATE platform.site_operation SET auto_dispatch=TRUE WHERE site_id=?",SITE);
+  for(int i=0;i<201;i++) accept("OHT-A","OHT-C");
+  long agv=accept("AGV-A","AGV-B");
+  var pass=sweep.run(SITE,"test",null);
+  assertThat(pass.assigned()).containsExactly(agv);
+  // The OHT orders keep the real reason they wait for.
+  assertThat(pass.skipped()).hasSize(201).allMatch(sk->sk.reason().equals("NO_AVAILABLE_VEHICLE"));
+ }
+
+ @Test void aSourcePortFreedByThePickupStaysFreeThroughCancelAndRecovery(){
+  fourVehicles(101L,112L,201L,208L);
+  long first=accept("OHT-A","OHT-C"), next=accept("OHT-A","OHT-B");
+  tx.execute(s->assignment.assign(SITE,first,"test",null));
+  tx.execute(s->orders.advance(SITE,first,OrderStatus.TO_SOURCE,"move","test",null));
+  tx.execute(s->orders.advance(SITE,first,OrderStatus.LOADING,"pickup","test",null));
+  tx.execute(s->orders.advance(SITE,first,OrderStatus.TO_DESTINATION,"picked up","test",null,
+   TransitionEvidence.sensor(CarrierLocation.VEHICLE)));
+  // Picked up and cancelled, then sent to recovery: the carrier is on the vehicle, not at OHT-A.
+  tx.execute(s->orders.advance(SITE,first,OrderStatus.CANCEL_REQUESTED,"cancel after pickup","test",null));
+  Boolean freeAfterCancel=tx.execute(s->!ledger.portInUse(SITE,next,orders.find(SITE,next).orElseThrow().sourcePortId(),
+   orders.find(SITE,next).orElseThrow().destinationPortId()));
+  assertThat(freeAfterCancel).isTrue();
+  tx.execute(s->orders.advance(SITE,first,OrderStatus.RECOVERY_REQUIRED,"recovery","test",null));
+  var assigned=tx.execute(s->assignment.assign(SITE,next,"test",null));
+  assertThat(assigned.assignment().vehicleId()).isEqualTo(OHT2);
+ }
 }

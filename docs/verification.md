@@ -333,3 +333,10 @@ migration V27로 운영 옵션에 운전 모드를 추가했다. `scripts/test-p
 - 자동 작업에서 제외된 차량은 비키지 않으며 사유는 `YIELD_ASSIGNMENT_DISABLED`.
 - 홈 212가 설정된 AGV-01을 203에 두면 HOME 이동으로 212에 도착하고 이동이 닫힌다.
 - 다른 차량이 홈에 서 있거나 화물이 있으면 홈으로 보내지 않는다.
+
+## 2026-10-02 · 6814694 리뷰 J1·J2 반영
+
+`scripts/test-postgres.ps1`: **242개 통과, 실패·오류·skip 0**.
+
+- J1: OHT가 모두 자동 작업 제외인 상태에서 OHT 작업 201건 뒤에 AGV 작업 1건을 넣고 한 번 실행 → AGV 작업만 배정되고, OHT 작업 201건은 `NO_AVAILABLE_VEHICLE`로 기록.
+- J2: OHT-A→OHT-C를 적재 증거와 함께 반송 단계로 보낸 뒤 취소 요청 → OHT-A는 사용 중이 아님. 복구 대기로 보낸 뒤 OHT-A→OHT-B 작업이 다른 OHT에 배정.

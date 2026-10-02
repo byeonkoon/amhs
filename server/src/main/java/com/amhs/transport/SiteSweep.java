@@ -46,16 +46,30 @@ public class SiteSweep {
   boolean autoDispatch=options.get(siteId).settings().autoDispatch();
   var assigned=new ArrayList<Long>(); var skipped=new ArrayList<Skipped>();
   if(autoDispatch){
-   // Oldest of the most urgent first; a newer order must not take a port or vehicle from an older one.
-   for(var order:orders.dispatchQueue(siteId,200)){
-    try{
-     var result=assignment.assign(siteId,order.id(),actorCode,traceId);
-     if(result.created()) assigned.add(order.id());
-    }catch(TransportRejected rejection){
-     // Waiting for a vehicle or for a road to clear is the ordinary answer here. The pass
-     // records it against the order and carries on instead of abandoning the rest.
-     skipped.add(new Skipped(order.id(),rejection.code()));
+   // Oldest of the most urgent first; a newer order must not take a port or vehicle from an older
+   // one. The whole queue is walked page by page, so orders nobody can take now do not hide the ones
+   // behind them. An order is only tried while a vehicle of its kind is free; the rest are noted.
+   var free=new java.util.EnumMap<>(assignment.freeVehicles(siteId));
+   // Once a kind has no free vehicle, its first order is still tried so the reason is the real one;
+   // the orders of that kind behind it are given the same reason without another attempt.
+   var noVehicle=new java.util.EnumMap<com.amhs.platform.VehicleType,String>(com.amhs.platform.VehicleType.class);
+   TransportOrder last=null;
+   for(var page=orders.dispatchQueue(siteId,null,200);!page.isEmpty();page=orders.dispatchQueue(siteId,last,200)){
+    for(var order:page){
+     last=order;
+     var kind=order.vehicleType();
+     if(free.getOrDefault(kind,0)<=0&&noVehicle.containsKey(kind)){ skipped.add(new Skipped(order.id(),noVehicle.get(kind))); continue; }
+     try{
+      var result=assignment.assign(siteId,order.id(),actorCode,traceId);
+      if(result.created()){ assigned.add(order.id()); free.merge(kind,-1,Integer::sum); }
+     }catch(TransportRejected rejection){
+      // Waiting for a vehicle or for a road to clear is the ordinary answer here. The pass
+      // records it against the order and carries on instead of abandoning the rest.
+      skipped.add(new Skipped(order.id(),rejection.code()));
+      if(free.getOrDefault(kind,0)<=0) noVehicle.putIfAbsent(kind,rejection.code());
+     }
     }
+    if(page.size()<200) break;
    }
   }
   var resumed=movement.resumeAll(siteId);
