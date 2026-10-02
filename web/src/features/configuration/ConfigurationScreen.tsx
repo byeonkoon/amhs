@@ -1,11 +1,12 @@
 import React from 'react';
 import {
-  ApiError, cfgApi, get, hasWriteToken, send, setWriteToken,
-  type Cfg, type ConnectionSettings, type MapData, type OperationOptions, type PortSettings, type ProtocolSettings,
+  ApiError, cfgApi, get, hasWriteToken, opsApi, send, setWriteToken,
+  type Cfg, type ConnectionSettings, type EquipmentSettings, type MapData, type OperationOptions, type PortSettings, type ProtocolSettings,
   type Session, type VdaProfileSettings, type VehicleSettings,
 } from '../../api';
 import { Chip, Empty, Failed, Loading } from '../../shell/States';
 import { NodeTab, SegmentTab } from './TopologyTabs';
+import { layerOfNode } from '../map/MapView';
 import {
   ADAPTER_DISABLED_REASON, BCR_POLICY, CONTROL_AUTHORITY, chargeNodeRequired, chargingPolicyOptions,
   connectionIssues, explainCode, protocolIssues, PROTO_TYPES, roleOptions, vdaProfileIssues,
@@ -242,12 +243,33 @@ function VehicleTab({ map, canWrite }: { map: MapData; canWrite: boolean }) {
                 {s.vType === 'OHT' && <span className="hint">OHT는 충전을 사용하지 않아 선택할 수 없습니다.</span>}
               </div>
             </div>
+            <div style={row}>
+              <label htmlFor="v-home">대기 노드</label>
+              <div>
+                <select id="v-home" style={field} value={s.homeNodeId ?? ''}
+                  onChange={e => set({ homeNodeId: e.target.value ? Number(e.target.value) : null })}>
+                  <option value="">지정 안 함</option>
+                  {map.nodes.filter(n => layerOfNode(map, n.id) === s.vType)
+                    .map(n => <option key={n.id} value={n.id}>{n.code}</option>)}
+                </select>
+                <span className="hint">할 일이 없을 때 머무는 곳입니다. Zone을 비울 때도 이곳을 먼저 씁니다.</span>
+              </div>
+            </div>
+            <div style={row}>
+              <label htmlFor="v-speed">주행 속도 (mm/s)</label>
+              <div>
+                <input id="v-speed" type="number" min={50} max={10000} style={field} value={s.speedMmS ?? ''}
+                  onChange={e => set({ speedMmS: e.target.value === '' ? undefined : Number(e.target.value) })} />
+                <span className="hint">시뮬레이션에서 구간을 이 속도로 주행합니다. 50~10000.</span>
+              </div>
+            </div>
             {chargeNodeRequired(s) && (
               <div style={row}>
                 <label htmlFor="v-chargenode">충전 노드</label>
                 <select id="v-chargenode" style={field} value={s.chargeNodeId ?? ''} onChange={e => set({ chargeNodeId: e.target.value ? Number(e.target.value) : null })}>
                   <option value="">선택</option>
-                  {map.nodes.map(n => <option key={n.id} value={n.id}>{n.code}</option>)}
+                  {map.nodes.filter(n => layerOfNode(map, n.id) === s.vType)
+                    .map(n => <option key={n.id} value={n.id}>{n.code}</option>)}
                 </select>
               </div>
             )}
@@ -268,6 +290,7 @@ function VehicleTab({ map, canWrite }: { map: MapData; canWrite: boolean }) {
 
 function PortTab({ map, canWrite }: { map: MapData; canWrite: boolean }) {
   const { items, error, reload } = useList<PortSettings>(cfgApi.ports());
+  const { items: units } = useList<EquipmentSettings>(opsApi.equipment());
   const [draft, setDraft] = React.useState<Cfg<PortSettings> | null>(null);
   const [busy, setBusy] = React.useState(false);
   const [message, setMessage] = React.useState<string | null>(null);
@@ -318,6 +341,18 @@ function PortTab({ map, canWrite }: { map: MapData; canWrite: boolean }) {
               <select id="p-node" style={field} value={s.linkedNodeId} onChange={e => set({ linkedNodeId: Number(e.target.value) })}>
                 {map.nodes.map(n => <option key={n.id} value={n.id}>{n.code}</option>)}
               </select>
+            </div>
+            <div style={row}>
+              <label htmlFor="p-eqp">설비</label>
+              <div>
+                <select id="p-eqp" style={field} value={s.equipmentUnitId ?? ''}
+                  onChange={e => set({ equipmentUnitId: e.target.value ? Number(e.target.value) : null })}>
+                  <option value="">연결 안 함</option>
+                  {(units ?? []).filter(u => u.settings.revisionId === s.revisionId)
+                    .map(u => <option key={u.id} value={u.id}>{u.settings.name || u.settings.code} ({u.settings.code})</option>)}
+                </select>
+                <span className="hint">지도에는 포트 코드 대신 이 설비 이름이 표시됩니다.</span>
+              </div>
             </div>
             <SaveBar issues={s.code.trim() ? [] : ['포트 코드를 입력해 주세요.']} canWrite={canWrite} busy={busy} message={message} onSave={save} />
           </>

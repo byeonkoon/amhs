@@ -5,13 +5,19 @@ import com.amhs.platform.VehicleType;
  * {@code mode} (MANUAL, SEMI_AUTO, REMOTE) and {@code status} (IDLE, MOVING, ERROR, PAUSED,
  * CHARGING, LOADING, UNLOADING, RESET) are null until something reports. {@code nodeId} is null when nobody has said where it is, which is
  * different from being somewhere unreachable and must not be replaced by its configured node.
+ *
+ * <p>{@code xMm}/{@code yMm} say where it is while it drives between nodes; both are null while it
+ * stands on {@code nodeId}. The node stays the position that counts for traffic: it changes only
+ * when the vehicle arrives at the next one. {@code homeNodeId} is where it waits, {@code
+ * chargeNodeId} where it charges, {@code speedMmS} its configured travel speed.
  */
 public record VehicleSnapshot(long id, String code, VehicleType vType, Long nodeId,
                               boolean enabled, boolean assignmentEnabled,
                               boolean online, boolean remote, boolean idle, boolean carrierPresent,
                               String source, java.time.OffsetDateTime reportedAt,
                               Boolean destinationChangeEnabled, Long homeNodeId,
-                              String mode, String status) {
+                              String mode, String status,
+                              Double xMm, Double yMm, Long chargeNodeId, int speedMmS) {
     /**
      * Whether the last report came at or after {@code cutoff}. Configuration alone is never a
      * report: a vehicle nobody has heard from is not somewhere just because it was set up there.

@@ -42,6 +42,23 @@ class SimulationController {
   return out;
  }
 
+ /**
+  * Changes a simulated vehicle's mode and status only, as if set at the vehicle. Its position and
+  * load are kept as the simulator has them, never taken from the request.
+  */
+ @PutMapping("/vehicles/{vehicleId}/state")
+ VehicleSnapshot state(@PathVariable long siteId,@PathVariable long vehicleId,@RequestBody Map<String,Object> body){
+  requireSimulation(siteId);
+  Object mode=body.get("mode"), status=body.get("status");
+  if(!(mode instanceof String m)||!(status instanceof String st)) throw new IllegalArgumentException("mode and status are required");
+  return vehicles.setState(siteId,vehicleId,m,st);
+ }
+
  @GetMapping("/vehicles")
  Set<Long> placed(@PathVariable long siteId){ return vehicles.placed(); }
+
+ @ExceptionHandler(IllegalArgumentException.class)
+ org.springframework.http.ResponseEntity<Map<String,String>> rejected(IllegalArgumentException ex){
+  return org.springframework.http.ResponseEntity.unprocessableEntity().body(Map.of("code",String.valueOf(ex.getMessage())));
+ }
 }

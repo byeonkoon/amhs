@@ -291,10 +291,11 @@ class JdbcTransportLedger implements TransportLedger {
  }
 
  private static final String RELOCATION_COLS=
-  "id,site_id,revision_id,vehicle_id,zone_id,route_node_ids,target_node_id,started_at,purpose";
+  "id,site_id,revision_id,vehicle_id,zone_id,route_node_ids,target_node_id,started_at,purpose,stop_requested_at";
  private static final org.springframework.jdbc.core.RowMapper<Relocation> RELOCATION=(r,n)->new Relocation(
   r.getLong(1),r.getLong(2),r.getLong(3),r.getLong(4),r.getObject(5)==null?null:r.getLong(5),
-  List.of((Long[])r.getArray(6).getArray()),r.getLong(7),r.getObject(8,OffsetDateTime.class),r.getString(9));
+  List.of((Long[])r.getArray(6).getArray()),r.getLong(7),r.getObject(8,OffsetDateTime.class),r.getString(9),
+  r.getObject(10,OffsetDateTime.class));
 
  @Transactional(readOnly=true)
  public List<Relocation> openRelocations(long siteId){
@@ -321,6 +322,11 @@ class JdbcTransportLedger implements TransportLedger {
  public void replaceRelocationRoute(long relocationId,List<Long> routeNodeIds){
   jdbc.update("UPDATE transport.relocation SET route_node_ids=? WHERE id=? AND finished_at IS NULL",
    routeNodeIds.toArray(Long[]::new),relocationId);
+ }
+ @Transactional(propagation=Propagation.MANDATORY)
+ public OffsetDateTime requestRelocationStop(long relocationId){
+  return jdbc.queryForObject("UPDATE transport.relocation SET stop_requested_at=COALESCE(stop_requested_at,clock_timestamp())"
+   +" WHERE id=? RETURNING stop_requested_at",(r,n)->r.getObject(1,OffsetDateTime.class),relocationId);
  }
  @Transactional(propagation=Propagation.MANDATORY)
  public void finishRelocation(long relocationId,String reason){

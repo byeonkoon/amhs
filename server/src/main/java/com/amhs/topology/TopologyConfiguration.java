@@ -36,7 +36,7 @@ public class TopologyConfiguration {
  @Transactional(readOnly=true)
  public List<ConfigurationRecord<EdgeSettings>> edges(long site,long revision){
   guard.requireSite(site);
-  return jdbc.query("SELECT id,version,from_node_id,to_node_id,cost,enabled FROM topology.edge"
+  return jdbc.query("SELECT id,version,from_node_id,to_node_id,cost,enabled,curve_mm FROM topology.edge"
    +" WHERE site_id=? AND revision_id=? ORDER BY id",EDGE,site,revision);
  }
 
@@ -73,9 +73,9 @@ public class TopologyConfiguration {
    if(held.contains(current.settings().fromNodeId())||held.contains(current.settings().toNodeId()))
     throw new ConfigurationException(409,"SEGMENT_IN_USE");
   }
-  guard.changed(jdbc.update("UPDATE topology.edge SET cost=?,enabled=?,version=version+1"
+  guard.changed(jdbc.update("UPDATE topology.edge SET cost=?,enabled=?,curve_mm=?,version=version+1"
    +" WHERE site_id=? AND revision_id=? AND id=? AND version=?",
-   s.cost(),s.enabled(),site,revision,id,expectedVersion));
+   s.cost(),s.enabled(),s.curveMm(),site,revision,id,expectedVersion));
   return edge(site,revision,id);
  }
 
@@ -89,7 +89,7 @@ public class TopologyConfiguration {
   return rows.getFirst();
  }
  private ConfigurationRecord<EdgeSettings> edge(long site,long revision,long id){
-  var rows=jdbc.query("SELECT id,version,from_node_id,to_node_id,cost,enabled FROM topology.edge"
+  var rows=jdbc.query("SELECT id,version,from_node_id,to_node_id,cost,enabled,curve_mm FROM topology.edge"
    +" WHERE site_id=? AND revision_id=? AND id=?",EDGE,site,revision,id);
   if(rows.isEmpty())throw new ConfigurationException(404,"SEGMENT_NOT_FOUND");
   return rows.getFirst();
@@ -98,5 +98,5 @@ public class TopologyConfiguration {
   r.getLong(1),r.getLong(2),new NodeSettings(r.getString(3),r.getLong(4),r.getLong(5),r.getBoolean(6),
    r.getBoolean(7),r.getBoolean(8)));
  private static final RowMapper<ConfigurationRecord<EdgeSettings>> EDGE=(r,n)->new ConfigurationRecord<>(
-  r.getLong(1),r.getLong(2),new EdgeSettings(r.getLong(3),r.getLong(4),r.getLong(5),r.getBoolean(6)));
+  r.getLong(1),r.getLong(2),new EdgeSettings(r.getLong(3),r.getLong(4),r.getLong(5),r.getBoolean(6),r.getDouble(7)));
 }

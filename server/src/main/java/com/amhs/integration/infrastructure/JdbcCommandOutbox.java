@@ -65,16 +65,21 @@ class JdbcCommandOutbox implements CommandOutbox {
  }
 
  @Transactional(propagation=Propagation.MANDATORY)
- public Withdrawal withdrawForVehicle(long siteId,long vehicleId,String reason){
-  var statuses=jdbc.query("SELECT status FROM integration.command_outbox WHERE site_id=? AND vehicle_id=? AND order_id IS NULL"
-   +" ORDER BY id FOR UPDATE",(r,n)->CommandStatus.valueOf(r.getString(1)),siteId,vehicleId);
+ public VehicleWithdrawal withdrawForVehicle(long siteId,long vehicleId,String reason,java.time.OffsetDateTime since){
+  record Row(CommandStatus status,boolean recent){}
+  var rows=jdbc.query("SELECT status,created_at>=? FROM integration.command_outbox WHERE site_id=? AND vehicle_id=?"
+   +" AND order_id IS NULL ORDER BY id FOR UPDATE",(r,n)->new Row(CommandStatus.valueOf(r.getString(1)),r.getBoolean(2)),
+   since,siteId,vehicleId);
   int withdrawn=jdbc.update("UPDATE integration.command_outbox SET status='WITHDRAWN',settled_at=now(),"
    +"last_outcome='WITHDRAWN',last_error=? WHERE site_id=? AND vehicle_id=? AND order_id IS NULL AND status IN ('PENDING','FAILED')",
    reason==null?null:reason.length()<=256?reason:reason.substring(0,256),siteId,vehicleId);
   jdbc.update("UPDATE integration.command_outbox SET withdraw_requested_at=now() WHERE site_id=? AND vehicle_id=?"
    +" AND order_id IS NULL AND status='DISPATCHING' AND withdraw_requested_at IS NULL",siteId,vehicleId);
-  boolean left=statuses.stream().anyMatch(st->st==CommandStatus.DISPATCHING||st==CommandStatus.SENT);
-  return new Withdrawal(withdrawn,left);
+  boolean inFlight=rows.stream().anyMatch(r->r.status()==CommandStatus.DISPATCHING||r.status()==CommandStatus.SENT);
+  // An accepted command is a receipt, not a stop: the vehicle may be driving on it right now.
+  boolean delivered=rows.stream().anyMatch(r->r.recent()&&(r.status()==CommandStatus.DISPATCHING
+   ||r.status()==CommandStatus.SENT||r.status()==CommandStatus.ACCEPTED));
+  return new VehicleWithdrawal(withdrawn,inFlight,delivered);
  }
 
  /**

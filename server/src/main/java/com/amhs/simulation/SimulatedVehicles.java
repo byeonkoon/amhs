@@ -22,6 +22,10 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * <p>Only vehicles explicitly placed are simulated. Their state lives in memory: a restart empties
  * the simulation, and the vehicles have to be placed again.
+ *
+ * <p>The running loop drives them along each segment at their configured speed ({@link #drive}),
+ * reporting where they are between nodes, and changes their node only when they arrive at the
+ * next one. {@link #step} is the coarse form for tests and the manual tick: one node per call.
  */
 public class SimulatedVehicles {
  private static final String ACTOR="simulator";
@@ -29,12 +33,29 @@ public class SimulatedVehicles {
  private final TransportLedger ledger; private final TransportOrders orders; private final TopologyQuery topology;
  private final ObjectMapper json;
 
- private record Sim(long siteId,long vehicleId,List<Long> authority,boolean carrier,boolean failNextTransfer){
-  Sim withAuthority(List<Long> nodes){ return new Sim(siteId,vehicleId,List.copyOf(nodes),carrier,failNextTransfer); }
-  Sim withCarrier(boolean on){ return new Sim(siteId,vehicleId,authority,on,failNextTransfer); }
-  Sim failing(boolean fail){ return new Sim(siteId,vehicleId,authority,carrier,fail); }
+ /**
+  * {@code segmentTo} and {@code travelled}: the node it is driving towards from the node it last
+  * stood on, and how far along that segment it is, mm. Null and 0 while it stands.
+  */
+ private record Sim(long siteId,long vehicleId,List<Long> authority,boolean carrier,boolean failNextTransfer,
+                    Long segmentTo,double travelled){
+  Sim(long siteId,long vehicleId,List<Long> authority,boolean carrier,boolean failNextTransfer){
+   this(siteId,vehicleId,authority,carrier,failNextTransfer,null,0);
+  }
+  Sim withAuthority(List<Long> nodes){ return new Sim(siteId,vehicleId,List.copyOf(nodes),carrier,failNextTransfer,segmentTo,travelled); }
+  Sim withCarrier(boolean on){ return new Sim(siteId,vehicleId,authority,on,failNextTransfer,segmentTo,travelled); }
+  Sim failing(boolean fail){ return new Sim(siteId,vehicleId,authority,carrier,fail,segmentTo,travelled); }
+  Sim at(Long to,double along){ return new Sim(siteId,vehicleId,authority,carrier,failNextTransfer,to,along); }
  }
  private final Map<Long,Sim> vehicles=new ConcurrentHashMap<>();
+ /**
+  * Held while a vehicle is moved or its state is changed, so a change somebody makes between two
+  * motion ticks is not overwritten by a tick that read the vehicle before it.
+  */
+ private final Object motion=new Object();
+ /** The map each motion tick drives on, read again at least every two seconds so edits show up. */
+ private record CachedMap(com.amhs.topology.MapSnapshot map,long readAt){}
+ private final Map<Long,CachedMap> maps=new ConcurrentHashMap<>();
 
  SimulatedVehicles(FleetState fleet,TrafficControl traffic,CommandOutbox outbox,TransportLedger ledger,
                    TransportOrders orders,TopologyQuery topology,ObjectMapper json){
@@ -47,12 +68,34 @@ public class SimulatedVehicles {
 
  /** Puts a vehicle on the track: online, under remote control, idle, empty. */
  public VehicleSnapshot place(long siteId,long vehicleId,long nodeId){
-  vehicles.put(vehicleId,new Sim(siteId,vehicleId,List.of(),false,false));
-  return report(siteId,vehicleId,nodeId,"IDLE",false);
+  synchronized(motion){
+   vehicles.put(vehicleId,new Sim(siteId,vehicleId,List.of(),false,false));
+   return report(siteId,vehicleId,nodeId,"IDLE",false);
+  }
+ }
+
+ /**
+  * Changes only the mode and status of a simulated vehicle, the way an operator at the vehicle
+  * would: where it is and whether it carries stay exactly as they are now, also when it is between
+  * two nodes. Serialised with the motion, so a tick cannot put back an older position.
+  */
+ public VehicleSnapshot setState(long siteId,long vehicleId,String mode,String status){
+  synchronized(motion){
+   var sim=vehicles.get(vehicleId);
+   if(sim==null||sim.siteId()!=siteId) throw new IllegalArgumentException("NOT_A_SIMULATED_VEHICLE");
+   long revisionId=ledger.activeRevision(siteId);
+   var state=fleet.find(siteId,revisionId,vehicleId).orElseThrow(()->new IllegalArgumentException("VEHICLE_NOT_FOUND"));
+   if(state.nodeId()==null) throw new IllegalArgumentException("POSITION_UNKNOWN");
+   var stored=fleet.report(siteId,revisionId,vehicleId,
+    new VehicleReport(state.nodeId(),true,true,false,state.carrierPresent(),"SIMULATED",null,mode,status));
+   if(state.xMm()!=null&&state.yMm()!=null)
+    stored=fleet.reportBetweenNodes(siteId,revisionId,vehicleId,state.xMm(),state.yMm());
+   return stored;
+  }
  }
  public boolean isSimulated(long vehicleId){ return vehicles.containsKey(vehicleId); }
  /** Takes every vehicle out of the simulation. Their last reported state stays as it was. */
- public void clear(){ vehicles.clear(); }
+ public void clear(){ vehicles.clear(); maps.clear(); }
  /** Stops simulating vehicles of sites that are no longer in simulation. */
  public void clearExcept(java.util.Set<Long> sites){ vehicles.values().removeIf(v->!sites.contains(v.siteId())); }
 
@@ -89,14 +132,98 @@ public class SimulatedVehicles {
    try{
     var nodes=new ArrayList<Long>();
     json.readTree(command.payload()).path("authorizedNodeIds").forEach(n->nodes.add(n.asLong()));
-    vehicles.put(sim.vehicleId(),sim.withAuthority(nodes));
+    // Only the authority is replaced; how far along its segment the vehicle is stays its own.
+    vehicles.computeIfPresent(sim.vehicleId(),(id,s)->s.withAuthority(nodes));
    }catch(Exception e){ return false; }
   }
   return true;
  }
 
+ /**
+  * Drives every placed vehicle of the site for {@code seconds} at its configured speed along its
+  * authority. Between nodes it reports where it is; arriving at a node, it reports that node and
+  * frees what lies behind. A vehicle held by its mode or status does not move.
+  */
+ public void drive(long siteId,double seconds){
+  synchronized(motion){
+   long revisionId=ledger.activeRevision(siteId);
+   var map=mapOf(siteId,revisionId);
+   var orderOf=new HashMap<Long,Long>();
+   for(var a:ledger.activeAssignments(siteId)) orderOf.put(a.vehicleId(),a.orderId());
+   for(var sim:List.copyOf(vehicles.values())){
+    if(sim.siteId()!=siteId) continue;
+    var state=fleet.find(siteId,revisionId,sim.vehicleId()).orElse(null);
+    if(state==null||state.nodeId()==null||held(state)) continue;
+    driveOne(siteId,revisionId,map,sim.vehicleId(),state,seconds,orderOf.get(sim.vehicleId()));
+   }
+  }
+ }
+
+ private void driveOne(long siteId,long revisionId,com.amhs.topology.MapSnapshot map,long vehicleId,VehicleSnapshot state,
+                       double seconds,Long orderId){
+  var sim=vehicles.get(vehicleId);
+  long at=state.nodeId();
+  double budget=Math.max(50,state.speedMmS())*seconds;
+  boolean departed=false;
+  while(true){
+   var authority=sim.authority();
+   int i=authority.indexOf(at);
+   if(i<0||i>=authority.size()-1) break;
+   long next=authority.get(i+1);
+   // A new authority that turns elsewhere starts the segment again from the node it stood on.
+   double along=Objects.equals(sim.segmentTo(),next)?sim.travelled():0;
+   var shape=com.amhs.topology.SegmentShape.between(map,at,next);
+   double length=shape==null?0:shape.length();
+   if(along==0&&!departed){ report(siteId,vehicleId,at,"MOVING",sim.carrier()); departed=true; }
+   double reach=along+budget;
+   if(reach<length){
+    double[] p=shape.atDistance(reach);
+    fleet.reportBetweenNodes(siteId,revisionId,vehicleId,p[0],p[1]);
+    vehicles.computeIfPresent(vehicleId,(id,s)->s.at(next,reach));
+    return;
+   }
+   budget-=length-along;
+   boolean last=i+1==authority.size()-1;
+   report(siteId,vehicleId,next,last?"IDLE":"MOVING",sim.carrier());
+   traffic.advanced(siteId,vehicleId,next);
+   sim=vehicles.computeIfPresent(vehicleId,(id,s)->s.at(null,0));
+   if(orderId!=null){
+    var order=ledger.find(siteId,orderId).orElse(null);
+    if(order!=null&&order.status()==OrderStatus.ASSIGNED) move(siteId,order,OrderStatus.TO_SOURCE,TransitionEvidence.system());
+   }
+   at=next;
+   if(sim==null) return;
+  }
+ }
+
+ private com.amhs.topology.MapSnapshot mapOf(long siteId,long revisionId){
+  var cached=maps.get(siteId);
+  long now=System.nanoTime();
+  if(cached==null||cached.map().revisionId()!=revisionId||now-cached.readAt()>2_000_000_000L){
+   cached=new CachedMap(topology.getMap(siteId,revisionId),now);
+   maps.put(siteId,cached);
+  }
+  return cached.map();
+ }
+
+ /** Somebody switched it to manual or semi-auto, or it reported a fault, a pause, charging or a reset. */
+ private static boolean held(VehicleSnapshot state){
+  String mode=state.mode()==null?"REMOTE":state.mode();
+  return !"REMOTE".equals(mode)||HOLD.contains(state.effectiveStatus());
+ }
+
  /** One step for every placed vehicle at the site: acknowledge, drive one node, or do one transfer step. */
- public List<Step> step(long siteId){
+ public List<Step> step(long siteId){ return step(siteId,true); }
+
+ /**
+  * What the running loop does between drives: acknowledge, and for a vehicle standing at the end of
+  * its authority, the next transfer step. Driving itself is left to {@link #drive}.
+  */
+ public List<Step> settle(long siteId){ return step(siteId,false); }
+
+ private List<Step> step(long siteId,boolean jump){
+  synchronized(motion){
+  maps.remove(siteId);
   long revisionId=ledger.activeRevision(siteId);
   var map=topology.getMap(siteId,revisionId);
   var portNode=new HashMap<Long,Long>();
@@ -112,25 +239,31 @@ public class SimulatedVehicles {
    for(var c:outbox.unresolvedForVehicle(siteId,sim.vehicleId()))
     if(c.status()==CommandStatus.SENT) outbox.acknowledge(c.commandId());
    var order=Optional.ofNullable(orderOf.get(sim.vehicleId())).flatMap(id->ledger.find(siteId,id)).orElse(null);
-   out.add(act(siteId,sim,state,order,portNode));
+   out.add(act(siteId,vehicles.getOrDefault(sim.vehicleId(),sim),state,order,portNode,jump));
   }
   return out;
+  }
  }
 
  /** Statuses in which a vehicle does not drive or transfer until told otherwise. */
  private static final Set<String> HOLD=Set.of("ERROR","PAUSED","RESET","CHARGING");
 
- private Step act(long siteId,Sim sim,VehicleSnapshot state,TransportOrder order,Map<Long,Long> portNode){
+ private Step act(long siteId,Sim sim,VehicleSnapshot state,TransportOrder order,Map<Long,Long> portNode,boolean jump){
   long at=state.nodeId();
   // Somebody switched it to manual or semi-auto, or reported it faulted, paused, charging or
   // resetting: it stays put and keeps saying so until it is reported back to remote and idle.
   String mode=state.mode()==null?"REMOTE":state.mode();
-  if(!"REMOTE".equals(mode)||HOLD.contains(state.effectiveStatus())){
+  if(held(state)){
    reportAs(siteId,sim.vehicleId(),at,mode,state.effectiveStatus(),sim.carrier());
+   // Stopped between two nodes, it is still there: the report keeps that place.
+   if(state.xMm()!=null&&state.yMm()!=null)
+    fleet.reportBetweenNodes(siteId,ledger.activeRevision(siteId),sim.vehicleId(),state.xMm(),state.yMm());
    return new Step(sim.vehicleId(),"HELD_"+(!"REMOTE".equals(mode)?mode:state.effectiveStatus()),at);
   }
   int i=sim.authority().indexOf(at);
+  if(i>=0&&i<sim.authority().size()-1&&!jump) return new Step(sim.vehicleId(),"DRIVING",at);
   if(i>=0&&i<sim.authority().size()-1){
+   vehicles.computeIfPresent(sim.vehicleId(),(id,s)->s.at(null,0));
    long next=sim.authority().get(i+1);
    boolean last=i+1==sim.authority().size()-1;
    report(siteId,sim.vehicleId(),next,last?"IDLE":"MOVING",sim.carrier());

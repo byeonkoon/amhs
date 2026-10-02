@@ -4,6 +4,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { STATUS_LABEL, type MapData, type VehicleSnapshot } from '../../api';
 import { AGV, OHT, STATUS_COLOR, layerOfNode } from './MapView';
+import { portTitle, segmentPoints, vehiclePlaces, vehiclePoint } from './geometry';
 
 /** Map coordinates are millimetres; the scene is in metres. */
 const S = 1 / 1000;
@@ -142,6 +143,9 @@ class World {
   private targetMark: THREE.Mesh;
   private vehicles = new Map<number, VehicleObject>();
   private nodePos = new Map<number, THREE.Vector3>();
+  private map: MapData | null = null;
+  private places = new THREE.Group();
+  private placesKey = '';
   private pickable: THREE.Object3D[] = [];
   private centre = new THREE.Vector2();
   private span = 20;
@@ -222,6 +226,8 @@ class World {
     this.scene.add(this.layout);
     this.pickable = [];
     this.nodePos.clear();
+    this.map = map;
+    this.placesKey = '';
     if (map.nodes.length === 0) return;
 
     const xs = map.nodes.map(n => n.x * S), ys = map.nodes.map(n => n.y * S);
@@ -252,26 +258,38 @@ class World {
     const pathMat = new THREE.MeshBasicMaterial({ color: AGV });
     const pathOff = new THREE.MeshBasicMaterial({ color: AGV, transparent: true, opacity: 0.3 });
     for (const e of map.edges) {
-      const a = this.nodePos.get(e.fromNodeId), b = this.nodePos.get(e.toNodeId);
+      const na = map.nodes.find(n => n.id === e.fromNodeId), nb = map.nodes.find(n => n.id === e.toNodeId);
       const t = layerOfNode(map, e.fromNodeId);
-      if (!a || !b || !visible(t)) continue;
-      const dx = b.x - a.x, dz = b.z - a.z, length = Math.hypot(dx, dz);
-      const yaw = Math.atan2(-dz, dx);
-      if (t === 'OHT') {
-        // The overhead rail: a beam at rail height.
-        const beam = new THREE.Mesh(new THREE.BoxGeometry(length, 0.08, 0.14), e.enabled ? railMat : railOff);
-        beam.position.set((a.x + b.x) / 2, RAIL + 0.04, (a.z + b.z) / 2);
-        beam.rotation.y = yaw;
-        this.layout.add(beam);
-      } else {
-        // The floor route: a dashed line painted on the floor.
-        const dash = 0.5, gap = 0.3;
-        for (let s = 0; s < length; s += dash + gap) {
-          const l = Math.min(dash, length - s), mid = s + l / 2;
-          const piece = new THREE.Mesh(new THREE.BoxGeometry(l, 0.01, 0.1), e.enabled ? pathMat : pathOff);
-          piece.position.set(a.x + dx * mid / length, 0.006, a.z + dz * mid / length);
+      if (!na || !nb || !visible(t)) continue;
+      // A curved segment is drawn as short straight pieces along the same curve the 2D plan uses.
+      const points = segmentPoints(na.x, na.y, nb.x, nb.y, e.curveMm ?? 0).map(p => this.at(p.x, p.y));
+      for (let k = 0; k < points.length - 1; k++) {
+        const a = points[k], b = points[k + 1];
+        const dx = b.x - a.x, dz = b.z - a.z, length = Math.hypot(dx, dz);
+        const yaw = Math.atan2(-dz, dx);
+        if (t === 'OHT') {
+          // The overhead rail: a beam at rail height. Pieces overlap a little so a curve has no gaps.
+          const beam = new THREE.Mesh(new THREE.BoxGeometry(length + 0.02, 0.08, 0.14), e.enabled ? railMat : railOff);
+          beam.position.set((a.x + b.x) / 2, RAIL + 0.04, (a.z + b.z) / 2);
+          beam.rotation.y = yaw;
+          this.layout.add(beam);
+        } else if (points.length > 2) {
+          // A curved floor route: painted solid in short pieces, every other one, so it reads dashed.
+          if (k % 2 === 1) continue;
+          const piece = new THREE.Mesh(new THREE.BoxGeometry(length, 0.01, 0.1), e.enabled ? pathMat : pathOff);
+          piece.position.set((a.x + b.x) / 2, 0.006, (a.z + b.z) / 2);
           piece.rotation.y = yaw;
           this.layout.add(piece);
+        } else {
+          // The floor route: a dashed line painted on the floor.
+          const dash = 0.5, gap = 0.3;
+          for (let s = 0; s < length; s += dash + gap) {
+            const l = Math.min(dash, length - s), mid = s + l / 2;
+            const piece = new THREE.Mesh(new THREE.BoxGeometry(l, 0.01, 0.1), e.enabled ? pathMat : pathOff);
+            piece.position.set(a.x + dx * mid / length, 0.006, a.z + dz * mid / length);
+            piece.rotation.y = yaw;
+            this.layout.add(piece);
+          }
         }
       }
     }
@@ -315,9 +333,15 @@ class World {
       const edges = new THREE.LineSegments(new THREE.EdgesGeometry(box.geometry), new THREE.LineBasicMaterial({ color }));
       edges.position.copy(box.position);
       this.layout.add(box, edges);
-      const label = makeLabel(port.code, { size: 0.24 });
-      label.position.copy(base).setY(size.y + 0.25);
+      const title = portTitle(port);
+      const label = makeLabel(title.main, { size: 0.26 });
+      label.position.copy(base).setY(size.y + (title.sub ? 0.5 : 0.25));
       this.layout.add(label);
+      if (title.sub) {
+        const sub = makeLabel(title.sub, { size: 0.18 });
+        sub.position.copy(base).setY(size.y + 0.2);
+        this.layout.add(sub);
+      }
     }
 
     this.home();
@@ -429,10 +453,36 @@ class World {
       target: new THREE.Vector3(), yaw: 0, targetYaw: 0, placed: false };
   }
 
+  /** Tags on the nodes vehicles wait at (대기) and charge at (충전). Rebuilt only when they change. */
+  private setPlaces(vehicles: VehicleSnapshot[], layer: Layer) {
+    const places = vehiclePlaces(vehicles);
+    const key = layer + JSON.stringify([...places.home]) + JSON.stringify([...places.charge]);
+    if (key === this.placesKey || !this.map) return;
+    this.placesKey = key;
+    this.places.parent?.remove(this.places);
+    disposeTree(this.places);
+    this.places = new THREE.Group();
+    this.scene.add(this.places);
+    const put = (nodeId: number, text: string, color: string, shift: number) => {
+      const p = this.nodePos.get(nodeId);
+      if (!p || !this.map || !(layer === 'all' || layer === layerOfNode(this.map, nodeId))) return;
+      const pad = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 0.02, 32),
+        new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.35, depthWrite: false }));
+      pad.position.set(p.x, 0.012, p.z);
+      const label = makeLabel(text, { dot: color, size: 0.22 });
+      label.position.set(p.x, (p.y > 0 ? p.y + 0.6 : 0.55) + shift, p.z);
+      this.places.add(pad, label);
+    };
+    for (const [id, who] of places.home) put(id, `대기 · ${who.join(',')}`, '#5B6B7C', 0);
+    for (const [id, who] of places.charge) put(id, `충전 · ${who.join(',')}`, '#2E7D32', places.home.has(id) ? 0.3 : 0);
+  }
+
   setVehicles(vehicles: VehicleSnapshot[], selectedId: number | null, layer: Layer) {
+    this.setPlaces(vehicles, layer);
     const seen = new Set<number>();
     for (const v of vehicles) {
-      const p = v.nodeId === null ? undefined : this.nodePos.get(v.nodeId);
+      const point = this.map ? vehiclePoint(this.map, v) : null;
+      const p = point ? this.at(point.x, point.y) : undefined;
       if (!p || !(layer === 'all' || layer === v.vType)) continue;
       seen.add(v.id);
       let obj = this.vehicles.get(v.id);
@@ -539,8 +589,8 @@ export default function MapView3D(props: Props) {
   const layoutKey = React.useMemo(() => [
     map.revisionId, props.layer,
     map.nodes.map(n => `${n.id}:${n.x}:${n.y}:${n.enabled ? 1 : 0}`).join(','),
-    map.edges.map(e => `${e.id}:${e.enabled ? 1 : 0}`).join(','),
-    map.ports.map(p => `${p.id}:${p.linkedNodeId}`).join(','),
+    map.edges.map(e => `${e.id}:${e.enabled ? 1 : 0}:${e.curveMm ?? 0}`).join(','),
+    map.ports.map(p => `${p.id}:${p.linkedNodeId}:${p.equipmentName ?? ''}`).join(','),
   ].join('|'), [map, props.layer]);
 
   React.useEffect(() => {

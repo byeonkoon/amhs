@@ -51,6 +51,22 @@ function App() {
     const timer = setInterval(() => setReload(v => v + 1), 2000);
     return () => clearInterval(timer);
   }, [autoRefresh]);
+  // On the layout screen, vehicle positions are read more often than the rest so a vehicle driving
+  // between nodes is seen moving rather than jumping every two seconds.
+  React.useEffect(() => {
+    if (!autoRefresh || menu !== 'fleet') return;
+    let busy = false;
+    const controller = new AbortController();
+    const timer = setInterval(() => {
+      if (busy) return;
+      busy = true;
+      get<VehicleSnapshot[]>(opsApi.vehicleState(REVISION_ID), controller.signal)
+        .then(state => setData(d => d ? { ...d, state } : d))
+        .catch(() => { /* the two-second reading reports a lost connection */ })
+        .finally(() => { busy = false; });
+    }, 500);
+    return () => { clearInterval(timer); controller.abort(); };
+  }, [autoRefresh, menu]);
 
   React.useEffect(() => {
     const controller = new AbortController();
@@ -311,9 +327,8 @@ function VehicleDetail(props: {
     if (!r) return;
     setStateError(null);
     try {
-      await send(opsApi.vehicleState1(REVISION_ID, r.id), 'PUT', {
-        nodeId: r.nodeId, online: true, carrierPresent: r.carrierPresent, source: 'SIMULATED', mode, status,
-      }, '시뮬레이션 상태 변경');
+      // Only mode and status are sent: where the vehicle is and what it carries the simulator keeps.
+      await send(opsApi.simulatedState(r.id), 'PUT', { mode, status }, '시뮬레이션 상태 변경');
       props.onChanged?.();
     } catch (cause) {
       setStateError(cause instanceof ApiError ? explainDecision(cause.message) : '바꾸지 못했습니다.');

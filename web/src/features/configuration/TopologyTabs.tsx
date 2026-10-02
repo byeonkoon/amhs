@@ -116,7 +116,7 @@ function TrackTab({ session, revisionId, kind }: { session: Session; revisionId:
     <div>
       {banner}
       {segments.length === 0 ? <Empty title="이 지도 revision에 구간이 없습니다" /> : (
-        <Grid cols="54px 1fr 108px 96px" head={['', '구간', '비용(초)', '사용']}>
+        <Grid cols="54px 1fr 108px 116px 96px" head={['', '구간', '비용(초)', '곡률(mm)', '사용']}>
           {segments.map(e => (
             <Row key={e.id}>
               <span className="muted mono">#{e.id}</span>
@@ -125,6 +125,11 @@ function TrackTab({ session, revisionId, kind }: { session: Session; revisionId:
                 <CostField value={e.settings.cost} disabled={!mayEdit || busy}
                   onCommit={cost => change(`${opsApi.segments(revisionId)}/${e.id}`, e.version,
                     { ...e.settings, cost }, '구간 비용 변경')} />
+              </span>
+              <span title="구간 가운데가 직선에서 벗어나는 거리. +는 시작→끝 방향의 왼쪽(평면도 기준), −는 오른쪽, 0은 직선.">
+                <CostField value={e.settings.curveMm ?? 0} disabled={!mayEdit || busy}
+                  onCommit={curveMm => change(`${opsApi.segments(revisionId)}/${e.id}`, e.version,
+                    { ...e.settings, curveMm }, '구간 곡률 변경')} />
               </span>
               <span>
                 <button type="button" disabled={!mayEdit || busy} style={toggleStyle(e.settings.enabled)}

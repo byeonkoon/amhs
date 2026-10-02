@@ -99,12 +99,19 @@ public class ZoneEvacuation {
   if(!vehicle.enabled()||(!manual&&!vehicle.assignmentEnabled())){
    String decision=vehicle.enabled()?"ASSIGNMENT_DISABLED":"VEHICLE_DISABLED";
    if(relocation!=null){
-    // The move stops here: what never left is taken back and nothing new is sent. A command that
-    // is being sent or went out without an answer yet, or a vehicle not standing idle on a known
-    // node, keeps the move and its road until that is settled and the vehicle has stopped.
-    var withdrawal=outbox.withdrawForVehicle(siteId,vehicleId,decision);
-    boolean stopped=vehicle.nodeId()!=null&&"IDLE".equals(vehicle.effectiveStatus());
-    if(withdrawal.anyLeft()||!stopped) return none(vehicleId,decision+"_STOPPING");
+    // The move stops here: what never left is taken back and nothing new is sent. If nothing of
+    // this move ever reached the vehicle, it never started and the move simply ends. Otherwise the
+    // vehicle may be driving on what it was given, so the move keeps its road until the vehicle
+    // answers: online, standing idle on a known node, in a fresh report made after the stop was
+    // decided. An acknowledgement or an older idle report is not that answer.
+    var stopAt=ledger.requestRelocationStop(relocation.id());
+    var withdrawal=outbox.withdrawForVehicle(siteId,vehicleId,decision,relocation.startedAt());
+    if(withdrawal.delivered()){
+     boolean stopped=!withdrawal.inFlight()&&vehicle.online()&&vehicle.nodeId()!=null
+      &&"IDLE".equals(vehicle.effectiveStatus())&&vehicle.reportedAt()!=null&&vehicle.reportedAt().isAfter(stopAt)
+      &&vehicle.reportedSince(cutoff);
+     if(!stopped) return none(vehicleId,decision+"_STOPPING");
+    }
     ledger.finishRelocation(relocation.id(),decision);
     traffic.releaseAhead(siteId,vehicleId,vehicle.nodeId(),"MOVE_"+decision);
    }

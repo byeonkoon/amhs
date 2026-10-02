@@ -6,8 +6,13 @@ export type Node = {
   id: number; code: string; x: number; y: number; enabled: boolean;
   stopNode?: boolean; mergePoint?: boolean;
 };
-export type Edge = { id: number; fromNodeId: number; toNodeId: number; cost: number; enabled: boolean };
-export type Port = { id: number; code: string; portType: string; accessVehicleType: 'OHT' | 'AGV'; linkedNodeId: number };
+/** curveMm: how far the segment's middle lies off the straight line (see geometry.ts); 0 is straight. */
+export type Edge = { id: number; fromNodeId: number; toNodeId: number; cost: number; enabled: boolean; curveMm?: number };
+/** The equipment a port hands over to, when one is linked. */
+export type Port = {
+  id: number; code: string; portType: string; accessVehicleType: 'OHT' | 'AGV'; linkedNodeId: number;
+  equipmentId?: number | null; equipmentCode?: string | null; equipmentName?: string | null;
+};
 export type MapData = { siteId: number; revisionId: number; nodes: Node[]; edges: Edge[]; ports: Port[] };
 export type Vehicle = {
   id: number; code: string; vType: 'OHT' | 'AGV'; currentNodeId: number;
@@ -72,10 +77,13 @@ export type VehicleSettings = {
   chargingPolicy: 'DISABLED' | 'HOME' | 'NEAREST';
   /** Empty unless the site communication type is MQTT. */
   vdaProfileId?: number | null;
+  /** Travel speed, mm/s. The simulator drives segments at this speed. */
+  speedMmS?: number;
 };
 export type PortSettings = {
   revisionId: number; code: string; portType: string;
   accessVehicleType: 'OHT' | 'AGV'; linkedNodeId: number;
+  equipmentUnitId?: number | null;
 };
 export type ConnectionSettings = { commType: 'TCP' | 'MQTT'; role: string; host: string; port: number; enabled: boolean };
 export type ProtocolSettings = { protoType: 'PC' | 'PLC' | 'VDA5050'; protoVersion: string; adapterKey: string };
@@ -162,6 +170,12 @@ export type VehicleSnapshot = {
   mode?: string | null;
   /** What it is doing: IDLE, MOVING, ERROR, PAUSED, CHARGING, LOADING, UNLOADING or RESET. */
   status?: string | null;
+  /** Where it is while it drives between nodes; null while it stands on nodeId. */
+  xMm?: number | null; yMm?: number | null;
+  /** Configured charging node. */
+  chargeNodeId?: number | null;
+  /** Configured travel speed, mm/s. */
+  speedMmS?: number;
 };
 
 /** The vehicle's mode and status as the existing system names them. */
@@ -248,9 +262,8 @@ export const opsApi = {
   slots: (unitId: number, rackId: number) =>
     `/api/v1/sites/${SITE_ID}/configuration/equipment/${unitId}/racks/${rackId}/slots`,
   assignments: () => `/api/v1/sites/${SITE_ID}/transport-orders/assignments`,
-  /** Reports a vehicle's state by hand (marked simulated); in simulation the vehicle follows it. */
-  vehicleState1: (revisionId: number, vehicleId: number) =>
-    `/api/v1/sites/${SITE_ID}/maps/${revisionId}/vehicle-state/${vehicleId}`,
+  /** Changes only a simulated vehicle's mode and status; its position and load stay as they are. */
+  simulatedState: (vehicleId: number) => `/api/v1/sites/${SITE_ID}/simulation/vehicles/${vehicleId}/state`,
   /** An operator sends a vehicle to a node. */
   moveVehicle: (vehicleId: number) => `/api/v1/sites/${SITE_ID}/vehicles/${vehicleId}/move`,
   session: () => `/api/v1/session`,
@@ -261,7 +274,7 @@ export type NodeSettings = {
   code: string; xMm: number; yMm: number; enabled: boolean; stopNode: boolean; mergePoint: boolean;
 };
 /** A segment's editable parameters. Endpoints are what the segment is, so they are read-only here. */
-export type EdgeSettings = { fromNodeId: number; toNodeId: number; cost: number; enabled: boolean };
+export type EdgeSettings = { fromNodeId: number; toNodeId: number; cost: number; enabled: boolean; curveMm?: number };
 
 export type EquipmentKind = 'STOCKER' | 'BUFFER' | 'PROCESS';
 export type EquipmentSettings = { revisionId: number; code: string; name: string; kind: EquipmentKind; enabled: boolean };

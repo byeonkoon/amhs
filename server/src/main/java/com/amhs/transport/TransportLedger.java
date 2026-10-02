@@ -51,6 +51,11 @@ public interface TransportLedger {
                             String purpose);
  /** Replaces the route of an open move, for a vehicle that is no longer on it. */
  void replaceRelocationRoute(long relocationId,List<Long> routeNodeIds);
+ /**
+  * Marks an open move as to be stopped and returns when that was first decided. Asking again keeps
+  * the first time, so a report has to come after the decision to count as the vehicle's answer.
+  */
+ java.time.OffsetDateTime requestRelocationStop(long relocationId);
  /** Closes a move, saying why: arrived, or abandoned because it could no longer be carried out. */
  void finishRelocation(long relocationId,String reason);
  /** Orders that are still being worked on, newest first. Finished ones are history. */

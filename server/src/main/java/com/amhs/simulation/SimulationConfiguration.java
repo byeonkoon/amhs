@@ -53,9 +53,11 @@ class SimulationConfiguration {
  }
 
  /**
-  * Each tick, for every site in SIMULATION: put its vehicles on the track, run one sweep, then move
-  * every simulated vehicle one step. A site that left SIMULATION stops being simulated. On by
-  * default; {@code amhs.simulation.auto-run=false} turns it off (tests step by hand).
+  * Each tick, for every site in SIMULATION: put its vehicles on the track, run one sweep, then let
+  * every simulated vehicle take its next transfer step. Between ticks, a finer motion tick drives
+  * the vehicles along their segments at their configured speed. A site that left SIMULATION stops
+  * being simulated. On by default; {@code amhs.simulation.auto-run=false} turns it off (tests step
+  * by hand).
   */
  @Configuration(proxyBeanMethods=false)
  @EnableScheduling
@@ -74,11 +76,24 @@ class SimulationConfiguration {
     try{
      vehicles.placeAll(siteId,configuration);
      sweep.run(siteId,"simulator",null);
-     vehicles.step(siteId);
+     vehicles.settle(siteId);
     }catch(RuntimeException e){
      // One bad tick must not stop the loop; the next one sees the state as it then is.
      log.warn("simulation tick failed for site {}: {}",siteId,e.getMessage());
     }
+   }
+  }
+
+  private long lastMotion=System.nanoTime();
+  /** Drives for the time that actually passed, so a slow tick does not slow the vehicles down. */
+  @Scheduled(fixedDelayString="${amhs.simulation.motion-ms:200}")
+  void motion(){
+   long now=System.nanoTime();
+   double seconds=Math.min(1.0,(now-lastMotion)/1e9);
+   lastMotion=now;
+   for(long siteId:options.simulatedSites()){
+    try{ vehicles.drive(siteId,seconds); }
+    catch(RuntimeException e){ log.warn("simulation motion failed for site {}: {}",siteId,e.getMessage()); }
    }
   }
  }

@@ -35,11 +35,17 @@ public interface CommandOutbox {
     Withdrawal withdraw(long orderId, String reason);
     record Withdrawal(int withdrawn, boolean anyLeft) {}
     /**
-     * The same for a vehicle's commands that belong to no order (moves out of a zone, an operator's
-     * moves): what never left is withdrawn, what is being sent is marked, and whether anything has
-     * left is reported.
+     * What taking back a vehicle's order-less commands found. {@code inFlight}: one is being sent or
+     * was sent without an answer yet. {@code delivered}: one written since the given time is in
+     * flight or was accepted, so the vehicle may be acting on it.
      */
-    Withdrawal withdrawForVehicle(long siteId, long vehicleId, String reason);
+    record VehicleWithdrawal(int withdrawn, boolean inFlight, boolean delivered) {}
+    /**
+     * The same for a vehicle's commands that belong to no order (moves out of a zone, an operator's
+     * moves): what never left is withdrawn, what is being sent is marked, and what may have reached
+     * the vehicle since {@code since} is reported.
+     */
+    VehicleWithdrawal withdrawForVehicle(long siteId, long vehicleId, String reason, java.time.OffsetDateTime since);
     /**
      * Records what the channel reported for a claimed command. A result never moves a command back:
      * after an acknowledgement it is only recorded, and a command whose withdrawal was asked for

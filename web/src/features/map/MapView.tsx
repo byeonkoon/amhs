@@ -1,5 +1,6 @@
 import React from 'react';
 import { MODE_LABEL, STATUS_LABEL, type MapData, type VehicleSnapshot } from '../../api';
+import { portTitle, segmentPath, vehiclePlaces, vehiclePoint } from './geometry';
 
 export const OHT = '#1D6FD8';
 export const AGV = '#9A4A9E';
@@ -28,8 +29,10 @@ export function layerOfNode(map: MapData, id: number): 'OHT' | 'AGV' {
  *
  * Vehicles are drawn where they last reported, not where they were configured, with their status
  * as the outline colour, a dot when they carry, and their mode as a letter (R remote, S semi-auto,
- * M manual). The wheel zooms around the pointer, dragging pans, and a node can be picked as a
- * target by clicking it.
+ * M manual). Both kinds are boxes; the colour says which. Between nodes they are drawn where they
+ * say they are and glide there. Segments may be curved. A port is named by its equipment. Nodes a
+ * vehicle waits at (대기) or charges at (충전) carry a tag. The wheel zooms around the pointer,
+ * dragging pans, and a node can be picked as a target by clicking it.
  */
 export function MapView(props: {
   map: MapData;
@@ -120,7 +123,7 @@ export function MapView(props: {
           if (!a || !b) return null;
           const t = typeOfNode(e.fromNodeId);
           if (!visible(t)) return null;
-          return <line key={e.id} x1={a.x} y1={a.y} x2={b.x} y2={b.y}
+          return <path key={e.id} d={segmentPath(a.x, a.y, b.x, b.y, e.curveMm ?? 0)} fill="none"
             stroke={t === 'OHT' ? OHT : AGV} strokeWidth={34} strokeLinecap="round"
             strokeDasharray={t === 'OHT' ? undefined : '110 70'}
             opacity={e.enabled ? 1 : 0.35} />;
@@ -145,18 +148,46 @@ export function MapView(props: {
         {map.ports.map(p => {
           const n = node(p.linkedNodeId);
           if (!n || !visible(p.accessVehicleType)) return null;
+          const title = portTitle(p);
+          const w = Math.max(840, title.main.length * 175 + 160);
           return (
             <g key={p.id} pointerEvents="none">
-              <rect x={n.x - 420} y={n.y + 380} width={840} height={300} rx={50}
+              <title>{title.sub ? `${title.main} (${title.sub})` : title.main}</title>
+              <rect x={n.x - w / 2} y={n.y + 380} width={w} height={title.sub ? 420 : 300} rx={50}
                 fill="#fff" stroke={p.accessVehicleType === 'OHT' ? OHT : AGV} strokeWidth={16} />
-              <text x={n.x} y={n.y + 580} textAnchor="middle" fontSize={165} fontWeight={600}>{p.code}</text>
+              <text x={n.x} y={n.y + 580} textAnchor="middle" fontSize={165} fontWeight={700}
+                style={{ fill: 'var(--ink)' }}>{title.main}</text>
+              {title.sub && <text x={n.x} y={n.y + 735} textAnchor="middle" fontSize={120}>{title.sub}</text>}
             </g>
           );
         })}
 
+        {/* Where vehicles wait (대기) and charge (충전), as configured per vehicle. */}
+        {(() => {
+          const places = vehiclePlaces(vehicles);
+          const tag = (nodeId: number, label: string, color: string, who: string[], dx: number) => {
+            const n = node(nodeId);
+            if (!n || !visible(typeOfNode(nodeId))) return null;
+            return (
+              <g key={`${label}-${nodeId}`} pointerEvents="none">
+                <title>{`${label} 장소 · ${who.join(', ')}`}</title>
+                <rect x={n.x + dx} y={n.y - 120} width={330} height={190} rx={40} fill={color} />
+                <text x={n.x + dx + 165} y={n.y + 22} textAnchor="middle" fontSize={120} fontWeight={700}
+                  style={{ fill: '#fff' }}>{label}</text>
+              </g>
+            );
+          };
+          return [
+            ...[...places.home].map(([id, who]) => tag(id, '대기', '#5B6B7C', who, 120)),
+            ...[...places.charge].map(([id, who]) => tag(id, '충전', '#2E7D32', who, places.home.has(id) ? 480 : 120)),
+          ];
+        })()}
+
         {vehicles.map(v => {
-          const n = v.nodeId === null ? undefined : node(v.nodeId);
-          if (!n || !visible(v.vType)) return null;
+          const at = vehiclePoint(map, v);
+          if (!at || !visible(v.vType)) return null;
+          // Drawn around the origin and moved into place, so a new position is a glide, not a jump.
+          const n = { x: 0, y: 0 };
           const selected = props.selectedId === v.id;
           const fill = !v.online ? '#9AA5B1' : v.vType === 'OHT' ? OHT : AGV;
           const status = v.status ?? (v.idle ? 'IDLE' : 'MOVING');
@@ -166,22 +197,20 @@ export function MapView(props: {
             + ` · ${v.carrierPresent ? '화물 있음' : '화물 없음'}${v.online ? '' : ' · 오프라인'}`;
           return (
             <g key={v.id} role="button" tabIndex={0} aria-label={`${title} 상세 보기`}
-              style={{ cursor: 'pointer' }}
+              style={{ cursor: 'pointer', transform: `translate(${at.x}px, ${at.y}px)`, transition: 'transform .5s linear' }}
               onClick={() => { if (clicked()) props.onSelect(v); }}
               onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); props.onSelect(v); } }}>
               <title>{title}</title>
-              {/* OHT hangs from the rail as a rectangle; AGV runs on the floor as a hexagon. */}
-              {v.vType === 'OHT'
-                ? <rect x={n.x - 340} y={n.y - 620} width={680} height={330} rx={50} fill={fill}
-                    stroke={selected ? '#172231' : ring} strokeWidth={selected ? 40 : 34} />
-                : <polygon points={`${n.x - 300},${n.y - 455} ${n.x - 190},${n.y - 620} ${n.x + 190},${n.y - 620} ${n.x + 300},${n.y - 455} ${n.x + 190},${n.y - 290} ${n.x - 190},${n.y - 290}`}
-                    fill={fill} stroke={selected ? '#172231' : ring} strokeWidth={selected ? 40 : 34} />}
-              <text x={n.x - 40} y={n.y - 400} textAnchor="middle" fontSize={128} fontWeight={600} fill="#fff">{v.code}</text>
+              {/* Both kinds are the same box; OHT blue, AGV purple. The outline is the status. */}
+              <rect x={n.x - 340} y={n.y - 620} width={680} height={330} rx={50} fill={fill}
+                stroke={selected ? '#172231' : ring} strokeWidth={selected ? 40 : 34} />
+              <text x={n.x - 40} y={n.y - 410} textAnchor="middle" fontSize={140} fontWeight={800}
+                style={{ fill: '#fff' }}>{v.code}</text>
               {/* Mode letter, top right; a filled dot when the vehicle carries something. */}
-              <text x={n.x + 255} y={n.y - 505} textAnchor="middle" fontSize={96} fontWeight={700} fill="#fff">{mode}</text>
+              <text x={n.x + 255} y={n.y - 505} textAnchor="middle" fontSize={96} fontWeight={700} style={{ fill: '#fff' }}>{mode}</text>
               {v.carrierPresent && <circle cx={n.x + 255} cy={n.y - 375} r={52} fill="#FFD54F" stroke="#172231" strokeWidth={12} />}
               {status !== 'IDLE' && status !== 'MOVING' && (
-                <text x={n.x} y={n.y - 690} textAnchor="middle" fontSize={120} fontWeight={700} fill={ring}>
+                <text x={n.x} y={n.y - 690} textAnchor="middle" fontSize={120} fontWeight={700} style={{ fill: ring }}>
                   {STATUS_LABEL[status] ?? status}
                 </text>
               )}
@@ -205,6 +234,8 @@ export function MapLegend({ mode = '2D' }: { mode?: '2D' | '3D' }) {
       {swatch(STATUS_COLOR.MOVING, '이동')}{swatch(STATUS_COLOR.IDLE, '대기')}{swatch(STATUS_COLOR.LOADING, '적재·하역')}
       {swatch(STATUS_COLOR.CHARGING, '충전')}{swatch(STATUS_COLOR.PAUSED, '일시정지·리셋')}{swatch(STATUS_COLOR.ERROR, '에러')}
       <span className="li"><svg width="12" height="12"><circle cx="6" cy="6" r="5" fill="#FFD54F" stroke="#172231" strokeWidth="1" /></svg>화물 있음</span>
+      <span className="li"><svg width="16" height="10"><rect width="16" height="10" rx="2" fill="#5B6B7C" /></svg>대기 장소</span>
+      <span className="li"><svg width="16" height="10"><rect width="16" height="10" rx="2" fill="#2E7D32" /></svg>충전 장소</span>
       <span className="li">R 원격 · S 반자동 · M 수동 · {mode === '3D'
         ? '왼쪽 끌기 회전 · 오른쪽 끌기 이동 · 휠 확대·축소'
         : '휠 확대·축소, 끌어서 이동'}</span>
