@@ -26,6 +26,10 @@ public record VehicleSnapshot(long id, String code, VehicleType vType, Long node
     public String effectiveStatus() {
         return status != null ? status : idle ? "IDLE" : "MOVING";
     }
+    /** Whether it says where it is between two nodes, rather than standing on {@code nodeId}. */
+    public boolean betweenNodes() {
+        return xMm != null || yMm != null;
+    }
     public boolean reportedSince(java.time.OffsetDateTime cutoff) {
         return reportedAt != null && !"INITIAL_CONFIGURATION".equals(source) && !reportedAt.isBefore(cutoff);
     }

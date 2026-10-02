@@ -86,6 +86,8 @@ public class SimulatedVehicles {
    long revisionId=ledger.activeRevision(siteId);
    var state=fleet.find(siteId,revisionId,vehicleId).orElseThrow(()->new IllegalArgumentException("VEHICLE_NOT_FOUND"));
    if(state.nodeId()==null) throw new IllegalArgumentException("POSITION_UNKNOWN");
+   // Given back to the controller between two nodes, it is not idle: it carries on driving.
+   if(state.betweenNodes()&&"REMOTE".equalsIgnoreCase(mode)&&"IDLE".equalsIgnoreCase(status)) status="MOVING";
    var stored=fleet.report(siteId,revisionId,vehicleId,
     new VehicleReport(state.nodeId(),true,true,false,state.carrierPresent(),"SIMULATED",null,mode,status));
    if(state.xMm()!=null&&state.yMm()!=null)
@@ -171,7 +173,6 @@ public class SimulatedVehicles {
   var sim=vehicles.get(vehicleId);
   long at=state.nodeId();
   double budget=Math.max(50,state.speedMmS())*seconds;
-  boolean departed=false;
   while(true){
    var authority=sim.authority();
    int i=authority.indexOf(at);
@@ -181,11 +182,11 @@ public class SimulatedVehicles {
    double along=Objects.equals(sim.segmentTo(),next)?sim.travelled():0;
    var shape=com.amhs.topology.SegmentShape.between(map,at,next);
    double length=shape==null?0:shape.length();
-   if(along==0&&!departed){ report(siteId,vehicleId,at,"MOVING",sim.carrier()); departed=true; }
    double reach=along+budget;
    if(reach<length){
+    // Driving between nodes is always reported as moving, also when it resumes part way along.
     double[] p=shape.atDistance(reach);
-    fleet.reportBetweenNodes(siteId,revisionId,vehicleId,p[0],p[1]);
+    fleet.reportDriving(siteId,revisionId,vehicleId,p[0],p[1]);
     vehicles.computeIfPresent(vehicleId,(id,s)->s.at(next,reach));
     return;
    }

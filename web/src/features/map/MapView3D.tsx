@@ -5,6 +5,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { STATUS_LABEL, type MapData, type VehicleSnapshot } from '../../api';
 import { AGV, OHT, STATUS_COLOR, layerOfNode } from './MapView';
 import { portTitle, segmentPoints, vehiclePlaces, vehiclePoint } from './geometry';
+import { MotionBuffer } from './motion';
 
 /** Map coordinates are millimetres; the scene is in metres. */
 const S = 1 / 1000;
@@ -144,6 +145,7 @@ class World {
   private vehicles = new Map<number, VehicleObject>();
   private nodePos = new Map<number, THREE.Vector3>();
   private map: MapData | null = null;
+  private motion = new MotionBuffer();
   private places = new THREE.Group();
   private placesKey = '';
   private pickable: THREE.Object3D[] = [];
@@ -479,6 +481,7 @@ class World {
 
   setVehicles(vehicles: VehicleSnapshot[], selectedId: number | null, layer: Layer) {
     this.setPlaces(vehicles, layer);
+    if (this.map) this.motion.push(this.map, vehicles);
     const seen = new Set<number>();
     for (const v of vehicles) {
       const point = this.map ? vehiclePoint(this.map, v) : null;
@@ -493,12 +496,7 @@ class World {
         this.vehicles.set(v.id, obj);
         this.fleet.add(obj.group);
       }
-      obj.target.set(p.x, 0, p.z);
-      if (!obj.placed) { obj.group.position.copy(obj.target); obj.placed = true; }
-      else {
-        const d = obj.target.clone().sub(obj.group.position);
-        if (d.lengthSq() > 1e-4) obj.targetYaw = Math.atan2(-d.z, d.x);
-      }
+      if (!obj.placed) { obj.group.position.set(p.x, 0, p.z); obj.placed = true; }
       const status = statusOf(v);
       const color = new THREE.Color(STATUS_COLOR[status] ?? '#5B6B7C');
       obj.band.color.copy(color); obj.band.emissive.copy(color);
@@ -548,10 +546,18 @@ class World {
   private animate() {
     const now = performance.now(), dt = Math.min(0.1, (now - this.last) / 1000);
     this.last = now;
-    // Reports arrive every couple of seconds; the vehicles glide between them instead of jumping.
-    const k = 1 - Math.exp(-dt * 3);
-    for (const obj of this.vehicles.values()) {
-      obj.group.position.lerp(obj.target, k);
+    // Each frame is drawn from the reported track, replayed just behind real time, so a vehicle
+    // moves at its own pace between reports; it faces the way it is going.
+    const k = 1 - Math.exp(-dt * 8);
+    const wall = Date.now();
+    for (const [id, obj] of this.vehicles) {
+      const p = this.motion.at(id, wall);
+      if (p) {
+        const next = this.at(p.x, p.y);
+        const dx = next.x - obj.group.position.x, dz = next.z - obj.group.position.z;
+        if (dx * dx + dz * dz > 1e-6) obj.targetYaw = Math.atan2(-dz, dx);
+        obj.group.position.set(next.x, 0, next.z);
+      }
       let d = obj.targetYaw - obj.yaw;
       d = Math.atan2(Math.sin(d), Math.cos(d));
       obj.yaw += d * Math.min(1, k * 2);

@@ -117,8 +117,9 @@ public class ZoneEvacuation {
      // end of the segment it is on.
      outbox.enqueueForVehicle(siteId,vehicleId,stopCommand,"STOP",
       "{\"relocationId\":"+relocation.id()+",\"vehicleId\":"+vehicleId+",\"reason\":\""+decision+"\"}");
-     boolean stopped=!withdrawal.inFlight()&&vehicle.online()&&vehicle.nodeId()!=null
-      &&"IDLE".equals(vehicle.effectiveStatus())&&vehicle.reportedAt()!=null&&vehicle.reportedAt().isAfter(stopAt)
+     // Standing on a node, not merely saying "idle" somewhere along a segment it may still drive.
+     boolean stopped=!withdrawal.inFlight()&&vehicle.online()&&vehicle.nodeId()!=null&&!vehicle.betweenNodes()
+      &&vehicle.idle()&&"IDLE".equals(vehicle.effectiveStatus())&&vehicle.reportedAt()!=null&&vehicle.reportedAt().isAfter(stopAt)
       &&vehicle.reportedSince(cutoff);
      if(!stopped) return none(vehicleId,decision+"_STOPPING");
     }

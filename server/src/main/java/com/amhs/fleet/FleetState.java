@@ -12,6 +12,8 @@ public interface FleetState {
      * also clears the coordinates again.
      */
     VehicleSnapshot reportBetweenNodes(long siteId, long revisionId, long vehicleId, double xMm, double yMm);
+    /** A vehicle driving between nodes: where it is, and that it is moving, in one report. */
+    VehicleSnapshot reportDriving(long siteId, long revisionId, long vehicleId, double xMm, double yMm);
     /** Locks the given vehicles in ascending id order so two assignments cannot deadlock. */
     void lockForAssignment(long siteId, List<Long> vehicleIds);
 }

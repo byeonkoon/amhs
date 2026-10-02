@@ -53,6 +53,15 @@ class JdbcFleetState implements FleetState {
  }
 
  @Transactional
+ public VehicleSnapshot reportDriving(long siteId,long revisionId,long vehicleId,double xMm,double yMm){
+  int changed=jdbc.update("UPDATE fleet.vehicle_state SET x_mm=?,y_mm=?,status='MOVING',idle=FALSE,"
+   +"reported_at=clock_timestamp(),version=version+1 WHERE site_id=? AND vehicle_id=? AND revision_id=? AND node_id IS NOT NULL",
+   xMm,yMm,siteId,vehicleId,revisionId);
+  if(changed==0) throw new IllegalArgumentException("POSITION_UNKNOWN");
+  return find(siteId,revisionId,vehicleId).orElseThrow();
+ }
+
+ @Transactional
  public VehicleSnapshot reportBetweenNodes(long siteId,long revisionId,long vehicleId,double xMm,double yMm){
   int changed=jdbc.update("UPDATE fleet.vehicle_state SET x_mm=?,y_mm=?,reported_at=clock_timestamp(),"
    +"version=version+1 WHERE site_id=? AND vehicle_id=? AND revision_id=? AND node_id IS NOT NULL",
@@ -76,7 +85,8 @@ class JdbcFleetState implements FleetState {
  }
 
  private static final String SELECT="SELECT p.id,p.code,p.v_type,s.node_id,p.enabled,p.assignment_enabled,"
-  +"COALESCE(s.online,FALSE),COALESCE(s.remote,FALSE),COALESCE(s.idle,FALSE),COALESCE(s.carrier_present,FALSE),"
+  // Between two nodes a vehicle is not idle, whatever it says: nothing may treat it as standing.
+  +"COALESCE(s.online,FALSE),COALESCE(s.remote,FALSE),COALESCE(s.idle,FALSE) AND s.x_mm IS NULL,COALESCE(s.carrier_present,FALSE),"
   +"COALESCE(s.source,'INITIAL_CONFIGURATION'),s.reported_at,s.destination_change_enabled,p.home_node_id,s.mode,s.status,"
   +"s.x_mm,s.y_mm,p.charge_node_id,p.speed_mm_s"
   +" FROM fleet.vehicle_profile p LEFT JOIN fleet.vehicle_state s ON s.site_id=p.site_id AND s.vehicle_id=p.id"

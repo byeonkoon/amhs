@@ -65,7 +65,7 @@ function App() {
         .then(state => setData(d => d ? { ...d, state } : d))
         .catch(() => { /* the two-second reading reports a lost connection */ })
         .finally(() => { busy = false; });
-    }, 500);
+    }, 300);
     return () => { clearInterval(timer); controller.abort(); };
   }, [autoRefresh, menu]);
 

@@ -178,6 +178,70 @@ class MotionAndStopSqlTest {
    .andExpect(status().isUnprocessableEntity()).andExpect(jsonPath("$.code").value("NOT_A_SIMULATED_VEHICLE"));
  }
 
+ // ---- H1, H2: part way along a segment ----
+
+ private void setStateLikeTheScreen(String mode,String status) throws Exception {
+  mvc.perform(put("/api/v1/sites/1/simulation/vehicles/1/state").header("Authorization",TOKEN)
+    .contentType("application/json").content("{\"mode\":\""+mode+"\",\"status\":\""+status+"\"}"))
+   .andExpect(status().isOk());
+ }
+
+ @Test void anIdleClaimPartWayAlongASegmentIsNoStop() throws Exception {
+  for(var how:List.of("disable","stop")){
+   clean();
+   drivingFrom118();
+   long next=held().get(1);
+   var shape=SegmentShape.between(topology.getMap(SITE,REVISION),118L,next);
+   simulator.drive(SITE,shape.length()*0.4/2000.0);
+   var road=held();
+   if(how.equals("disable")){
+    jdbc.update("UPDATE fleet.vehicle_profile SET enabled=FALSE WHERE site_id=? AND id=?",SITE,OHT);
+    assertThat(stepOf().decision()).as(how).isEqualTo("VEHICLE_DISABLED_STOPPING");
+   }else{
+    assertThat(tx.execute(t->moves.stopMove(SITE,OHT)).decision()).as(how).isEqualTo("MOVE_STOPPED_STOPPING");
+   }
+   // The screen's "remote, idle" while it is between two nodes: still not standing anywhere.
+   setStateLikeTheScreen("REMOTE","IDLE");
+   assertThat(now().betweenNodes()).as(how).isTrue();
+   assertThat(now().idle()).as(how).isFalse();
+   // Even a stored "idle" there is not idle: the move and its road stay.
+   jdbc.update("UPDATE fleet.vehicle_state SET status='IDLE',idle=TRUE,reported_at=clock_timestamp() WHERE site_id=? AND vehicle_id=?",SITE,OHT);
+   assertThat(now().idle()).as(how).isFalse();
+   tx.execute(t->moves.evacuateAll(SITE));
+   assertThat(ledger.relocatingVehicleIds(SITE)).as(how).contains(OHT);
+   assertThat(held()).as(how).isEqualTo(road);
+   assertThat(outbox.unresolvedForVehicle(SITE,OHT)).as(how).anyMatch(c->c.commandType().equals("STOP"));
+   // The STOP reaches it, it finishes the segment and stands on the next node: now the move closes.
+   jdbc.update("UPDATE fleet.vehicle_state SET status='MOVING',idle=FALSE WHERE site_id=? AND vehicle_id=?",SITE,OHT);
+   simulator.settle(SITE);
+   sweep.run(SITE,"test",null);
+   for(int i=0;i<10;i++){ simulator.settle(SITE); simulator.drive(SITE,1.0); sweep.run(SITE,"test",null); }
+   assertThat(now().nodeId()).as(how).isEqualTo(next);
+   assertThat(now().betweenNodes()).as(how).isFalse();
+   tx.execute(t->moves.evacuateAll(SITE));
+   assertThat(ledger.relocatingVehicleIds(SITE)).as(how).doesNotContain(OHT);
+   assertThat(held()).as(how).containsOnly(next);
+  }
+ }
+
+ @Test void resumingPartWayAlongASegmentIsReportedAsMoving() throws Exception {
+  drivingFrom118();
+  long next=held().get(1);
+  var shape=SegmentShape.between(topology.getMap(SITE,REVISION),118L,next);
+  simulator.drive(SITE,shape.length()*0.4/2000.0);
+  setStateLikeTheScreen("REMOTE","PAUSED");
+  var paused=now();
+  // Given back with the screen's "remote, idle": it carries on, and says it is moving.
+  setStateLikeTheScreen("REMOTE","IDLE");
+  assertThat(now().status()).isEqualTo("MOVING");
+  simulator.drive(SITE,shape.length()*0.1/2000.0);
+  var resumed=now();
+  assertThat(resumed.status()).isEqualTo("MOVING");
+  assertThat(resumed.idle()).isFalse();
+  assertThat(Math.hypot(resumed.xMm()-shape.ax(),resumed.yMm()-shape.ay()))
+   .isGreaterThan(Math.hypot(paused.xMm()-shape.ax(),paused.yMm()-shape.ay()));
+ }
+
  // ---- an operator stops their move ----
 
  @Test void stoppingAMoveThatNeverLeftEndsItWhereTheVehicleStands(){

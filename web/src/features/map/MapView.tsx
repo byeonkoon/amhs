@@ -1,6 +1,7 @@
 import React from 'react';
 import { MODE_LABEL, STATUS_LABEL, type MapData, type VehicleSnapshot } from '../../api';
 import { portTitle, segmentPath, vehiclePlaces, vehiclePoint } from './geometry';
+import { useSmoothPositions } from './motion';
 
 export const OHT = '#1D6FD8';
 export const AGV = '#9A4A9E';
@@ -47,6 +48,8 @@ export function MapView(props: {
   const node = (id: number) => map.nodes.find(n => n.id === id);
   const typeOfNode = (id: number) => layerOfNode(map, id);
   const visible = (t: 'OHT' | 'AGV') => layer === 'all' || layer === t;
+  // Drawn from the reported track replayed just behind real time, every frame.
+  const smooth = useSmoothPositions(map, vehicles);
 
   const xs = map.nodes.map(n => n.x), ys = map.nodes.map(n => n.y);
   const full: View = React.useMemo(() => {
@@ -184,7 +187,7 @@ export function MapView(props: {
         })()}
 
         {vehicles.map(v => {
-          const at = vehiclePoint(map, v);
+          const at = smooth.get(v.id) ?? vehiclePoint(map, v);
           if (!at || !visible(v.vType)) return null;
           // Drawn around the origin and moved into place, so a new position is a glide, not a jump.
           const n = { x: 0, y: 0 };
@@ -197,7 +200,7 @@ export function MapView(props: {
             + ` · ${v.carrierPresent ? '화물 있음' : '화물 없음'}${v.online ? '' : ' · 오프라인'}`;
           return (
             <g key={v.id} role="button" tabIndex={0} aria-label={`${title} 상세 보기`}
-              style={{ cursor: 'pointer', transform: `translate(${at.x}px, ${at.y}px)`, transition: 'transform .5s linear' }}
+              style={{ cursor: 'pointer', transform: `translate(${at.x}px, ${at.y}px)` }}
               onClick={() => { if (clicked()) props.onSelect(v); }}
               onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); props.onSelect(v); } }}>
               <title>{title}</title>
