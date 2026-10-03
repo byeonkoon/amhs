@@ -20,6 +20,12 @@
  */
 .nav-menu .need { margin-left: auto; flex: none; font-family: var(--mono); font-size: 9.5px;
   padding: 1px 5px; border-radius: 3px; border: 1px solid rgba(255, 255, 255, .22); color: var(--nav-dim); }
+
+/* How many conditions are true now, on the entry itself: a fault is visible from any screen. */
+.nav-menu .count { margin-left: auto; flex: none; font-family: var(--mono); font-size: 9.5px;
+  min-width: 17px; text-align: center; padding: 1px 5px; border-radius: 9px;
+  background: rgba(255, 255, 255, .14); color: #fff; }
+.nav-menu .count.crit { background: var(--crit); color: #fff; }
 .compact .topbar { min-height: 38px; }
 .compact .phead { padding: 10px 14px 0; }
 .compact .phead h1 { font-size: 16.5px; }

@@ -25,7 +25,7 @@ const MENU: Entry[] = [
   { key: 'resources', label: 'Resources', sub: 'Vehicle / Node / Port', ready: true, needs: 'ADMIN' },
   { key: 'equipment', label: 'Equipment', sub: 'EQP / Rack / Slot', ready: true, needs: 'ADMIN' },
   { key: 'inventory', label: 'Inventory', sub: 'Carrier / Stocker', ready: true, needs: 'MANAGER' },
-  { key: 'alarms', label: 'Alarms', sub: 'Event / Notification', ready: false, needs: 'VIEWER' },
+  { key: 'alarms', label: 'Alarms', sub: 'Event / Notification', ready: true, needs: 'VIEWER' },
   { key: 'history', label: 'History', sub: 'Log / Trace', ready: true, needs: 'VIEWER' },
   { key: 'diagnostics', label: 'Diagnostics', sub: 'Health / Recovery', ready: true, needs: 'VIEWER' },
 ];
@@ -61,6 +61,8 @@ export function AppShell(props: {
   subtitle: string;
   server: ServerState;
   session: Session;
+  /** How many conditions are true now, so the count is visible from every screen. */
+  alarms?: { critical: number; warning: number };
   /** The site's run mode as stored, so the frame never claims simulation for a site on real devices. */
   runMode?: 'SIMULATION' | 'OPERATION' | null;
   onAccount: (item: 'system' | 'accounts' | 'signin') => void;
@@ -96,6 +98,13 @@ export function AppShell(props: {
                     <span className="t2">{entry.sub}</span>
                   </span>
                   {entry.ready && !allowed && <span className="need">Lv{ROLE_LEVEL[entry.needs]}</span>}
+                  {/* A count on the entry, so a fault is visible from whatever screen is open. */}
+                  {entry.key === 'alarms' && open && props.alarms && (props.alarms.critical + props.alarms.warning) > 0 && (
+                    <span className={`count${props.alarms.critical ? ' crit' : ''}`}
+                      title={`심각 ${props.alarms.critical} · 주의 ${props.alarms.warning}`}>
+                      {props.alarms.critical + props.alarms.warning}
+                    </span>
+                  )}
                 </button>
               </li>
             );

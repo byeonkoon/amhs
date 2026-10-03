@@ -3,7 +3,8 @@ import { createRoot } from 'react-dom/client';
 import './style.css';
 import './monitor.css';
 import {
-  api, cfgApi, explainDecision, freshness, get, getAs, hasWriteToken, opsApi, send, ApiError, MODE_LABEL, STATUS_LABEL,
+  alarmApi, api, cfgApi, explainDecision, freshness, get, getAs, hasWriteToken, opsApi, send, ApiError, MODE_LABEL, STATUS_LABEL,
+  type AlarmCount,
   type AssignmentView, type Cfg, type Deadlock, type DeadlockPlan, type DeadlockRecovery, type DeviceCommand, type MapData, type NodeHold,
   type OperationOptions, type Session, type TransportOrder, type Vehicle, type VehicleSnapshot,
   type VehicleHeading, type VehicleMove, type ZoneOccupancy,
@@ -23,6 +24,7 @@ import { SignInScreen } from './features/system/SignInScreen';
 import { AccountsScreen } from './features/system/AccountsScreen';
 import { EquipmentScreen } from './features/equipment/EquipmentScreen';
 import { InventoryScreen } from './features/inventory/InventoryScreen';
+import { AlarmsScreen } from './features/alarms/AlarmsScreen';
 import { HistoryScreen } from './features/history/HistoryScreen';
 import { useLive, type Live, type LiveParts } from './live';
 
@@ -65,6 +67,7 @@ function App() {
   const [layer, setLayer] = React.useState<'all' | 'OHT' | 'AGV'>('all');
   const [reload, setReload] = React.useState(0);
   const [loadedAt, setLoadedAt] = React.useState<Date | null>(null);
+  const [alarmCount, setAlarmCount] = React.useState<AlarmCount | null>(null);
   // Live screens follow the site by themselves; the reading keeps what is on screen until the
   // next answer arrives instead of blanking it.
   const [autoRefresh, setAutoRefresh] = React.useState(true);
@@ -132,6 +135,20 @@ function App() {
     return () => controller.abort();
   }, [reload]);
 
+  // The count rides on the shell rather than on the alarms screen, so a fault that appears while
+  // somebody is looking at the map is visible from the map.
+  React.useEffect(() => {
+    let live = true;
+    const read = () => {
+      const c = new AbortController();
+      softly(get<AlarmCount>(alarmApi.count(), c.signal), null).then(v => { if (live && v) setAlarmCount(v); });
+      return c;
+    };
+    let controller = read();
+    const timer = window.setInterval(() => { controller.abort(); controller = read(); }, 5000);
+    return () => { live = false; window.clearInterval(timer); controller.abort(); };
+  }, []);
+
   // Logging out, or being put on a lower level while a screen is open, takes the screen away too.
   // A permission that is withdrawn but still usable on the screen already open was not withdrawn.
   React.useEffect(() => {
@@ -151,6 +168,7 @@ function App() {
       onSelect={k => { setMenu(k); setSelected(null); }}
       onAccount={setMenu}
       session={session} runMode={data?.options?.runMode ?? null}
+      alarms={alarmCount ?? undefined}
       crumb={['Home', page.crumb, page.title]} title={page.title} subtitle={page.subtitle} server={server}>
       {menu === 'signin' ? <SignInScreen session={session} onChanged={retry} />
         : error ? <div className="card"><Failed error={error} onRetry={retry} /></div>
@@ -160,6 +178,7 @@ function App() {
               : menu === 'resources' ? <ConfigurationScreen map={data.map} session={session} />
               : menu === 'equipment' ? <EquipmentScreen session={session} revisionId={REVISION_ID} />
               : menu === 'inventory' ? <InventoryScreen session={session} map={data.map} orders={data.orders} />
+              : menu === 'alarms' ? <AlarmsScreen onGo={setMenu} />
               : menu === 'history' ? <HistoryScreen map={data.map} />
                 : menu === 'transport'
                   ? <TransportScreen orders={data.orders} map={data.map} vehicles={data.state}

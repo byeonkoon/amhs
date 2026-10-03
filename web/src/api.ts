@@ -398,6 +398,31 @@ export const invApi = {
     `/api/v1/sites/${SITE_ID}/inventory/equipment/${unitId}/racks/${rackId}/cells`,
 };
 
+// ---- 알람 (지금 사실인 조건) ----
+
+/**
+ * One thing that is true now and that somebody should do something about.
+ *
+ * `effect` is what makes it worth reading: what the condition is already causing. A line that says
+ * only what is wrong leaves the reader to work out whether it matters, and a screen full of those
+ * gets ignored. `since` is a real timestamp from the thing itself and `sinceMeans` says which one,
+ * because "last reported at" and "started at" are different claims; null means nothing in the data
+ * says when it began, which is itself worth seeing.
+ */
+export type Alarm = {
+  key: string; severity: 'CRITICAL' | 'WARNING'; rule: string;
+  subject: string; summary: string; effect: string;
+  since: string | null; sinceMeans: string;
+  /** The screen that can do something about it. */
+  screen: MenuTarget;
+};
+export type MenuTarget = 'fleet' | 'transport' | 'traffic' | 'diagnostics' | 'inventory';
+export type AlarmCount = { total: number; critical: number; warning: number };
+export const alarmApi = {
+  alarms: () => `/api/v1/sites/${SITE_ID}/alarms`,
+  count: () => `/api/v1/sites/${SITE_ID}/alarms/count`,
+};
+
 /** Authority levels, lowest first. A screen offers what the session says it may do. */
 export type Role = 'VIEWER' | 'OPERATOR' | 'MANAGER' | 'ADMIN';
 /** 1 to 4, the same numbers the login screen and the account list speak in. */
