@@ -222,7 +222,7 @@ const PAGES: Record<MenuKey | AccountPage, { title: string; subtitle: string; cr
   diagnostics: { title: '장비 명령·상태 보고', subtitle: 'Diagnostics · Health / Recovery', crumb: 'Diagnostics' },
   system: { title: '시스템 옵션', subtitle: 'System · Site-wide options', crumb: 'Account' },
   accounts: { title: '계정·권한', subtitle: 'Accounts · Who may do what', crumb: 'Account' },
-  signin: { title: '접속 토큰', subtitle: 'Session · Access token', crumb: 'Account' },
+  signin: { title: '로그인', subtitle: 'Session · Sign in', crumb: 'Account' },
 };
 
 /**

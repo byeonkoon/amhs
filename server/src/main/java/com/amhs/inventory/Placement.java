@@ -11,9 +11,15 @@ import java.time.OffsetDateTime;
  * <p>{@code reason} is how the person knows. It is required, because a record of where something is
  * that does not say how anybody found out is not worth more than a guess, and would be read as
  * though it were.
+ *
+ * <p>The names at the end are labels, carried so a list can say "R-A-01002" rather than an id a
+ * person would have to go and look up. They are joined from the equipment and track tables rather
+ * than being this module's own: what a cell <em>means</em> -- whether it may be filled, and why not
+ * -- is still read through the module that owns that decision.
  */
 public record Placement(long id,long siteId,String carrierCode,Long slotId,Long portId,
-                        String evidence,String reason,String actorCode,OffsetDateTime placedAt,long version){
+                        String evidence,String reason,String actorCode,OffsetDateTime placedAt,long version,
+                        String slotCode,String rackCode,String unitCode,String unitName,String portCode){
  /** True when the cell is known; false when all that is known is the port it was handed over at. */
  public boolean inACell(){ return slotId!=null; }
 }

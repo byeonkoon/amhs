@@ -1,8 +1,8 @@
 import React from 'react';
 import {
-  ApiError, get, invApi, opsApi, send,
-  type CellView, type Cfg, type EquipmentSettings, type InventorySummary, type MapData,
-  type Placement, type RackSettings, type Session, type TransportOrder,
+  ApiError, get, invApi, send,
+  type CellView, type InventorySummary, type MapData,
+  type Placement, type Session, type StoragePlace, type TransportOrder,
 } from '../../api';
 import { Chip, Empty } from '../../shell/States';
 import { Grid, Panel, Row } from '../../shell/Panel';
@@ -27,9 +27,7 @@ export function InventoryScreen({ session, map, orders }:
   { session: Session; map: MapData; orders: TransportOrder[] }) {
   const [summary, setSummary] = React.useState<InventorySummary | null>(null);
   const [placements, setPlacements] = React.useState<Placement[] | null>(null);
-  const [units, setUnits] = React.useState<Cfg<EquipmentSettings>[]>([]);
-  const [unitId, setUnitId] = React.useState<number | null>(null);
-  const [racks, setRacks] = React.useState<Cfg<RackSettings>[]>([]);
+  const [places, setPlaces] = React.useState<StoragePlace[]>([]);
   const [rackId, setRackId] = React.useState<number | null>(null);
   const [cells, setCells] = React.useState<CellView[]>([]);
   const [notice, setNotice] = React.useState<{ tone: string; text: string } | null>(null);
@@ -45,28 +43,22 @@ export function InventoryScreen({ session, map, orders }:
       .catch(cause => { if (!aborted(cause)) setPlacements([]); });
     get<InventorySummary>(invApi.summary(), c.signal).then(setSummary)
       .catch(cause => { if (!aborted(cause)) setSummary(null); });
-    get<Cfg<EquipmentSettings>[]>(opsApi.equipment(), c.signal)
-      .then(list => { setUnits(list); setUnitId(id => id ?? list[0]?.id ?? null); })
-      .catch(cause => { if (!aborted(cause)) setUnits([]); });
+    // Places, not equipment: the screen opens on somewhere that actually has shelves.
+    get<StoragePlace[]>(invApi.places(), c.signal)
+      .then(list => { setPlaces(list); setRackId(id => list.some(p => p.rackId === id) ? id : list[0]?.rackId ?? null); })
+      .catch(cause => { if (!aborted(cause)) setPlaces([]); });
     return () => c.abort();
   }, [reload]);
 
-  React.useEffect(() => {
-    if (unitId === null) { setRacks([]); setRackId(null); return; }
-    const c = new AbortController();
-    get<Cfg<RackSettings>[]>(opsApi.racks(unitId), c.signal)
-      .then(list => { setRacks(list); setRackId(id => list.some(r => r.id === id) ? id : list[0]?.id ?? null); })
-      .catch(cause => { if (!aborted(cause)) setRacks([]); });
-    return () => c.abort();
-  }, [unitId, reload]);
+  const place = places.find(p => p.rackId === rackId) ?? null;
 
   React.useEffect(() => {
-    if (unitId === null || rackId === null) { setCells([]); return; }
+    if (!place) { setCells([]); return; }
     const c = new AbortController();
-    get<CellView[]>(invApi.cells(unitId, rackId), c.signal).then(setCells)
+    get<CellView[]>(invApi.cells(place.unitId, place.rackId), c.signal).then(setCells)
       .catch(cause => { if (!aborted(cause)) setCells([]); });
     return () => c.abort();
-  }, [unitId, rackId, reload]);
+  }, [place?.unitId, place?.rackId, reload]);
 
   async function act(run: () => Promise<unknown>, done: string) {
     setBusy(true); setNotice(null);
@@ -78,13 +70,13 @@ export function InventoryScreen({ session, map, orders }:
 
   /** Recording a carrier into a cell, which is also how it is moved to another one. */
   const intoCell = (cell: CellView) => {
-    if (unitId === null || rackId === null) return;
+    if (!place) return;
     const code = carrier.trim();
     if (!code) { setNotice({ tone: 'er', text: '먼저 화물 ID를 입력하세요. 어떤 화물인지 없이 칸만 고를 수는 없습니다.' }); return; }
     const reason = window.prompt(`${code}이(가) ${cell.code}에 있다는 것을 어떻게 확인했는지 적어 주세요.`);
     if (reason === null || !reason.trim()) return;
     act(() => send<Placement>(invApi.placement(code), 'PUT',
-      { unitId, rackId, slotId: cell.slotId, reason }, '화물 위치 기록'),
+      { unitId: place.unitId, rackId: place.rackId, slotId: cell.slotId, reason }, '화물 위치 기록'),
       `${code}을(를) ${cell.code}에 기록했습니다.`);
   };
 
@@ -105,9 +97,6 @@ export function InventoryScreen({ session, map, orders }:
       `${p.carrierCode}의 위치 기록을 지웠습니다.`);
   };
 
-  const rack = racks.find(r => r.id === rackId) ?? null;
-  const unit = units.find(u => u.id === unitId) ?? null;
-  const cellOf = new Map(cells.map(c => [c.slotId, c]));
   const inTransport = orders
     .filter(o => o.carrierCode && !TERMINAL.has(o.status))
     .map(o => ({ code: o.carrierCode as string, status: o.status, where: o.carrierLocation ?? 'UNKNOWN' }));
@@ -145,13 +134,15 @@ export function InventoryScreen({ session, map, orders }:
               ? <Empty title="기록된 화물이 없습니다"
                   hint="설비 안의 위치는 설비가 알려 주지 않습니다. 확인한 사람이 기록해야 남습니다." />
               : (
-                <Grid cols="1fr 96px 70px 58px" head={['화물', '위치', '확인', '']}>
+                <Grid cols="1fr 150px 70px 58px" head={['화물', '위치', '확인', '']}>
                   {placements.map(p => (
                     <Row key={p.id}>
                       <span className="mono">{p.carrierCode}</span>
-                      <span>{p.slotId != null
-                        ? <span className="mono">{cellOf.get(p.slotId)?.code ?? `셀 #${p.slotId}`}</span>
-                        : <Chip tone="wr">셀 미지정</Chip>}</span>
+                      <span title={placeOf(p)}
+                        style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {p.slotCode
+                          ? <span className="mono">{p.slotCode}</span>
+                          : <><Chip tone="wr">셀 미지정</Chip> <span className="mono" style={{ fontSize: 10 }}>{p.portCode ?? ''}</span></>}</span>
                       <span title={`${p.reason}${p.actorCode ? ` · ${p.actorCode}` : ''}`}
                         style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {p.reason}</span>
@@ -215,13 +206,13 @@ export function InventoryScreen({ session, map, orders }:
           </div>
           <div className="cb" style={{ display: 'grid', gap: 10 }}>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              <select style={picker} value={unitId ?? ''} disabled={units.length === 0}
-                onChange={e => setUnitId(e.target.value ? Number(e.target.value) : null)}>
-                {units.map(u => <option key={u.id} value={u.id}>{u.settings.name || u.settings.code}</option>)}
-              </select>
-              <select style={picker} value={rackId ?? ''} disabled={racks.length === 0}
+              <select style={wide} value={rackId ?? ''} disabled={places.length === 0}
                 onChange={e => setRackId(e.target.value ? Number(e.target.value) : null)}>
-                {racks.map(r => <option key={r.id} value={r.id}>{r.settings.code} ({r.settings.levels}단 × {r.settings.columns}열)</option>)}
+                {places.map(p => (
+                  <option key={p.rackId} value={p.rackId}>
+                    {(p.unitName || p.unitCode)} · {p.rackCode} — {p.occupied}/{p.cells}칸{p.enabled ? '' : ' (중지)'}
+                  </option>
+                ))}
               </select>
               <input style={field} value={carrier} placeholder="화물 ID" aria-label="화물 ID"
                 onChange={e => setCarrier(e.target.value)} />
@@ -231,10 +222,13 @@ export function InventoryScreen({ session, map, orders }:
                   : 'Lv3 운영 관리 권한이 있어야 기록할 수 있습니다.'}
               </span>
             </div>
-            {cells.length === 0
-              ? <Empty title="셀이 없습니다" hint="설비와 랙을 고르면 그 크기에서 생성된 셀이 표시됩니다." />
-              : <CellGrid cells={cells} columns={rack?.settings.columns ?? 1}
-                  onPick={mayChange && !busy ? intoCell : undefined} />}
+            {places.length === 0
+              ? <Empty title="보관 장소가 없습니다"
+                  hint="랙이 있는 설비가 보관 장소입니다. 설비 화면에서 랙을 먼저 구성하세요." />
+              : cells.length === 0
+                ? <Empty title="셀이 없습니다" hint="이 랙의 크기에서 생성된 셀이 아직 없습니다." />
+                : <CellGrid cells={cells} columns={place?.columns ?? 1}
+                    onPick={mayChange && !busy ? intoCell : undefined} />}
             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 11, color: 'var(--mut)' }}>
               <Legend swatch={{ background: '#E3EDF9', borderColor: 'var(--oht)' }} label="화물 있음" />
               <Legend swatch={{ background: 'var(--srf)', borderColor: 'var(--ln2)' }} label="빈 칸" />
@@ -242,7 +236,7 @@ export function InventoryScreen({ session, map, orders }:
               <Legend swatch={{ background: '#E3EDF9', borderColor: 'var(--warn)' }} label="사용 금지인데 화물 있음" />
             </div>
             <p className="hint" style={{ margin: 0 }}>
-              {unit ? `${unit.settings.name || unit.settings.code} · ` : ''}
+              {place ? `${place.unitName || place.unitCode} · ${place.rackCode} · ${place.levels}단 × ${place.columns}열 · 사용 금지 ${place.blockedCells}칸. ` : ''}
               사용 금지는 비워 두기로 한 결정이고, 화물 있음은 지금 들어 있다는 사실입니다. 둘이 한 칸에 겹칠
               수 있어 따로 표시합니다 — 하나로 합치면 일부러 비워 둔 칸이 그냥 찬 칸으로 보이고, 왜 비워
               뒀는지가 사라집니다.
@@ -296,6 +290,13 @@ function Legend({ swatch, label }: { swatch: React.CSSProperties; label: string 
   );
 }
 
+/** Where it is, named the way somebody standing on the floor would say it. */
+function placeOf(p: Placement): string {
+  const unit = p.unitName || p.unitCode || '';
+  if (p.slotCode) return [unit, p.rackCode, p.slotCode].filter(Boolean).join(' · ');
+  return `${unit || p.portCode || '포트'} 인계 · 어느 칸인지는 기록되지 않았습니다`;
+}
+
 /** Both facts in one sentence, in the order somebody would ask them. */
 function describe(c: CellView): string {
   const held = c.carrierCode ? `${c.carrierCode} 있음` : '비어 있음';
@@ -326,7 +327,7 @@ const field: React.CSSProperties = {
   border: '1px solid var(--ln2)', borderRadius: 5, padding: '5px 8px',
   background: 'var(--srf)', color: 'var(--ink)', fontSize: 12, minWidth: 130,
 };
-const picker: React.CSSProperties = { ...field, minWidth: 150 };
+const wide: React.CSSProperties = { ...field, minWidth: 260 };
 const ghost: React.CSSProperties = {
   border: '1px solid var(--ln2)', background: 'var(--srf)', color: 'var(--ink2)',
   borderRadius: 4, padding: '2px 8px', fontSize: 10.5, cursor: 'pointer',

@@ -360,6 +360,9 @@ export type Placement = {
   slotId: number | null; portId: number | null;
   evidence: 'OPERATOR' | 'DEVICE'; reason: string; actorCode: string | null;
   placedAt: string; version: number;
+  /** Labels so a list can name the place instead of printing an id nobody can look up. */
+  slotCode: string | null; rackCode: string | null;
+  unitCode: string | null; unitName: string | null; portCode: string | null;
 };
 /**
  * One cell with both of the independent things that can be true of it. `usable` is a decision
@@ -375,11 +378,22 @@ export type InventorySummary = {
   stored: number; inCells: number; atPortOnly: number; inTransport: number;
   cells: number; blockedCells: number;
 };
+/**
+ * One rack, named by the equipment it belongs to: a place something can be put down. This is not
+ * the equipment list — a process machine the controller only hands over to has no shelves, and
+ * offering it here would open a screen about storage on somewhere nothing is stored.
+ */
+export type StoragePlace = {
+  unitId: number; unitCode: string; unitName: string; kind: EquipmentKind;
+  rackId: number; rackCode: string; levels: number; columns: number; enabled: boolean;
+  cells: number; blockedCells: number; occupied: number;
+};
 export const invApi = {
   placements: () => `/api/v1/sites/${SITE_ID}/inventory/placements`,
   placement: (carrierCode: string) =>
     `/api/v1/sites/${SITE_ID}/inventory/placements/${encodeURIComponent(carrierCode)}`,
   summary: () => `/api/v1/sites/${SITE_ID}/inventory/summary`,
+  places: () => `/api/v1/sites/${SITE_ID}/inventory/places`,
   cells: (unitId: number, rackId: number) =>
     `/api/v1/sites/${SITE_ID}/inventory/equipment/${unitId}/racks/${rackId}/cells`,
 };

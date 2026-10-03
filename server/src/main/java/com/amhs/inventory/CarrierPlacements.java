@@ -46,7 +46,7 @@ public class CarrierPlacements {
  @Transactional(readOnly=true)
  public List<Placement> placements(long site){
   guard.requireSite(site);
-  return jdbc.query(SELECT+" WHERE site_id=? ORDER BY carrier_code",PLACEMENT,site);
+  return jdbc.query(SELECT+" WHERE p.site_id=? ORDER BY p.carrier_code",PLACEMENT,site);
  }
 
  /**
@@ -60,7 +60,7 @@ public class CarrierPlacements {
  public List<CellView> cells(long site,long unitId,long rackId){
   var configured=equipment.slots(site,unitId,rackId);
   var held=new LinkedHashMap<Long,Placement>();
-  for(var p:jdbc.query(SELECT+" WHERE site_id=? AND slot_id IS NOT NULL",PLACEMENT,site))
+  for(var p:jdbc.query(SELECT+" WHERE p.site_id=? AND p.slot_id IS NOT NULL",PLACEMENT,site))
    held.put(p.slotId(),p);
   var out=new ArrayList<CellView>(configured.size());
   for(SlotView s:configured){
@@ -155,6 +155,33 @@ public class CarrierPlacements {
   */
  public record Summary(int stored,int inCells,int atPortOnly,int inTransport,int cells,int blockedCells){}
 
+ /**
+  * Every rack there is, which is to say every place a carrier can be put down.
+  *
+  * <p>This is not the equipment list. Equipment the controller merely hands over to -- a process
+  * machine with no shelves -- is equipment, but it is not somewhere anything is stored, and
+  * offering it here would mean a screen about storage opening on a place that has none.
+  */
+ @Transactional(readOnly=true)
+ public List<StoragePlace> places(long site){
+  guard.requireSite(site);
+  return jdbc.query(
+   "SELECT u.id,u.code,u.name,u.kind,r.id,r.code,r.levels,r.columns,(r.enabled AND u.enabled),"
+   +" (SELECT count(*) FROM equipment.slot s WHERE s.rack_id=r.id),"
+   +" (SELECT count(*) FROM equipment.slot s WHERE s.rack_id=r.id AND s.usable=FALSE),"
+   +" (SELECT count(*) FROM equipment.slot s JOIN inventory.placement p ON p.slot_id=s.id WHERE s.rack_id=r.id)"
+   +" FROM equipment.rack r JOIN equipment.unit u ON u.id=r.unit_id"
+   +" WHERE u.site_id=? ORDER BY u.code,r.code",
+   (r,n)->new StoragePlace(r.getLong(1),r.getString(2),r.getString(3),r.getString(4),
+    r.getLong(5),r.getString(6),r.getInt(7),r.getInt(8),r.getBoolean(9),
+    r.getInt(10),r.getInt(11),r.getInt(12)),site);
+ }
+
+ /** One rack, named by the equipment it is part of, with how full it is. */
+ public record StoragePlace(long unitId,String unitCode,String unitName,String kind,
+                            long rackId,String rackCode,int levels,int columns,boolean enabled,
+                            int cells,int blockedCells,int occupied){}
+
  private Placement write(long site,String carrier,Long slotId,Long portId,String reason,String actorCode,
                          String conflictCode){
   try{
@@ -168,7 +195,7 @@ public class CarrierPlacements {
    // The index decided, not this method: somebody else got there inside the same moment.
    throw new ConfigurationException(409,conflictCode);
   }
-  return jdbc.query(SELECT+" WHERE site_id=? AND carrier_code=?",PLACEMENT,site,carrier).getFirst();
+  return jdbc.query(SELECT+" WHERE p.site_id=? AND p.carrier_code=?",PLACEMENT,site,carrier).getFirst();
  }
 
  private boolean rackEnabled(long unitId,long rackId){
@@ -190,11 +217,20 @@ public class CarrierPlacements {
   return trimmed;
  }
 
- private static final String SELECT="SELECT id,site_id,carrier_code,slot_id,port_id,evidence,reason,"
-  +"actor_code,placed_at,version FROM inventory.placement";
+ // The joins are for labels only: a list that says "셀 #5" makes a person go and look up which
+ // cell that is. What a cell means -- whether it may be filled -- is still read through the
+ // module that owns that decision, not taken from these tables.
+ private static final String SELECT="SELECT p.id,p.site_id,p.carrier_code,p.slot_id,p.port_id,p.evidence,"
+  +"p.reason,p.actor_code,p.placed_at,p.version,s.code,r.code,u.code,u.name,t.code"
+  +" FROM inventory.placement p"
+  +" LEFT JOIN equipment.slot s ON s.id=p.slot_id"
+  +" LEFT JOIN equipment.rack r ON r.id=s.rack_id"
+  +" LEFT JOIN equipment.unit u ON u.id=r.unit_id"
+  +" LEFT JOIN topology.port t ON t.id=p.port_id";
  private static final RowMapper<Placement> PLACEMENT=(r,n)->new Placement(
   r.getLong(1),r.getLong(2),r.getString(3),
   r.getObject(4)==null?null:r.getLong(4),r.getObject(5)==null?null:r.getLong(5),
   r.getString(6),r.getString(7),r.getString(8),
-  r.getObject(9,java.time.OffsetDateTime.class),r.getLong(10));
+  r.getObject(9,java.time.OffsetDateTime.class),r.getLong(10),
+  r.getString(11),r.getString(12),r.getString(13),r.getString(14),r.getString(15));
 }

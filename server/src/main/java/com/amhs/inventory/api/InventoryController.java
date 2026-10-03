@@ -29,6 +29,10 @@ class InventoryController {
  @GetMapping("/summary")
  CarrierPlacements.Summary summary(@PathVariable long siteId){ return placements.summary(siteId); }
 
+ /** The racks, which is to say the places something can be put down. Not the equipment list. */
+ @GetMapping("/places")
+ List<CarrierPlacements.StoragePlace> places(@PathVariable long siteId){ return placements.places(siteId); }
+
  @GetMapping("/equipment/{unitId}/racks/{rackId}/cells")
  List<CellView> cells(@PathVariable long siteId,@PathVariable long unitId,@PathVariable long rackId){
   return placements.cells(siteId,unitId,rackId);
