@@ -56,6 +56,15 @@ public class LiveFeed implements DisposableBean {
   long passes;
   long lastSentAt=System.nanoTime();
   final Map<String,String> last=new LinkedHashMap<>();
+  /**
+   * Parts whose last attempted read failed and which have not been read since.
+   *
+   * <p>This is remembered on the channel rather than worked out per pass, because a pass is not
+   * the unit freshness belongs to. Most passes read only what moves; if freshness were decided by
+   * the pass, one of those would report everything current while the work and deadlock reads were
+   * still failing, and the screen would go back to calling the past the present.
+   */
+  final Set<String> unread=new LinkedHashSet<>();
   final Set<WebSocketSession> sessions=new CopyOnWriteArraySet<>();
   Channel(long siteId){ this.siteId=siteId; }
  }
@@ -92,9 +101,20 @@ public class LiveFeed implements DisposableBean {
   return channel==null?0:channel.sessions.size();
  }
 
- /** One pass over every watched site now, outside the timer; for tests. */
+ /** One pass over every watched site now, outside the timer, reading everything; for tests. */
  public void passNow(){
   for(var channel:channels.values()) synchronized(channel){ if(!channel.sessions.isEmpty()) pass(channel,true); }
+ }
+
+ /**
+  * One pass over a site now, choosing whether the slow parts are read at all; for tests.
+  *
+  * <p>Most real passes read only what moves, and that is exactly the case where freshness is easy
+  * to get wrong, so a test has to be able to ask for one.
+  */
+ void passOnce(long siteId,boolean everything){
+  var channel=channels.get(siteId);
+  if(channel!=null) synchronized(channel){ pass(channel,everything); }
  }
 
  private synchronized void start(){
@@ -116,6 +136,12 @@ public class LiveFeed implements DisposableBean {
   var parts=new ArrayList<>(LiveSite.FAST);
   if(slow) parts.addAll(LiveSite.SLOW);
   var reading=site.read(channel.siteId,parts);
+  // A part stops being out of date only by being read, and becomes out of date only by being
+  // tried and failing. A part this pass did not ask about is left exactly as it was: reading what
+  // moves quickly says nothing about work that is still unreadable.
+  boolean freshnessChanged=channel.unread.removeAll(reading.parts().keySet());
+  freshnessChanged|=channel.unread.addAll(reading.failed());
+
   var changed=new LinkedHashMap<String,String>();
   reading.parts().forEach((part,value)->{
    String text=write(value);
@@ -124,27 +150,40 @@ public class LiveFeed implements DisposableBean {
   if(!changed.isEmpty()){
    channel.seq++;
    channel.last.putAll(changed);
-   broadcast(channel,message("delta",channel.seq,changed));
-  }
-  // What could not be read is said, not left to look like nothing changed. A screen that keeps
-  // calling itself live while the site cannot be read is showing the past as the present.
-  if(!reading.complete()){
-   broadcast(channel,message("stale",channel.seq,Map.of()));
-  }else if(changed.isEmpty()&&System.nanoTime()-channel.lastSentAt>=heartbeatMs*1_000_000L){
-   broadcast(channel,message("heartbeat",channel.seq,Map.of()));
+   // Every message carries what is unread, so this one says it too and nothing extra is needed.
+   broadcast(channel,message("delta",channel,changed));
+  }else if(freshnessChanged||System.nanoTime()-channel.lastSentAt>=heartbeatMs*1_000_000L){
+   // Freshness changing is worth a message of its own and does not wait for the heartbeat: on a
+   // quiet site a recovered read produces no delta, and without this the screen would stay
+   // marked out of date for as long as nothing happened to move.
+   broadcast(channel,message("heartbeat",channel,Map.of()));
   }
  }
 
- private String snapshot(Channel channel){ return message("snapshot",channel.seq,channel.last); }
+ private String snapshot(Channel channel){ return message("snapshot",channel,channel.last); }
 
- /** Parts are already JSON text, so the message is put together around them rather than re-read. */
- private String message(String type,long seq,Map<String,String> parts){
+ /**
+  * Parts are already JSON text, so the message is put together around them rather than re-read.
+  *
+  * <p>Every message names what is unread. Freshness is a property of the channel, not of the kind
+  * of message, so a screen never has to infer it from whether data happened to change -- which is
+  * the one thing it cannot be inferred from.
+  */
+ private String message(String type,Channel channel,Map<String,String> parts){
   var out=new StringBuilder(256);
-  out.append("{\"type\":\"").append(type).append("\",\"epoch\":\"").append(epoch).append("\",\"seq\":").append(seq)
+  out.append("{\"type\":\"").append(type).append("\",\"epoch\":\"").append(epoch)
+   .append("\",\"seq\":").append(channel.seq)
    .append(",\"at\":\"").append(OffsetDateTime.now()).append('"');
-  // A heartbeat and a stale notice both carry no data: one says nothing changed, the other says
-  // nothing could be read.
-  if(!"heartbeat".equals(type)&&!"stale".equals(type)){
+  out.append(",\"unread\":[");
+  boolean firstUnread=true;
+  for(String part:channel.unread){
+   if(!firstUnread) out.append(',');
+   firstUnread=false;
+   out.append('"').append(part).append('"');
+  }
+  out.append(']');
+  // A heartbeat carries no data: it says only where the channel stands and what it cannot read.
+  if(!"heartbeat".equals(type)){
    out.append(",\"data\":{");
    boolean first=true;
    for(var e:parts.entrySet()){

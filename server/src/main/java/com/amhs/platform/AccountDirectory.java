@@ -48,6 +48,10 @@ public class AccountDirectory {
  public AccountView update(long site,long id,long expectedVersion,AccountSettings s){
   guard.requireSite(site); ConfigurationException.require(expectedVersion>=0,"INVALID_VERSION");
   s.validate();
+  // How many administrators there are is not this row's business, so this row's version cannot
+  // protect it. Two writers would each read the other as still there and both commit, leaving
+  // none. The count and the change are made one step.
+  guard.decideAccountsAlone(site);
   var current=account(site,id);
   boolean losesAdmin=current.role()==Role.ADMIN&&(s.parsedRole()!=Role.ADMIN||!s.enabled());
   // Taking away the last way in is not a change anybody means to make, and it cannot be undone

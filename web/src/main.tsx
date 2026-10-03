@@ -182,13 +182,29 @@ function App() {
 function LiveBadge(props: { live: Live; enabled: boolean }) {
   const look = !props.enabled ? { tone: 'id', label: '갱신 꺼짐', title: '자동 갱신을 끄면 새로고침할 때만 바뀝니다.' }
     : props.live.status === 'live' ? { tone: 'ok', label: `실시간 #${props.live.seq}`, title: '서버가 바뀐 내용을 바로 보냅니다. 번호가 이어지지 않으면 전체를 다시 받습니다.' }
-      // Connected and in step, but the server said it could not read the site: what is shown is the
-      // last thing it could read, so it must not be presented as the present.
-      : props.live.status === 'stale' ? { tone: 'er', label: '조회 불가 · 과거 상태', title: '연결은 되어 있지만 서버가 사이트를 읽지 못했습니다. 화면의 내용은 마지막으로 읽힌 상태이며 현재가 아닙니다.' }
+      // Connected and in step, but the server named parts it could not read. Those parts show the
+      // last thing it could read, so they must not be presented as the present — and saying which
+      // ones is the difference between a warning somebody can act on and one they learn to ignore.
+      : props.live.status === 'stale' ? {
+        tone: 'er',
+        label: `조회 불가 · ${partNames(props.live.unread)}`,
+        title: `연결은 되어 있지만 서버가 ${partNames(props.live.unread)}을(를) 읽지 못했습니다. 그 항목은 마지막으로 읽힌 상태이며 현재가 아닙니다. 나머지 항목은 계속 갱신됩니다.`,
+      }
       : props.live.status === 'resyncing' ? { tone: 'wr', label: '재동기화 중', title: '빠진 변경이 있어 전체를 다시 받는 중입니다.' }
         : props.live.status === 'connecting' ? { tone: 'wr', label: '실시간 연결 중', title: '연결되기 전까지 2초마다 조회합니다.' }
           : { tone: 'er', label: '실시간 끊김 · 2초 조회', title: '실시간 연결이 끊겨 2초마다 조회합니다. 다시 연결을 시도합니다.' };
   return <span style={{ marginLeft: 6 }} title={look.title}><Chip tone={look.tone}>{look.label}</Chip></span>;
+}
+
+/** The server's part names as the screens name them, so a warning says what an operator looks at. */
+const PART_LABEL: Record<string, string> = {
+  revisionId: '지도 버전', vehicles: '차량', holds: '구간 점유', headings: '목적지', moves: '이동',
+  assignments: '배차', orders: '반송 작업', deadlocks: '교착', zones: 'Zone', inDoubt: '결과 미확인 명령',
+  deadlockPlans: '교착 해소안', recoveries: '양보 복구',
+};
+function partNames(parts: string[]): string {
+  if (parts.length === 0) return '일부 항목';
+  return parts.map(p => PART_LABEL[p] ?? p).join('·');
 }
 
 const PAGES: Record<MenuKey | AccountPage, { title: string; subtitle: string; crumb: string }> = {

@@ -18,4 +18,21 @@ public class ConfigurationLock {
  }
  public long nextId(){return jdbc.queryForObject("SELECT nextval('platform.configuration_id')",Long.class);}
  public void changed(int count){if(count!=1)throw new ConfigurationException(409,"VERSION_CONFLICT");}
+ /**
+  * Lets one account decision for a site happen at a time.
+  *
+  * <p>A rule such as "not the last administrator" is about how many rows there are, not about the
+  * row being written. Each writer checks its own row's version, those versions are independent, and
+  * so two writers each read that the other administrator is still there and both commit: nobody is
+  * left who can hand the authority back. Counting and changing have to be one step, and no row
+  * version can make them one.
+  *
+  * <p>It is taken before anything is read, so the count a decision rests on cannot change under it.
+  * Unlike {@link #acquire} it does not ask the site to be in maintenance: shutting a login off is
+  * most needed while the site is running.
+  */
+ @Transactional(propagation=Propagation.MANDATORY)
+ public void decideAccountsAlone(long siteId){
+  jdbc.queryForObject("SELECT pg_advisory_xact_lock(hashtext('amhs-accounts'),CAST(? AS INT))",Object.class,(int)siteId);
+ }
 }
