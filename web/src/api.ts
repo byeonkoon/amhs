@@ -437,6 +437,34 @@ export const invApi = {
     `/api/v1/sites/${SITE_ID}/inventory/equipment/${unitId}/racks/${rackId}/cells`,
 };
 
+// ---- 개요 ----
+
+/**
+ * The site in one answer. Every number says what it counted, because a figure on an overview is
+ * read as a fact about the site and almost never looked up afterwards.
+ */
+export type Overview = {
+  operation: { mode: string; runMode: 'SIMULATION' | 'OPERATION'; autoDispatch: boolean };
+  /** `notReporting` has never said where it is; `stale` said so and stopped. Only one is a fault. */
+  fleet: { configured: number; usable: number; working: number; outOfService: number; notReporting: number; stale: number };
+  /** `needingAPerson` is waiting on somebody, which is the only one that will not move on its own. */
+  work: { queued: number; running: number; needingAPerson: number; oldestQueuedSeconds: number | null };
+  /**
+   * `medianSeconds` is the middle time from a job starting to it ending, over completed ones only;
+   * `measured` says how many it is the middle of, so a median of two is visible as a median of two.
+   */
+  throughput: {
+    windowMinutes: number; finished: number; completed: number; cancelled: number; failed: number;
+    medianSeconds: number | null; measured: number;
+  };
+  alarms: AlarmCount;
+  stored: InventorySummary;
+  at: string;
+};
+export const overviewApi = {
+  overview: (windowMinutes = 60) => `/api/v1/sites/${SITE_ID}/overview?windowMinutes=${windowMinutes}`,
+};
+
 // ---- 알람 (지금 사실인 조건) ----
 
 /**

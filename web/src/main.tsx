@@ -25,6 +25,7 @@ import { AccountsScreen } from './features/system/AccountsScreen';
 import { EquipmentScreen } from './features/equipment/EquipmentScreen';
 import { InventoryScreen } from './features/inventory/InventoryScreen';
 import { AlarmsScreen } from './features/alarms/AlarmsScreen';
+import { OverviewScreen } from './features/overview/OverviewScreen';
 import { HistoryScreen } from './features/history/HistoryScreen';
 import { useLive, type Live, type LiveParts } from './live';
 
@@ -179,6 +180,7 @@ function App() {
               : menu === 'equipment' ? <EquipmentScreen session={session} revisionId={REVISION_ID} simulated={data.options?.runMode === 'SIMULATION'} />
               : menu === 'inventory' ? <InventoryScreen session={session} map={data.map} orders={data.orders} />
               : menu === 'alarms' ? <AlarmsScreen onGo={setMenu} />
+              : menu === 'overview' ? <OverviewScreen onGo={setMenu} />
               : menu === 'history' ? <HistoryScreen map={data.map} />
                 : menu === 'transport'
                   ? <TransportScreen orders={data.orders} map={data.map} vehicles={data.state}

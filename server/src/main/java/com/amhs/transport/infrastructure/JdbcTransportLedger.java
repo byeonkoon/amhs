@@ -49,6 +49,11 @@ class JdbcTransportLedger implements TransportLedger {
    +" ORDER BY id DESC LIMIT ?",MAPPER,siteId,limit);
  }
  @Transactional(readOnly=true)
+ public List<TransportOrder> finishedSince(long siteId,java.time.OffsetDateTime since){
+  return jdbc.query("SELECT "+COLS+" FROM transport.order WHERE site_id=? AND terminal_at>=?"
+   +" AND status IN ('COMPLETED','CANCELLED','FAILED') ORDER BY terminal_at",MAPPER,siteId,since);
+ }
+ @Transactional(readOnly=true)
  public List<TransportOrder> dispatchQueue(long siteId,int limit){ return dispatchQueue(siteId,null,limit); }
  @Transactional(readOnly=true)
  public List<TransportOrder> dispatchQueue(long siteId,TransportOrder after,int limit){

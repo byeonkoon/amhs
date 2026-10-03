@@ -102,6 +102,15 @@ public interface TransportLedger {
  List<TransportOrder> listActive(long siteId,int limit);
  /** Orders that have finished (completed, cancelled or failed), newest first. */
  List<TransportOrder> listFinished(long siteId,int limit);
+
+ /**
+  * Orders that ended at or after {@code since}, however many that is.
+  *
+  * <p>Counting over a window needs every order in it, not the most recent few: a count taken from
+  * a capped list is right only while the cap is never reached, and wrong without saying so exactly
+  * when the site is busiest.
+  */
+ List<TransportOrder> finishedSince(long siteId,java.time.OffsetDateTime since);
  /** Applies a checked transition resting on the system's own bookkeeping. */
  default TransportOrder transition(long siteId,long orderId,OrderStatus target,String reason,String actorCode,String traceId){
   return transition(siteId,orderId,target,reason,actorCode,traceId,TransitionEvidence.system());

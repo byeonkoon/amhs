@@ -18,6 +18,19 @@ public class OperationOptionConfiguration {
   return jdbc.query("SELECT site_id FROM platform.site_operation WHERE run_mode='SIMULATION' ORDER BY site_id",(r,n)->r.getLong(1));
  }
 
+ /**
+  * The site's operating mode as stored: RUNNING, MAINTENANCE or RECOVERING.
+  *
+  * <p>Separate from the run mode, which says whether vehicles are simulated or real. This one says
+  * whether the site is working, being worked on, or being put back together, and it is what decides
+  * whether configuration may be changed at all.
+  */
+ public String mode(long site){
+  var rows=jdbc.query("SELECT mode FROM platform.site_operation WHERE site_id=?",(r,n)->r.getString(1),site);
+  if(rows.isEmpty())throw new ConfigurationException(404,"SITE_NOT_CONFIGURED");
+  return rows.getFirst();
+ }
+
  /** The record id is the site id: there is exactly one option row per site. */
  public ConfigurationRecord<OperationOptions> get(long site){
   var rows=jdbc.query("SELECT "+COLS+" FROM platform.site_operation WHERE site_id=?",

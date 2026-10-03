@@ -18,7 +18,7 @@ type Entry = { key: MenuKey; label: string; sub: string; ready: boolean; needs: 
  * the vehicles, the track, the equipment or who may log in is level 4.
  */
 const MENU: Entry[] = [
-  { key: 'overview', label: 'Overview', sub: 'Status / KPI', ready: false, needs: 'VIEWER' },
+  { key: 'overview', label: 'Overview', sub: 'Status / KPI', ready: true, needs: 'VIEWER' },
   { key: 'fleet', label: 'Fleet', sub: 'Map / Vehicles', ready: true, needs: 'VIEWER' },
   { key: 'transport', label: 'Transport', sub: 'Job / Route', ready: true, needs: 'OPERATOR' },
   { key: 'traffic', label: 'Traffic', sub: 'Reservation / Deadlock', ready: true, needs: 'OPERATOR' },
