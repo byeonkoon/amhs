@@ -22,10 +22,13 @@ import static org.assertj.core.api.Assertions.*;
 class SimulatedTransportSqlTest {
  @Autowired SimulatedVehicles simulator; @Autowired SiteSweep sweep; @Autowired TransportOrders orders;
  @Autowired TrafficControl traffic; @Autowired JdbcTemplate jdbc; @Autowired com.amhs.fleet.FleetState fleet; @Autowired com.amhs.fleet.VehicleConfiguration configuration;
+ @Autowired com.amhs.equipment.SimulatedEquipment equipment;
+ @Autowired TransportAssignment assignment;
  private static final long SITE=1, OHT=1;
 
  @BeforeEach @AfterEach void clean(){
   simulator.clear();
+  jdbc.update("DELETE FROM equipment.simulation_state");
   jdbc.update("UPDATE transport.assignment SET released_at=now() WHERE released_at IS NULL");
   jdbc.update("UPDATE transport.relocation SET finished_at=now(),finish_reason='TEST' WHERE finished_at IS NULL");
   // Queued work left by other cases would be dispatched to the simulated vehicle too.
@@ -63,6 +66,84 @@ class SimulatedTransportSqlTest {
  }
  private List<String> path(long id){
   return orders.events(SITE,id).stream().map(e->e.newStatus().name()).toList();
+ }
+
+ private long unit(String port){
+  return jdbc.queryForObject("SELECT equipment_unit_id FROM topology.port WHERE site_id=? AND code=? AND revision_id=1",Long.class,SITE,port);
+ }
+ @Test void virtualEquipmentAcceptsStateChangesAndCompletesWithoutRealReadiness(){
+  equipment.change(SITE,unit("OHT-A"),new com.amhs.equipment.SimulatedEquipment.Change(null,null,"OFFLINE"));
+  equipment.change(SITE,unit("OHT-C"),new com.amhs.equipment.SimulatedEquipment.Change(null,null,"ERROR"));
+  simulator.place(SITE,OHT,101L);
+  long id=accept("OHT-C");
+  assertThat(runUntilFinished(id,80).status()).isEqualTo(OrderStatus.COMPLETED);
+  assertThat(equipment.list(SITE).stream().filter(s->s.unitId()==unit("OHT-C")).findFirst().orElseThrow().status()).isEqualTo("IDLE");
+ }
+ @Test void prohibitionBlocksIntakeAndAssignmentButCanBeCleared(){
+  long unit=unit("OHT-A");
+  equipment.change(SITE,unit,new com.amhs.equipment.SimulatedEquipment.Change(null,false,null));
+  assertThatThrownBy(()->accept("OHT-C")).isInstanceOf(TransportRejected.class)
+   .extracting(e->((TransportRejected)e).code()).isEqualTo("EQUIPMENT_CALL_DISABLED");
+  assertThatThrownBy(()->equipment.change(SITE,unit,new com.amhs.equipment.SimulatedEquipment.Change(null,null,"READY")))
+   .hasMessage("EQUIPMENT_PROHIBITED");
+  equipment.change(SITE,unit,new com.amhs.equipment.SimulatedEquipment.Change(null,true,null));
+  long id=accept("OHT-C");
+  simulator.place(SITE,OHT,101L);
+  equipment.change(SITE,unit,new com.amhs.equipment.SimulatedEquipment.Change(false,null,null));
+  assertThatThrownBy(()->assignment.assign(SITE,id,"test",null)).isInstanceOf(TransportRejected.class)
+   .extracting(e->((TransportRejected)e).code()).isEqualTo("EQUIPMENT_DISABLED");
+  equipment.change(SITE,unit,new com.amhs.equipment.SimulatedEquipment.Change(true,null,null));
+  assertThat(runUntilFinished(id,80).status()).isEqualTo(OrderStatus.COMPLETED);
+ }
+ @Test void prohibitionDuringPickupHoldsTheTransferUntilReleased(){
+  simulator.place(SITE,OHT,101L);
+  long id=accept("OHT-C");
+  for(int i=0;i<50&&orders.find(SITE,id).orElseThrow().status()!=OrderStatus.LOADING;i++){
+   sweep.run(SITE,"test",null); simulator.step(SITE);
+  }
+  assertThat(orders.find(SITE,id).orElseThrow().status()).isEqualTo(OrderStatus.LOADING);
+  equipment.change(SITE,unit("OHT-A"),new com.amhs.equipment.SimulatedEquipment.Change(null,false,null));
+  assertThat(runUntilFinished(id,3).status()).isEqualTo(OrderStatus.LOADING);
+  assertThat(fleet.find(SITE,1,OHT).orElseThrow().carrierPresent()).isFalse();
+  equipment.change(SITE,unit("OHT-A"),new com.amhs.equipment.SimulatedEquipment.Change(null,true,null));
+  assertThat(runUntilFinished(id,80).status()).isEqualTo(OrderStatus.COMPLETED);
+ }
+ @Test void operationRejectsVirtualEquipmentAndStopsVirtualSteps(){
+  simulator.place(SITE,OHT,101L);
+  long id=accept("OHT-C");
+  sweep.run(SITE,"test",null);
+  var before=fleet.find(SITE,1,OHT).orElseThrow();
+  jdbc.update("UPDATE platform.site_operation SET run_mode='OPERATION' WHERE site_id=?",SITE);
+  assertThatThrownBy(()->equipment.change(SITE,unit("OHT-A"),new com.amhs.equipment.SimulatedEquipment.Change(null,null,"READY")))
+   .hasMessage("SITE_NOT_IN_SIMULATION");
+  assertThat(simulator.step(SITE)).isEmpty();
+  simulator.drive(SITE,30);
+  assertThat(fleet.find(SITE,1,OHT).orElseThrow()).isEqualTo(before);
+  assertThat(orders.find(SITE,id).orElseThrow().status()).isEqualTo(OrderStatus.ASSIGNED);
+ }
+ @Test void configuredUseProhibitionCannotBeOverriddenBySimulation(){
+  long unit=unit("OHT-C");
+  jdbc.update("UPDATE equipment.unit SET enabled=FALSE WHERE id=?",unit);
+  try {
+   equipment.change(SITE,unit,new com.amhs.equipment.SimulatedEquipment.Change(true,true,null));
+   assertThatThrownBy(()->accept("OHT-C")).isInstanceOf(TransportRejected.class)
+    .extracting(e->((TransportRejected)e).code()).isEqualTo("EQUIPMENT_DISABLED");
+   assertThatThrownBy(()->equipment.change(SITE,unit,new com.amhs.equipment.SimulatedEquipment.Change(null,null,"READY")))
+    .hasMessage("EQUIPMENT_PROHIBITED");
+  } finally {jdbc.update("UPDATE equipment.unit SET enabled=TRUE WHERE id=?",unit);}
+ }
+ @Test void destinationCallProhibitionKeepsTheCarrierOnTheVehicle(){
+  simulator.place(SITE,OHT,101L);
+  long id=accept("OHT-C");
+  for(int i=0;i<50&&orders.find(SITE,id).orElseThrow().status()!=OrderStatus.UNLOADING;i++){
+   sweep.run(SITE,"test",null); simulator.step(SITE);
+  }
+  assertThat(orders.find(SITE,id).orElseThrow().status()).isEqualTo(OrderStatus.UNLOADING);
+  equipment.change(SITE,unit("OHT-C"),new com.amhs.equipment.SimulatedEquipment.Change(null,false,null));
+  assertThat(runUntilFinished(id,3).status()).isEqualTo(OrderStatus.UNLOADING);
+  assertThat(fleet.find(SITE,1,OHT).orElseThrow().carrierPresent()).isTrue();
+  equipment.change(SITE,unit("OHT-C"),new com.amhs.equipment.SimulatedEquipment.Change(null,true,null));
+  assertThat(runUntilFinished(id,80).status()).isEqualTo(OrderStatus.COMPLETED);
  }
 
  @Test void oneVehicleCarriesOneOrderFromAcceptanceToCompletion(){

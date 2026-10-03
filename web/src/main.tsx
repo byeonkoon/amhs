@@ -176,7 +176,7 @@ function App() {
             : menu === 'system' ? <SystemOptionsScreen session={session} />
               : menu === 'accounts' ? <AccountsScreen session={session} />
               : menu === 'resources' ? <ConfigurationScreen map={data.map} session={session} />
-              : menu === 'equipment' ? <EquipmentScreen session={session} revisionId={REVISION_ID} />
+              : menu === 'equipment' ? <EquipmentScreen session={session} revisionId={REVISION_ID} simulated={data.options?.runMode === 'SIMULATION'} />
               : menu === 'inventory' ? <InventoryScreen session={session} map={data.map} orders={data.orders} />
               : menu === 'alarms' ? <AlarmsScreen onGo={setMenu} />
               : menu === 'history' ? <HistoryScreen map={data.map} />

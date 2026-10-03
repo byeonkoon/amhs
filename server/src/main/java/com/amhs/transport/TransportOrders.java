@@ -20,8 +20,10 @@ import java.util.*;
 public class TransportOrders {
  private final TransportLedger ledger; private final FleetState fleet; private final TrafficControl traffic;
  private final CommandOutbox outbox;
- public TransportOrders(TransportLedger ledger,FleetState fleet,TrafficControl traffic,CommandOutbox outbox){
-  this.ledger=ledger; this.fleet=fleet; this.traffic=traffic; this.outbox=outbox;
+ private final com.amhs.equipment.SimulatedEquipment equipment;
+ public TransportOrders(TransportLedger ledger,FleetState fleet,TrafficControl traffic,CommandOutbox outbox,
+                        com.amhs.equipment.SimulatedEquipment equipment){
+  this.ledger=ledger; this.fleet=fleet; this.traffic=traffic; this.outbox=outbox; this.equipment=equipment;
  }
 
  public record Accepted(TransportOrder order,boolean created){}
@@ -53,6 +55,8 @@ public class TransportOrders {
   // One vehicle cannot serve two different access types, so this is a handover job, not a single order.
   if(source.accessVehicleType()!=destination.accessVehicleType())
    throw reject("ACCESS_VEHICLE_TYPE_MISMATCH","source and destination require different vehicle types");
+  try { equipment.requireAvailable(siteId,source.id(),destination.id()); }
+  catch(com.amhs.equipment.SimulatedEquipment.Prohibited e){throw new TransportRejected(e.getMessage(),e.getMessage(),true);}
 
   // One carrier is in one place: a second order for a carrier still being moved is refused.
   if(request.carrierCode()!=null&&!request.carrierCode().isBlank()

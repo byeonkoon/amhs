@@ -30,12 +30,13 @@ public class TransportAssignment {
  private final FleetState fleet; private final DispatchEvaluator evaluator;
  private final CommandOutbox outbox; private final ObjectMapper json; private final TrafficControl traffic;
  private final ZoneDetour detour; private final OperationOptionConfiguration operations;
+ private final com.amhs.equipment.SimulatedEquipment equipment;
  public TransportAssignment(TransportLedger ledger,TopologyQuery topology,FleetState fleet,
                             CommandOutbox outbox,ObjectMapper json,TrafficControl traffic,ZoneDetour detour,
-                            OperationOptionConfiguration operations){
+                            OperationOptionConfiguration operations,com.amhs.equipment.SimulatedEquipment equipment){
   this.ledger=ledger; this.topology=topology; this.fleet=fleet;
   this.evaluator=new DispatchEvaluator(); this.outbox=outbox; this.json=json; this.traffic=traffic;
-  this.detour=detour; this.operations=operations;
+  this.detour=detour; this.operations=operations; this.equipment=equipment;
  }
 
  public record Assigned(TransportOrder order,AssignmentView assignment,String commandId,boolean created){}
@@ -56,6 +57,8 @@ public class TransportAssignment {
   // One transfer at a port at a time. The ports are claimed first, so two assignments cannot both
   // find them free; the order then waits until the other order has picked up or finished.
   ledger.lockPorts(List.of(order.sourcePortId(),order.destinationPortId()));
+  try { equipment.requireAvailable(siteId,order.sourcePortId(),order.destinationPortId()); }
+  catch(com.amhs.equipment.SimulatedEquipment.Prohibited e){throw new TransportRejected(e.getMessage(),e.getMessage(),true);}
   if(ledger.portInUse(siteId,orderId,order.sourcePortId(),order.destinationPortId()))
    throw new TransportRejected("PORT_IN_USE","another order is using the source or destination port",true);
 

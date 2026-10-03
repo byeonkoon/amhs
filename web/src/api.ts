@@ -56,6 +56,13 @@ function describe(status: number): string {
 }
 
 export const SITE_ID = 1;
+export type SimulatedEquipmentState = {
+  unitId: number; configuredEnabled: boolean; enabled: boolean; callEnabled: boolean; status: string;
+};
+export const simulationEquipmentApi = {
+  list: () => `/api/v1/sites/${SITE_ID}/simulation/equipment`,
+  state: (id: number) => `/api/v1/sites/${SITE_ID}/simulation/equipment/${id}/state`,
+};
 export const api = {
   map: (revisionId: number) => `/api/v1/sites/${SITE_ID}/maps/${revisionId}`,
   vehicles: (revisionId?: number) => `/api/v1/sites/${SITE_ID}/vehicles${revisionId === undefined ? '' : `?revisionId=${revisionId}`}`,

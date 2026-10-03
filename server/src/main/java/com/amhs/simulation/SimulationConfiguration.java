@@ -1,4 +1,5 @@
 package com.amhs.simulation;
+import com.amhs.equipment.SimulatedEquipment;
 import com.amhs.fleet.FleetState;
 import com.amhs.fleet.VehicleConfiguration;
 import com.amhs.integration.CommandOutbox;
@@ -32,8 +33,9 @@ class SimulationConfiguration {
 
  @Bean
  SimulatedVehicles simulatedVehicles(FleetState fleet,TrafficControl traffic,CommandOutbox outbox,TransportLedger ledger,
-                                     TransportOrders orders,TopologyQuery topology,ObjectMapper json){
-  return new SimulatedVehicles(fleet,traffic,outbox,ledger,orders,topology,json);
+                                     TransportOrders orders,TopologyQuery topology,ObjectMapper json,
+                                     SimulatedEquipment equipment,OperationOptionConfiguration options){
+  return new SimulatedVehicles(fleet,traffic,outbox,ledger,orders,topology,json,equipment,options);
  }
 
  /**

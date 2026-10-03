@@ -13,8 +13,20 @@ import java.util.*;
 @RequestMapping("/api/v1/sites/{siteId}/simulation")
 class SimulationController {
  private final SimulatedVehicles vehicles; private final SiteSweep sweep; private final OperationOptionConfiguration options;
- SimulationController(SimulatedVehicles vehicles,SiteSweep sweep,OperationOptionConfiguration options){
+ private final com.amhs.equipment.SimulatedEquipment equipment;
+ SimulationController(SimulatedVehicles vehicles,SiteSweep sweep,OperationOptionConfiguration options,
+                      com.amhs.equipment.SimulatedEquipment equipment){
   this.vehicles=vehicles;this.sweep=sweep;this.options=options;
+  this.equipment=equipment;
+ }
+ @GetMapping("/equipment")
+ List<com.amhs.equipment.SimulatedEquipment.State> equipment(@PathVariable long siteId){
+  return equipment.list(siteId);
+ }
+ @PutMapping("/equipment/{unitId}/state")
+ com.amhs.equipment.SimulatedEquipment.State equipmentState(@PathVariable long siteId,@PathVariable long unitId,
+   @RequestBody com.amhs.equipment.SimulatedEquipment.Change change){
+  return equipment.change(siteId,unitId,change);
  }
  /** A site on real devices is never given simulated positions or simulated steps. */
  private void requireSimulation(long siteId){

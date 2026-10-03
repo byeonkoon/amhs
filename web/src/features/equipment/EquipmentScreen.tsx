@@ -1,6 +1,6 @@
 import React from 'react';
 import {
-  ApiError, get, opsApi, send,
+  ApiError, get, opsApi, send, simulationEquipmentApi, type SimulatedEquipmentState,
   type Cfg, type EquipmentSettings, type RackSettings, type Session, type SlotView,
 } from '../../api';
 import { Chip, Empty } from '../../shell/States';
@@ -13,7 +13,7 @@ import { Grid, Panel, Row } from '../../shell/Panel';
  * Marking a cell unusable is a decision someone records about a real place; it is deliberately not
  * occupancy and not a reservation, and this screen never presents it as either.
  */
-export function EquipmentScreen({ session, revisionId }: { session: Session; revisionId: number }) {
+export function EquipmentScreen({ session, revisionId, simulated }: { session: Session; revisionId: number; simulated: boolean }) {
   const [units, setUnits] = React.useState<Cfg<EquipmentSettings>[] | null>(null);
   const [unitId, setUnitId] = React.useState<number | null>(null);
   const [racks, setRacks] = React.useState<Cfg<RackSettings>[]>([]);
@@ -89,6 +89,8 @@ export function EquipmentScreen({ session, revisionId }: { session: Session; rev
         <p style={{ margin: 0, fontSize: 12 }}><Chip tone={notice.tone}>거부</Chip> {notice.text}</p>
       </div></div>}
 
+      {simulated && <SimulationControls unitId={unitId} mayControl={session.level >= 2} />}
+
       {units.length === 0
         ? <section className="card"><Empty title="등록된 설비가 없습니다"
             hint="설비는 제어 대상이 아니라 제어기가 마주 보는 상대입니다. 자원 구성의 포트가 그 접점입니다." /></section>
@@ -146,6 +148,53 @@ export function EquipmentScreen({ session, revisionId }: { session: Session; rev
   );
 }
 
+function SimulationControls({ unitId, mayControl }: { unitId: number | null; mayControl: boolean }) {
+  const [states, setStates] = React.useState<SimulatedEquipmentState[]>([]);
+  const [error, setError] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
+  const [reload, setReload] = React.useState(0);
+  React.useEffect(() => {
+    const c = new AbortController();
+    let active = true;
+    const read = () => get<SimulatedEquipmentState[]>(simulationEquipmentApi.list(), c.signal)
+      .then(v => { if (active) { setStates(v); setError(''); } })
+      .catch(e => { if (active && !aborted(e)) { setStates([]); setError('설비 시뮬레이션 상태를 읽지 못했습니다.'); } });
+    void read();
+    const timer = window.setInterval(read, 1500);
+    return () => { active = false; c.abort(); window.clearInterval(timer); };
+  }, [reload]);
+  const state = states.find(s => s.unitId === unitId);
+  async function change(patch: Partial<Pick<SimulatedEquipmentState, 'enabled' | 'callEnabled' | 'status'>>) {
+    if (unitId === null) return;
+    setBusy(true); setError('');
+    try {
+      await send(simulationEquipmentApi.state(unitId), 'PUT', patch, '시뮬레이션 설비 상태 변경');
+      setReload(v => v + 1);
+    } catch (e) { setError(e instanceof ApiError ? explain(e.message) : '변경하지 못했습니다.'); }
+    finally { setBusy(false); }
+  }
+  const disabled = busy || !mayControl;
+  return <section className="card"><div className="ch"><h2>설비 시뮬레이션</h2></div><div className="cb">
+    <p className="hint">가상 상태는 직접 변경할 수 있습니다. 사용금지·콜금지만 작업을 차단하며, 나머지 상태와 실제 설비 통신 여부는 작업 할당을 제한하지 않습니다.</p>
+    {error && <p role="alert">{error}</p>}
+    {!state ? <p>설비를 선택해 주세요.</p> : <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+      <label><input type="checkbox" checked={state.enabled} disabled={disabled}
+        onChange={e => void change({ enabled: e.target.checked })} /> 시뮬레이션 사용</label>
+      <label><input type="checkbox" checked={state.callEnabled} disabled={disabled}
+        onChange={e => void change({ callEnabled: e.target.checked })} /> 콜 허용</label>
+      <label>가상 상태 <select value={state.status}
+        disabled={disabled || !state.configuredEnabled || !state.enabled || !state.callEnabled}
+        onChange={e => void change({ status: e.target.value })}>
+        {Object.entries(SIM_STATES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+      </select></label>
+      {!state.configuredEnabled && <span>설비 설정에서 사용금지 상태입니다.</span>}
+      {!mayControl && <span>운전 권한이 필요합니다.</span>}
+    </div>}
+  </div></section>;
+}
+const SIM_STATES: Record<string, string> = { IDLE: '대기', READY: '준비', BUSY: '작업 중', ERROR: '오류',
+  OFFLINE: '오프라인', LOADING: '차량 인수 중', UNLOADING: '설비 인계 중' };
+
 /** The rack drawn as it stands: level 1 at the bottom, so the picture matches the shelf. */
 function SlotGrid({ slots, columns, onToggle }:
   { slots: SlotView[]; columns: number; onToggle?: (s: SlotView) => void }) {
@@ -184,6 +233,8 @@ const KIND: Record<string, string> = { STOCKER: '스토커', BUFFER: '버퍼', P
 /** A cancelled request carries no answer, so it must not be recorded as an empty one. */
 export function aborted(cause: unknown): boolean { return (cause as Error)?.name === 'AbortError'; }
 function explain(code: string): string {
+  if (code === 'EQUIPMENT_PROHIBITED') return '사용금지·콜금지를 해제한 뒤 상태를 변경해 주세요.';
+  if (code === 'SITE_NOT_IN_SIMULATION') return '시뮬레이션 모드에서만 가상 설비를 변경할 수 있습니다.';
   if (code === 'UNUSABLE_REASON_REQUIRED') return '사용 금지로 바꾸려면 사유가 필요합니다.';
   if (code === 'UNUSABLE_SLOT_WOULD_BE_REMOVED') return '줄이려는 범위에 사용 금지 셀이 있습니다. 그 표시가 사라지므로 거부했습니다.';
   if (code === 'SITE_NOT_IN_MAINTENANCE') return '유지보수 상태에서만 설비 설정을 바꿀 수 있습니다.';

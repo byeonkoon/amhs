@@ -53,6 +53,23 @@ class VehicleControlSqlTest {
 
  // ---- mode, status and load ----
 
+ @Test void virtualEquipmentEndpointIsAuthenticatedAndSimulationOnly() throws Exception {
+  long unit=jdbc.queryForObject("SELECT equipment_unit_id FROM topology.port WHERE site_id=1 AND revision_id=1 AND code='OHT-A'",Long.class);
+  String path="/api/v1/sites/1/simulation/equipment/"+unit+"/state";
+  jdbc.update("UPDATE platform.site_operation SET run_mode='SIMULATION' WHERE site_id=1");
+  mvc.perform(put(path).contentType("application/json").content("{\"status\":\"OFFLINE\"}"))
+   .andExpect(status().isUnauthorized());
+  mvc.perform(put(path).header("Authorization",TOKEN).contentType("application/json").content("{\"status\":\"OFFLINE\"}"))
+   .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("OFFLINE"));
+  mvc.perform(put(path).header("Authorization",TOKEN).contentType("application/json").content("{\"callEnabled\":false}"))
+   .andExpect(status().isOk()).andExpect(jsonPath("$.callEnabled").value(false));
+  mvc.perform(put(path).header("Authorization",TOKEN).contentType("application/json").content("{\"status\":\"READY\"}"))
+   .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("EQUIPMENT_PROHIBITED"));
+  jdbc.update("UPDATE platform.site_operation SET run_mode='OPERATION' WHERE site_id=1");
+  mvc.perform(put(path).header("Authorization",TOKEN).contentType("application/json").content("{\"callEnabled\":true}"))
+   .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("SITE_NOT_IN_SIMULATION"));
+ }
+
  @Test void modeAndStatusAreKeptOnTheirOwnAxesAndDecideRemoteAndIdle(){
   var semi=report(118L,"SEMI_AUTO","IDLE");
   assertThat(semi.mode()).isEqualTo("SEMI_AUTO");

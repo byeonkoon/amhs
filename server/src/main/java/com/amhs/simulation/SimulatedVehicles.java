@@ -1,4 +1,5 @@
 package com.amhs.simulation;
+import com.amhs.equipment.SimulatedEquipment;
 import com.amhs.fleet.FleetState;
 import com.amhs.fleet.VehicleReport;
 import com.amhs.fleet.VehicleSnapshot;
@@ -32,6 +33,8 @@ public class SimulatedVehicles {
  private final FleetState fleet; private final TrafficControl traffic; private final CommandOutbox outbox;
  private final TransportLedger ledger; private final TransportOrders orders; private final TopologyQuery topology;
  private final ObjectMapper json;
+ private final SimulatedEquipment equipment;
+ private final com.amhs.platform.OperationOptionConfiguration options;
 
  /**
   * {@code segmentTo} and {@code travelled}: the node it is driving towards from the node it last
@@ -65,9 +68,11 @@ public class SimulatedVehicles {
  private final Map<Long,CachedMap> maps=new ConcurrentHashMap<>();
 
  SimulatedVehicles(FleetState fleet,TrafficControl traffic,CommandOutbox outbox,TransportLedger ledger,
-                   TransportOrders orders,TopologyQuery topology,ObjectMapper json){
+                   TransportOrders orders,TopologyQuery topology,ObjectMapper json,SimulatedEquipment equipment,
+                   com.amhs.platform.OperationOptionConfiguration options){
   this.fleet=fleet; this.traffic=traffic; this.outbox=outbox; this.ledger=ledger;
   this.orders=orders; this.topology=topology; this.json=json;
+  this.equipment=equipment; this.options=options;
  }
 
  /** One step of what a vehicle did, for a screen or a test to read. */
@@ -178,6 +183,7 @@ public class SimulatedVehicles {
   * frees what lies behind. A vehicle held by its mode or status does not move.
   */
  public void drive(long siteId,double seconds){
+  if(!options.get(siteId).settings().simulated()) return;
   synchronized(motion){
    long revisionId=ledger.activeRevision(siteId);
    var map=mapOf(siteId,revisionId);
@@ -261,6 +267,7 @@ public class SimulatedVehicles {
 
  private List<Step> step(long siteId,boolean jump){
   synchronized(motion){
+  if(!options.get(siteId).settings().simulated()) return List.of();
   maps.remove(siteId);
   long revisionId=ledger.activeRevision(siteId);
   var map=topology.getMap(siteId,revisionId);
@@ -334,6 +341,26 @@ public class SimulatedVehicles {
    :order.status()==OrderStatus.UNLOADING?"UNLOADING":"IDLE";
   report(siteId,sim.vehicleId(),at,standing,sim.carrier());
   if(order==null) return new Step(sim.vehicleId(),"IDLE",at);
+  String equipmentStatus=switch(order.status()){
+   case TO_SOURCE -> "LOADING";
+   case TO_DESTINATION -> "UNLOADING";
+   case LOADING,UNLOADING -> "IDLE";
+   default -> null;
+  };
+  long port=order.status()==OrderStatus.TO_SOURCE||order.status()==OrderStatus.LOADING
+   ?order.sourcePortId():order.destinationPortId();
+  if(equipmentStatus!=null&&!Objects.equals(portNode.get(port),at))
+   return new Step(sim.vehicleId(),"WAITING_FOR_PORT",at);
+  if(equipmentStatus!=null&&Objects.equals(portNode.get(port),at)){
+   try { return equipment.transfer(siteId,port,equipmentStatus,()->transferStep(siteId,sim,at,order,portNode)); }
+   catch(SimulatedEquipment.Prohibited e){
+    return new Step(sim.vehicleId(),e.getMessage(),at);
+   }
+  }
+  return transferStep(siteId,sim,at,order,portNode);
+ }
+
+ private Step transferStep(long siteId,Sim sim,long at,TransportOrder order,Map<Long,Long> portNode){
   Long source=portNode.get(order.sourcePortId()), destination=portNode.get(order.destinationPortId());
   switch(order.status()){
    case ASSIGNED -> { if(source!=null&&at==source){ move(siteId,order,OrderStatus.TO_SOURCE,TransitionEvidence.system());
@@ -347,9 +374,9 @@ public class SimulatedVehicles {
      move(siteId,order,OrderStatus.TO_SOURCE,TransitionEvidence.sensor(CarrierLocation.SOURCE));
      return new Step(sim.vehicleId(),"PICKUP_NOT_DONE",at);
     }
+    move(siteId,order,OrderStatus.TO_DESTINATION,TransitionEvidence.sensor(CarrierLocation.VEHICLE));
     vehicles.put(sim.vehicleId(),sim.withCarrier(true));
     report(siteId,sim.vehicleId(),at,"IDLE",true);
-    move(siteId,order,OrderStatus.TO_DESTINATION,TransitionEvidence.sensor(CarrierLocation.VEHICLE));
     return new Step(sim.vehicleId(),"PICKED_UP",at);
    }
    case TO_DESTINATION -> { if(destination!=null&&at==destination){ report(siteId,sim.vehicleId(),at,"UNLOADING",sim.carrier());
@@ -361,9 +388,9 @@ public class SimulatedVehicles {
      move(siteId,order,OrderStatus.TO_DESTINATION,TransitionEvidence.sensor(CarrierLocation.VEHICLE));
      return new Step(sim.vehicleId(),"DROP_NOT_DONE",at);
     }
+    move(siteId,order,OrderStatus.COMPLETED,TransitionEvidence.sensor(CarrierLocation.DESTINATION));
     vehicles.put(sim.vehicleId(),sim.withCarrier(false));
     report(siteId,sim.vehicleId(),at,"IDLE",false);
-    move(siteId,order,OrderStatus.COMPLETED,TransitionEvidence.sensor(CarrierLocation.DESTINATION));
     return new Step(sim.vehicleId(),"DROPPED",at);
    }
    default -> {}
