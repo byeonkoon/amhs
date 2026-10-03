@@ -24,6 +24,7 @@ class SimulatedTransportSqlTest {
  @Autowired TrafficControl traffic; @Autowired JdbcTemplate jdbc; @Autowired com.amhs.fleet.FleetState fleet; @Autowired com.amhs.fleet.VehicleConfiguration configuration;
  @Autowired com.amhs.equipment.SimulatedEquipment equipment;
  @Autowired TransportAssignment assignment;
+ @Autowired com.amhs.transport.TransportLedger ledger;
  private static final long SITE=1, OHT=1;
 
  @BeforeEach @AfterEach void clean(){
@@ -214,6 +215,56 @@ class SimulatedTransportSqlTest {
   assertThat(pass.published().notDelivered()).isPositive();
   assertThat(jdbc.queryForObject("SELECT last_error FROM integration.command_outbox WHERE order_id=? ORDER BY id LIMIT 1",
    String.class,id)).isEqualTo("ADAPTER_NOT_IMPLEMENTED");
+ }
+
+ /**
+  * Putting a vehicle on a node is not driving it there, so nothing it held is still held.
+  *
+  * <p>Leaving those would reserve places for a vehicle that is not at them and is not coming back,
+  * and the next vehicle routed through would wait for one that had already gone.
+  */
+ @Test void placingAVehicleGivesBackEverythingItWasHolding(){
+  simulator.place(SITE,OHT,101L);
+  assertThat(traffic.request(SITE,1,OHT,null,java.util.List.of(101L,102L,103L)).complete()).isTrue();
+  assertThat(traffic.heldBy(SITE,OHT)).hasSize(3);
+
+  simulator.place(SITE,OHT,110L);
+  assertThat(traffic.heldBy(SITE,OHT)).as("it is not at any of them any more").isEmpty();
+  assertThat(fleet.find(SITE,1,OHT).orElseThrow().nodeId()).isEqualTo(110L);
+ }
+
+ /**
+  * It is refused while an order is running, because the order stores the route the vehicle is
+  * partway along and moving it off that route leaves a plan for a journey nobody is making.
+  */
+ @Test void placingIsRefusedWhileTheVehicleHasWork(){
+  simulator.place(SITE,OHT,101L);
+  long id=accept("OHT-C");
+  assertThat(sweep.run(SITE,"test",null).assigned()).contains(id);
+  assertThatThrownBy(()->simulator.place(SITE,OHT,110L))
+   .isInstanceOf(IllegalArgumentException.class).hasMessage("VEHICLE_HAS_ORDER");
+
+  // Saying so does it, and the order is put where moving the vehicle leaves it. Nothing had been
+  // picked up here, so the work simply ends rather than becoming a carrier nobody can find.
+  simulator.place(SITE,OHT,110L,true);
+  assertThat(fleet.find(SITE,1,OHT).orElseThrow().nodeId()).isEqualTo(110L);
+  // Nothing had been picked up, so the work simply ends -- and it ends rather than waiting for a
+  // report from a vehicle that has been taken off it and will never send one.
+  assertThat(ledger.find(SITE,id).orElseThrow().status())
+   .isEqualTo(com.amhs.transport.OrderStatus.CANCELLED);
+  assertThat(traffic.heldBy(SITE,OHT)).isEmpty();
+ }
+
+ /** Setting the charge by hand says it is this now, so an injected pickup fault stops. */
+ @Test void settingTheChargeByHandStopsItBeingTakenStraightBackDown(){
+  simulator.place(SITE,OHT,101L);
+  simulator.setPowerPickup(OHT,false);
+  assertThat(simulator.pickupFaults()).contains(OHT);
+
+  simulator.setBattery(SITE,OHT,100.0);
+  assertThat(simulator.pickupFaults()).as("the control is not overruled by a fault left running")
+   .doesNotContain(OHT);
+  assertThat(fleet.find(SITE,1,OHT).orElseThrow().batteryPct()).isEqualTo(100.0);
  }
 
  @Test void enteringSimulationPutsTheVehiclesInUseOnTheTrack(){

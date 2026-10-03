@@ -101,6 +101,13 @@ class JdbcTrafficControl implements TrafficControl {
  }
 
  @Transactional
+ public int releaseAll(long siteId,long vehicleId,String reason){
+  jdbc.update("DELETE FROM traffic.reservation_wait WHERE site_id=? AND vehicle_id=?",siteId,vehicleId);
+  return jdbc.update("UPDATE traffic.node_reservation SET released_at=now(),release_reason=?"
+   +" WHERE site_id=? AND vehicle_id=? AND released_at IS NULL",truncate(reason),siteId,vehicleId);
+ }
+
+ @Transactional
  public int releaseAhead(long siteId,long vehicleId,Long positionNodeId,String reason){
   // Whatever the vehicle was waiting for, it no longer wants it. A stale wait would keep its place
   // in the queue at a merge point long after it stopped asking.

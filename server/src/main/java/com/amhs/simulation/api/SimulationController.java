@@ -40,7 +40,10 @@ class SimulationController {
   requireSimulation(siteId);
   Object node=body.get("nodeId");
   if(!(node instanceof Number n)) throw new IllegalArgumentException("nodeId is required");
-  return vehicles.place(siteId,vehicleId,n.longValue());
+  // Saying so is the whole point: a job half done is put where moving the vehicle leaves it, and
+  // the caller has to have meant that rather than finding out afterwards.
+  boolean releaseWork=Boolean.TRUE.equals(body.get("releaseWork"));
+  return vehicles.place(siteId,vehicleId,n.longValue(),releaseWork);
  }
 
  /** One sweep of the site, then one step of every simulated vehicle. */
@@ -95,5 +98,16 @@ class SimulationController {
  @ExceptionHandler(IllegalArgumentException.class)
  org.springframework.http.ResponseEntity<Map<String,String>> rejected(IllegalArgumentException ex){
   return org.springframework.http.ResponseEntity.unprocessableEntity().body(Map.of("code",String.valueOf(ex.getMessage())));
+ }
+ /**
+  * A refusal from the transport side is a refusal, not a fault. Placing a vehicle touches the work
+  * it was doing, and that work can say no; letting it surface as a server error would tell the
+  * caller the server broke when in fact it was answered.
+  */
+ @ExceptionHandler(com.amhs.transport.TransportRejected.class)
+ org.springframework.http.ResponseEntity<Map<String,String>> rejected(com.amhs.transport.TransportRejected ex){
+  return org.springframework.http.ResponseEntity
+   .status(ex.isConflict()?HttpStatus.CONFLICT:HttpStatus.UNPROCESSABLE_ENTITY)
+   .body(Map.of("code",ex.code(),"message",String.valueOf(ex.getMessage())));
  }
 }

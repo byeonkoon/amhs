@@ -107,9 +107,73 @@ public class SimulatedVehicles {
  /** Which vehicles are simulating a pickup failure; for a screen or a test to read. */
  public java.util.Set<Long> pickupFaults(){ return java.util.Set.copyOf(pickupFaulted); }
 
- /** Puts a vehicle on the track: online, under remote control, idle, empty. */
- public VehicleSnapshot place(long siteId,long vehicleId,long nodeId){
+ /**
+  * Puts a vehicle on the track: online, under remote control, idle, empty.
+  *
+  * <p>This is not driving, it is the vehicle being somewhere else outright, so everything it held
+  * is released. Keeping those would leave places reserved for a vehicle that is not at them and is
+  * not coming back; the next vehicle routed through would wait for one that had already gone.
+  *
+  * <p>Refused by default while an order or a move is running. Both store the route the vehicle is
+  * partway along, and moving it off that route would leave a plan describing a journey nobody is
+  * making -- which is worse than not being able to move it, because it looks like it worked.
+  *
+  * <p>{@code releaseWork} says to do it anyway, which is a real thing to want: a vehicle can be
+  * lifted off the rail with a job half done. The job is then put where that leaves it rather than
+  * quietly dropped. An order goes to recovery, because where the carrier is stopped being known the
+  * moment the vehicle it was on moved without it; a person says where it ended up, through the
+  * recovery that already exists. A move without an order is simply closed -- nothing was being
+  * carried, so there is nothing for anyone to find.
+  */
+ // Annotated here as well as on the call it forwards to: a call from inside the class does not go
+ // through the proxy, so the transaction has to be opened by whichever one the caller reached.
+ @org.springframework.transaction.annotation.Transactional
+ public VehicleSnapshot place(long siteId,long vehicleId,long nodeId){ return place(siteId,vehicleId,nodeId,false); }
+ /**
+  * One transaction, because it is one change made of several writes: the work is put where this
+  * leaves it, the commands on their way are taken back, the places it held are given up, and it
+  * arrives somewhere else. Half of that happening would be worse than none of it.
+  */
+ @org.springframework.transaction.annotation.Transactional
+ public VehicleSnapshot place(long siteId,long vehicleId,long nodeId,boolean releaseWork){
   synchronized(motion){
+   boolean hasOrder=ledger.assignedVehicleIds(siteId).contains(vehicleId);
+   boolean isMoving=ledger.relocatingVehicleIds(siteId).contains(vehicleId);
+   if(hasOrder&&!releaseWork) throw new IllegalArgumentException("VEHICLE_HAS_ORDER");
+   if(isMoving&&!releaseWork) throw new IllegalArgumentException("VEHICLE_ALREADY_MOVING");
+
+   // Commands first. Cancelling asks whether a movement command has already gone out, because a
+   // vehicle may still be driving on one -- and this vehicle is not going to be, so taking them
+   // back before asking is what makes the answer true rather than merely cautious.
+   outbox.withdrawMovementForVehicle(siteId,vehicleId,"PLACED_BY_HAND");
+   if(hasOrder)
+    // Cancelling, rather than deciding here what becomes of the order. Where it ends up depends on
+    // whether a pickup had begun -- before one, nothing was carried and the work simply ends; after
+    // one, the carrier's whereabouts are a question for a person. That rule is already written, and
+    // written once, in the cancel path; a second copy here would be the one that drifts.
+    for(var a:ledger.activeAssignments(siteId))
+     if(a.vehicleId()==vehicleId){
+      var order=ledger.find(siteId,a.orderId()).orElse(null);
+      if(order==null||order.status().isTerminal()) continue;
+      // An order already winding down has nothing left to cancel; asking again is refused, and
+      // rightly. What it still needs is the thing below.
+      var now=order.status()==com.amhs.transport.OrderStatus.CANCEL_REQUESTED ? order
+       : orders.cancel(siteId,a.orderId(),"PLACED_BY_HAND: 차량을 손으로 옮겼습니다","simulator",
+         java.util.UUID.randomUUID().toString());
+      // A cancel that could not finish is waiting for the vehicle to say it stopped. This vehicle
+      // is the simulator's, and it has just been taken off that work, so the answer is here and now
+      // -- left unsaid, the order would wait for a report that is never coming. What that settles
+      // into is still the ledger's to decide: if a pickup had begun, it becomes a question about
+      // the carrier instead of an ending.
+      if(now.status()==com.amhs.transport.OrderStatus.CANCEL_REQUESTED)
+       orders.advance(siteId,a.orderId(),com.amhs.transport.OrderStatus.CANCELLED,
+        "PLACED_BY_HAND: 옮긴 차량은 이 작업을 더 수행하지 않습니다","simulator",
+        java.util.UUID.randomUUID().toString());
+     }
+   if(isMoving)
+    for(var r:ledger.openRelocations(siteId))
+     if(r.vehicleId()==vehicleId) ledger.finishRelocation(r.id(),"PLACED_BY_HAND");
+   traffic.releaseAll(siteId,vehicleId,"PLACED_BY_HAND");
    vehicles.put(vehicleId,new Sim(siteId,vehicleId,List.of(),false,false));
    battery.putIfAbsent(vehicleId,100.0);
    var placed=report(siteId,vehicleId,nodeId,"IDLE",false);
@@ -145,6 +209,9 @@ public class SimulatedVehicles {
    var sim=vehicles.get(vehicleId);
    if(sim==null||sim.siteId()!=siteId) throw new IllegalArgumentException("NOT_A_SIMULATED_VEHICLE");
    if(!Double.isFinite(pct)||pct<0||pct>100) throw new IllegalArgumentException("INVALID_BATTERY");
+   // Setting the charge by hand says it is this now. Leaving an injected pickup fault running would
+   // take it straight back down, so the control would look broken rather than overruled.
+   pickupFaulted.remove(vehicleId);
    battery.put(vehicleId,pct);
    long revisionId=ledger.activeRevision(siteId);
    fleet.reportBattery(siteId,revisionId,vehicleId,pct);

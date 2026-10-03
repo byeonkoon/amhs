@@ -53,6 +53,15 @@ public interface TrafficControl {
      */
     int releaseAhead(long siteId, long vehicleId, Long positionNodeId, String reason);
 
+    /**
+     * Releases everything the vehicle holds, including the node it was standing on.
+     *
+     * <p>For when the vehicle is no longer at any of them -- it was put somewhere else outright,
+     * rather than having driven. Keeping the node it stood on would leave a place reserved for a
+     * vehicle that is not there and never coming back to it.
+     */
+    int releaseAll(long siteId, long vehicleId, String reason);
+
     List<NodeHold> held(long siteId);
     /** Every zone at this site with the vehicles counting against its capacity. */
     List<ZoneOccupancy> zones(long siteId);

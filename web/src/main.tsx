@@ -12,7 +12,7 @@ import {
 import { AppShell, mayOpen, type MenuKey, type ServerState } from './shell/AppShell';
 import { Chip, Empty, Failed, Loading } from './shell/States';
 import { Grid, Panel, Row } from './shell/Panel';
-import { MapLegend, MapView } from './features/map/MapView';
+import { MapLegend, MapView, layerOfNode } from './features/map/MapView';
 // three.js is loaded only when somebody switches to 3D.
 const MapView3D = React.lazy(() => import('./features/map/MapView3D'));
 import { ConfigurationScreen } from './features/configuration/ConfigurationScreen';
@@ -386,6 +386,9 @@ function MonitorScreen(props: {
               ? <p className="hint" style={{ margin: 0 }}>지도나 목록에서 차량을 고르면 상세가 표시됩니다.</p>
               : <VehicleDetail vehicle={selectedVehicle} reported={state.find(v => v.id === selectedVehicle.id) ?? null}
                   nodeCode={nodeCode} staleAfter={staleAfter} simulated={options?.runMode === 'SIMULATION'} onChanged={props.onRetry}
+                  placeNodes={props.data.map.nodes
+                    .filter(n => n.enabled && layerOfNode(props.data.map, n.id) === selectedVehicle.vType)
+                    .map(n => ({ id: n.id, code: n.code }))}
                   run={holds.filter(h => h.vehicleId === selectedVehicle.id).sort((a, b) => a.sequence - b.sequence)} />}
           </Panel>
 
@@ -430,9 +433,23 @@ function ViewSwitch(props: { value: '2D' | '3D'; onChange: (v: '2D' | '3D') => v
 function VehicleDetail(props: {
   vehicle: Vehicle; reported: VehicleSnapshot | null; nodeCode: (id: number | null) => string;
   staleAfter: number; run: NodeHold[]; simulated?: boolean; onChanged?: () => void;
+  /** Nodes of this vehicle's own network, so it is never placed on a line it cannot run on. */
+  placeNodes?: { id: number; code: string }[];
 }) {
   const r = props.reported;
   const [stateError, setStateError] = React.useState<string | null>(null);
+  const [placeAt, setPlaceAt] = React.useState<number | ''>('');
+  const [pickupFaulted, setPickupFaulted] = React.useState<number[]>([]);
+
+  // Which vehicles are simulating a power-pickup failure, so a charge that keeps falling is
+  // explained on the screen rather than looking like the control not working.
+  React.useEffect(() => {
+    if (!props.simulated) return;
+    const c = new AbortController();
+    get<number[]>(opsApi.simulatedPickupFaults(), c.signal).then(setPickupFaulted)
+      .catch(cause => { if ((cause as Error)?.name !== 'AbortError') setPickupFaulted([]); });
+    return () => c.abort();
+  }, [props.simulated, props.reported]);
   // In simulation a person can put a vehicle into manual, pause it, fault it, or give it back to
   // the controller, the way a vehicle on site would report it. The simulated vehicle then holds.
   async function setState(mode: string, status: string) {
@@ -452,11 +469,49 @@ function VehicleDetail(props: {
     setStateError(null);
     try {
       await send(opsApi.simulatedState(r.id), 'PUT', { batteryPct }, '시뮬레이션 배터리 변경');
+      // Setting it by hand also stops a pickup fault, or the value would drop straight back.
+      setPickupFaulted(f => f.filter(id => id !== r.id));
       props.onChanged?.();
     } catch (cause) {
       setStateError(cause instanceof ApiError ? explainDecision(cause.message) : '바꾸지 못했습니다.');
     }
   }
+  /**
+   * Puts the vehicle on a node outright. Refused while it has work, and then offered again as a
+   * choice the person makes knowingly: moving it leaves the job somewhere, and that somewhere is
+   * recovery, not nothing.
+   */
+  async function place(releaseWork = false) {
+    if (!r || placeAt === '') return;
+    setStateError(null);
+    try {
+      await send(opsApi.simulatedPlace(r.id), 'POST', { nodeId: placeAt, releaseWork }, '시뮬레이션 위치 지정');
+      props.onChanged?.();
+    } catch (cause) {
+      if (cause instanceof ApiError && (cause.message === 'VEHICLE_HAS_ORDER' || cause.message === 'VEHICLE_ALREADY_MOVING')) {
+        const work = cause.message === 'VEHICLE_HAS_ORDER' ? '진행 중인 반송 작업' : '진행 중인 이동';
+        if (window.confirm(`${work}이 있습니다. 그래도 옮기면 작업은 복구 대기로 넘어갑니다 — `
+          + `차량이 화물을 두고 움직인 셈이라 화물 위치를 사람이 확인해 기록해야 끝납니다.\n\n옮길까요?`)) {
+          await place(true);
+        }
+        return;
+      }
+      setStateError(cause instanceof ApiError ? explainDecision(cause.message) : '옮기지 못했습니다.');
+    }
+  }
+  async function setPickup(healthy: boolean) {
+    if (!r) return;
+    setStateError(null);
+    try {
+      await send(opsApi.simulatedPickup(r.id), 'PUT', { healthy }, '시뮬레이션 집전 상태 변경');
+      setPickupFaulted(f => healthy ? f.filter(id => id !== r.id) : [...f, r.id]);
+      props.onChanged?.();
+    } catch (cause) {
+      setStateError(cause instanceof ApiError ? explainDecision(cause.message) : '바꾸지 못했습니다.');
+    }
+  }
+  const faulted = r != null && pickupFaulted.includes(r.id);
+  const railFed = r != null && (r.chargingPolicy == null || r.chargingPolicy === 'DISABLED');
   return (
     <div style={{ display: 'grid', gap: 7, fontSize: 12 }}>
       <div style={{ display: 'flex', gap: 7, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -491,7 +546,36 @@ function VehicleDetail(props: {
           {[15, 35, 100].map(pct => (
             <button key={pct} type="button" style={tiny} disabled={!hasWriteToken()} onClick={() => setBattery(pct)}>{pct}%</button>
           ))}
+          {/* Only a rail-fed vehicle has a pickup to fail. The charging kind runs its own cycle. */}
+          {railFed && (
+            <>
+              <span className="hint" style={{ marginLeft: 6 }}>집전</span>
+              <button type="button" style={faulted ? tinyOn : tiny} disabled={!hasWriteToken()}
+                title={faulted
+                  ? '레일에서 전력을 받지 못하는 상태입니다. 버퍼가 계속 떨어집니다.'
+                  : '집전 고장을 넣습니다. 버퍼가 오르지 않고 계속 떨어져 알람 조건을 만듭니다.'}
+                onClick={() => setPickup(faulted)}>
+                {faulted ? '고장 중 · 해제' : '고장 주입'}
+              </button>
+            </>
+          )}
           {stateError && <span className="hint" style={{ color: 'var(--crit)' }}>{stateError}</span>}
+        </div>
+      )}
+      {props.simulated && r && (props.placeNodes?.length ?? 0) > 0 && (
+        <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
+          <span className="hint">위치 지정</span>
+          <select style={{ ...tiny, minWidth: 92 }} value={placeAt} disabled={!hasWriteToken()}
+            onChange={e => setPlaceAt(e.target.value === '' ? '' : Number(e.target.value))}>
+            <option value="">노드</option>
+            {props.placeNodes!.map(n => <option key={n.id} value={n.id}>{n.code}</option>)}
+          </select>
+          <button type="button" style={tiny} disabled={!hasWriteToken() || placeAt === ''}
+            onClick={() => place()}>놓기</button>
+          <span className="hint">
+            주행이 아니라 그 자리에 놓습니다. 쥐고 있던 구간은 모두 반납합니다. 작업이나 이동 중이면 한 번 되묻고,
+            그래도 옮기면 그 작업은 복구 대기로 넘어갑니다.
+          </span>
         </div>
       )}
       {r?.source === 'INITIAL_CONFIGURATION' && (
@@ -710,6 +794,10 @@ function toneOf(status: string): string {
 const tiny: React.CSSProperties = {
   border: '1px solid var(--ln2)', background: 'var(--srf)', color: 'var(--ink2)',
   borderRadius: 4, padding: '1px 7px', fontSize: 10, cursor: 'pointer', marginLeft: 6,
+};
+/** A simulation control that is currently doing something, so it is not mistaken for an offer. */
+const tinyOn: React.CSSProperties = {
+  ...tiny, borderColor: 'var(--warn)', background: '#FBF0DA', color: '#8A5C05',
 };
 
 createRoot(document.getElementById('root')!).render(<React.StrictMode><App /></React.StrictMode>);

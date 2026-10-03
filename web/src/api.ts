@@ -344,6 +344,15 @@ export const opsApi = {
   assignments: () => `/api/v1/sites/${SITE_ID}/transport-orders/assignments`,
   /** Changes only a simulated vehicle's mode and status; its position and load stay as they are. */
   simulatedState: (vehicleId: number) => `/api/v1/sites/${SITE_ID}/simulation/vehicles/${vehicleId}/state`,
+  /**
+   * Puts a simulated vehicle on a node outright. Not driving: everything it held is released, and
+   * it is refused while an order or a move is running, because both store a route it would no
+   * longer be on.
+   */
+  simulatedPlace: (vehicleId: number) => `/api/v1/sites/${SITE_ID}/simulation/vehicles/${vehicleId}/place`,
+  /** Simulates a rail-powered vehicle failing to pick its power up, or picking it up again. */
+  simulatedPickup: (vehicleId: number) => `/api/v1/sites/${SITE_ID}/simulation/vehicles/${vehicleId}/power-pickup`,
+  simulatedPickupFaults: () => `/api/v1/sites/${SITE_ID}/simulation/power-pickup-faults`,
   /** An operator sends a vehicle to a node. */
   moveVehicle: (vehicleId: number) => `/api/v1/sites/${SITE_ID}/vehicles/${vehicleId}/move`,
   /** Stops an operator's move: nothing more is granted, and it closes once the vehicle has stopped. */
