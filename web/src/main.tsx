@@ -22,6 +22,7 @@ import { SystemOptionsScreen } from './features/system/SystemOptionsScreen';
 import { SignInScreen } from './features/system/SignInScreen';
 import { AccountsScreen } from './features/system/AccountsScreen';
 import { EquipmentScreen } from './features/equipment/EquipmentScreen';
+import { InventoryScreen } from './features/inventory/InventoryScreen';
 import { HistoryScreen } from './features/history/HistoryScreen';
 import { useLive, type Live, type LiveParts } from './live';
 
@@ -158,6 +159,7 @@ function App() {
               : menu === 'accounts' ? <AccountsScreen session={session} />
               : menu === 'resources' ? <ConfigurationScreen map={data.map} session={session} />
               : menu === 'equipment' ? <EquipmentScreen session={session} revisionId={REVISION_ID} />
+              : menu === 'inventory' ? <InventoryScreen session={session} map={data.map} orders={data.orders} />
               : menu === 'history' ? <HistoryScreen map={data.map} />
                 : menu === 'transport'
                   ? <TransportScreen orders={data.orders} map={data.map} vehicles={data.state}

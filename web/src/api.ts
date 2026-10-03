@@ -348,6 +348,42 @@ export type SlotView = {
   usable: boolean; unusableReason: string | null;
 };
 
+// ---- 재고 (저장된 화물의 위치) ----
+
+/**
+ * Where one carrier is while nothing is carrying it. Exactly one of `slotId` and `portId` is set:
+ * a cell is a place somebody looked at, and a port means it was handed over there with the cell
+ * never recorded. The second is not a worse version of the first — it is a different thing to know.
+ */
+export type Placement = {
+  id: number; siteId: number; carrierCode: string;
+  slotId: number | null; portId: number | null;
+  evidence: 'OPERATOR' | 'DEVICE'; reason: string; actorCode: string | null;
+  placedAt: string; version: number;
+};
+/**
+ * One cell with both of the independent things that can be true of it. `usable` is a decision
+ * somebody recorded; `carrierCode` is what is in it now. A cell can be both unusable and holding
+ * something, so these are never merged into one status.
+ */
+export type CellView = {
+  slotId: number; level: number; col: number; code: string;
+  usable: boolean; unusableReason: string | null;
+  carrierCode: string | null; placedAt: string | null;
+};
+export type InventorySummary = {
+  stored: number; inCells: number; atPortOnly: number; inTransport: number;
+  cells: number; blockedCells: number;
+};
+export const invApi = {
+  placements: () => `/api/v1/sites/${SITE_ID}/inventory/placements`,
+  placement: (carrierCode: string) =>
+    `/api/v1/sites/${SITE_ID}/inventory/placements/${encodeURIComponent(carrierCode)}`,
+  summary: () => `/api/v1/sites/${SITE_ID}/inventory/summary`,
+  cells: (unitId: number, rackId: number) =>
+    `/api/v1/sites/${SITE_ID}/inventory/equipment/${unitId}/racks/${rackId}/cells`,
+};
+
 /** Authority levels, lowest first. A screen offers what the session says it may do. */
 export type Role = 'VIEWER' | 'OPERATOR' | 'MANAGER' | 'ADMIN';
 /** 1 to 4, the same numbers the login screen and the account list speak in. */
