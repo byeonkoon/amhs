@@ -122,6 +122,12 @@ export type OperationOptions = {
   homeReturnSeconds?: number;
   /** AGV charging thresholds, state of charge in percent. */
   chargeRequestPct?: number; chargeCriticalPct?: number; chargeReleasePct?: number;
+  /**
+   * For a vehicle fed from the rail, which has no charging cycle: how long its state of charge may
+   * fall without once rising, and how far it must have fallen over that time, before it is called a
+   * power-pickup fault. Either left unset leaves the rule off.
+   */
+  powerDropWindowSeconds?: number | null; powerDropMinPct?: number | null;
 };
 /** Topic version and JSON version are separate values; actions are sent at the pickup and drop ports. */
 export type VdaProfileSettings = {

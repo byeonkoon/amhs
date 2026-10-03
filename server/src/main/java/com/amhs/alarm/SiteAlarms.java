@@ -88,7 +88,7 @@ public class SiteAlarms {
    // has no regime this threshold belongs to, and an alarm nobody can act on is the thing that
    // teaches people to stop reading the screen.
    Integer critical=options.chargeCriticalPct();
-   boolean charges=v.chargingPolicy()!=null&&!"DISABLED".equals(v.chargingPolicy());
+   boolean charges=v.carriesItsOwnCharge();
    if(charges&&critical!=null&&v.batteryPct()!=null&&v.batteryPct()<critical&&!"CHARGING".equals(v.status()))
     out.add(new Alarm("BATTERY_CRITICAL:"+v.id(),Severity.CRITICAL,"배터리 임계",
      v.code(),"잔량 %.0f%%로 임계값 %d%% 아래입니다.".formatted(v.batteryPct(),critical),
@@ -96,6 +96,21 @@ public class SiteAlarms {
       ? "화물을 싣고 있어 충전하러 보내지 않습니다. 하역이 끝나기 전에 멈출 수 있습니다."
       : "작업을 주지 않고 충전을 우선합니다. 비어 있는 충전기가 없으면 그대로 기다립니다.",
      v.reportedAt(),"마지막 보고","fleet"));
+
+   // The other direction, for a vehicle fed from the rail. It has no charging cycle, so its store
+   // is a buffer the rail keeps full and a level is not the question -- it is full until it is not
+   // being fed. Only falling, for long enough and far enough, is the vehicle not picking its power
+   // up. A level would notice far too late, and wherever the vehicle happened to be, which on a
+   // single loop is in front of everything else.
+   if(!charges&&options.watchesPowerDrop()&&v.socPeakAt()!=null&&v.droppedSincePeak()!=null
+      &&v.droppedSincePeak()>=options.powerDropMinPct()
+      &&v.socPeakAt().isBefore(OffsetDateTime.now().minusSeconds(options.powerDropWindowSeconds())))
+    out.add(new Alarm("POWER_PICKUP:"+v.id(),Severity.CRITICAL,"전력 집전 이상",
+     v.code(),"버퍼 잔량이 %d초 동안 오르지 않고 %.0f%% 떨어졌습니다(%.0f%% → %.0f%%).".formatted(
+      options.powerDropWindowSeconds(),v.droppedSincePeak(),v.socPeakPct(),v.batteryPct()),
+     "레일에서 전력을 받지 못하고 있습니다. 이대로 두면 본선에서 서고, 단일 루프에서는 뒤따르는 차량이 전부 막힙니다."
+      +" 서 버리기 전에 정비 구역으로 빼내야 합니다.",
+     v.socPeakAt(),"마지막으로 오른 시각","fleet"));
   }
  }
 

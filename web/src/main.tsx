@@ -342,7 +342,7 @@ function MonitorScreen(props: {
                     <span><Chip tone={modeTone(v)}>{modeLabel(v)}</Chip></span>
                     <span><Chip tone={stateTone(v)}>{stateLabel(v)}</Chip></span>
                     <span><Chip tone={v.carrierPresent ? 'ac' : 'id'}>{v.carrierPresent ? '있음' : '없음'}</Chip></span>
-                    <span className="mono" style={{ color: batteryColor(v, options) }}>
+                    <span className="mono" style={{ color: batteryColor(v, options) }} title={chargeMeaning(v)}>
                       {v.batteryPct == null ? '—' : `${Math.round(v.batteryPct)}%`}</span>
                     <span className="mono">{holdsOf(v.id) || '—'}</span>
                   </Row>
@@ -515,12 +515,29 @@ const STEP: Record<string, { label: string; note: string }> = {
 };
 
 /** Status as the vehicle reports it, on its own axis apart from the mode. */
-/** Battery shown red below the critical threshold, amber at or below the request threshold. */
+/**
+ * Battery shown red below the critical threshold, amber at or below the request threshold — but
+ * only for a vehicle that carries its own charge. A vehicle fed from the rail has no thresholds to
+ * be under, and colouring its buffer by them would be reading one number as if it were the other.
+ */
 function batteryColor(v: VehicleSnapshot, options: OperationOptions | null | undefined): string | undefined {
-  if (v.batteryPct == null) return undefined;
+  if (v.batteryPct == null || !carriesItsOwnCharge(v)) return undefined;
   if (v.batteryPct < (options?.chargeCriticalPct ?? 20)) return 'var(--crit)';
   if (v.batteryPct <= (options?.chargeRequestPct ?? 40)) return '#B7791F';
   return undefined;
+}
+const carriesItsOwnCharge = (v: VehicleSnapshot) =>
+  v.chargingPolicy != null && v.chargingPolicy !== 'DISABLED';
+/**
+ * The same column holds two different quantities, so it says which. A charge runs down as the
+ * vehicle works and is put back on purpose; a buffer is kept full by the rail and only falls when
+ * the vehicle is not being fed, which is a fault rather than a duty cycle.
+ */
+function chargeMeaning(v: VehicleSnapshot): string {
+  if (v.batteryPct == null) return '보고된 값이 없습니다. 0%가 아니라 모른다는 뜻입니다.';
+  return carriesItsOwnCharge(v)
+    ? '차량이 들고 다니는 충전량입니다. 임계값 아래로 내려가면 충전을 우선합니다.'
+    : '레일에서 급전받는 차량의 전력 버퍼입니다. 충전 주기가 없으므로 임계값이 아니라 계속 떨어지는지를 봅니다.';
 }
 
 function stateLabel(v: VehicleSnapshot): string {

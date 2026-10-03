@@ -72,6 +72,26 @@ class SimulationController {
  @GetMapping("/vehicles")
  Set<Long> placed(@PathVariable long siteId){ return vehicles.placed(); }
 
+ /**
+  * Simulates a rail-powered vehicle picking its power up, or failing to.
+  *
+  * <p>A vehicle fed from the rail has no charging cycle, so the only way its buffer falls is that
+  * it is not being fed. That is the condition worth being able to produce on purpose, rather than
+  * waiting for a real fault to be the first time anyone sees what the controller does about it.
+  */
+ @PutMapping("/vehicles/{vehicleId}/power-pickup")
+ Map<String,Object> powerPickup(@PathVariable long siteId,@PathVariable long vehicleId,
+                                @RequestBody Map<String,Object> body){
+  requireSimulation(siteId);
+  Object healthy=body.get("healthy");
+  if(!(healthy instanceof Boolean ok)) throw new IllegalArgumentException("healthy is required");
+  vehicles.setPowerPickup(vehicleId,ok);
+  return Map.of("vehicleId",vehicleId,"healthy",ok);
+ }
+
+ @GetMapping("/power-pickup-faults")
+ Set<Long> pickupFaults(@PathVariable long siteId){ return vehicles.pickupFaults(); }
+
  @ExceptionHandler(IllegalArgumentException.class)
  org.springframework.http.ResponseEntity<Map<String,String>> rejected(IllegalArgumentException ex){
   return org.springframework.http.ResponseEntity.unprocessableEntity().body(Map.of("code",String.valueOf(ex.getMessage())));

@@ -12,6 +12,12 @@ import java.util.Optional;
 class JdbcFleetState implements FleetState {
  private final JdbcTemplate jdbc;
  JdbcFleetState(JdbcTemplate jdbc){this.jdbc=jdbc;}
+ /**
+  * How far below the reading before it a reading must be to count as having fallen rather than
+  * wobbled. It is a noise floor, so it is kept well under the smallest fall worth noticing: set too
+  * high, a slow genuine drain reads as flat and nothing is ever noticed.
+  */
+ private static final double FALL_EPSILON=0.1;
 
  /**
   * A configured vehicle with no report yet is listed with everything false and no position, so
@@ -74,8 +80,25 @@ class JdbcFleetState implements FleetState {
  @Transactional
  public void reportBattery(long siteId,long revisionId,long vehicleId,double batteryPct){
   if(!Double.isFinite(batteryPct)||batteryPct<0||batteryPct>100) throw new IllegalArgumentException("INVALID_BATTERY");
-  jdbc.update("UPDATE fleet.vehicle_state SET battery_pct=? WHERE site_id=? AND vehicle_id=? AND revision_id=?",
-   batteryPct,siteId,vehicleId,revisionId);
+  // Where the current fall began is kept with the reading, so whether a charge has been going down
+  // can be answered without a history. The anchor holds only while readings keep coming in lower
+  // than the one before; any reading that is not meaningfully lower ends that fall and moves the
+  // anchor to here and now.
+  //
+  // "Not lower" has to include flat, not just rising. A buffer the rail holds full reports the same
+  // value all day, and if only a rise moved the anchor it would sit frozen at whenever the vehicle
+  // first reached full -- so a single dip hours later would look like hours of falling, and the
+  // window that exists to ride out transients would never be applied at all.
+  //
+  // The epsilon is the noise floor of a reading: a difference that cannot be told from jitter is
+  // not a fall. Every expression on the right sees the row as it was, so the new reading is
+  // compared with the previous one even though both are set here.
+  jdbc.update("UPDATE fleet.vehicle_state SET "
+   +"soc_peak_pct=CASE WHEN battery_pct IS NULL OR soc_peak_pct IS NULL OR ?>=battery_pct-? THEN ? ELSE soc_peak_pct END,"
+   +"soc_peak_at=CASE WHEN battery_pct IS NULL OR soc_peak_pct IS NULL OR ?>=battery_pct-? THEN now() ELSE soc_peak_at END,"
+   +"battery_pct=?"
+   +" WHERE site_id=? AND vehicle_id=? AND revision_id=?",
+   batteryPct,FALL_EPSILON,batteryPct,batteryPct,FALL_EPSILON,batteryPct,siteId,vehicleId,revisionId);
  }
 
  @Transactional
@@ -114,7 +137,8 @@ class JdbcFleetState implements FleetState {
   // Between two nodes a vehicle is not idle, whatever it says: nothing may treat it as standing.
   +"COALESCE(s.online,FALSE),COALESCE(s.remote,FALSE),COALESCE(s.idle,FALSE) AND s.x_mm IS NULL,COALESCE(s.carrier_present,FALSE),"
   +"COALESCE(s.source,'INITIAL_CONFIGURATION'),s.reported_at,s.destination_change_enabled,p.home_node_id,s.mode,s.status,"
-  +"s.x_mm,s.y_mm,p.charge_node_id,p.speed_mm_s,s.battery_pct,p.charging_policy,s.idle_since"
+  +"s.x_mm,s.y_mm,p.charge_node_id,p.speed_mm_s,s.battery_pct,p.charging_policy,s.idle_since,"
+  +"s.soc_peak_pct,s.soc_peak_at"
   +" FROM fleet.vehicle_profile p LEFT JOIN fleet.vehicle_state s ON s.site_id=p.site_id AND s.vehicle_id=p.id"
   +" WHERE p.site_id=? AND p.revision_id=?";
  // reported_at stays null until something reports, so a screen can tell "never" from "a while ago".
@@ -125,5 +149,6 @@ class JdbcFleetState implements FleetState {
   r.getObject(12,java.time.OffsetDateTime.class),r.getObject(13,Boolean.class),r.getObject(14,Long.class),
   r.getString(15),r.getString(16),r.getObject(17,Double.class),r.getObject(18,Double.class),
   r.getObject(19,Long.class),r.getInt(20),r.getObject(21,Double.class),r.getString(22),
-  r.getObject(23,java.time.OffsetDateTime.class));
+  r.getObject(23,java.time.OffsetDateTime.class),
+  r.getObject(24,Double.class),r.getObject(25,java.time.OffsetDateTime.class));
 }

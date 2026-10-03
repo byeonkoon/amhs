@@ -29,13 +29,20 @@ public record OperationOptions(String commType,int nodeCount,boolean moreEnabled
  int moreRemainingNodes,int moreRemainingPercent,
  boolean autoDispatch,int commandMaxAttempts,int commandRetrySeconds,int positionStaleSeconds,
  int moreMinRemainingNodes,boolean moreVehicleSignal,String mergeControl,int transferMaxAttempts,String runMode,
- Integer yieldAfterSeconds,Integer homeReturnSeconds,Integer chargeRequestPct,Integer chargeCriticalPct,Integer chargeReleasePct){
+ Integer yieldAfterSeconds,Integer homeReturnSeconds,Integer chargeRequestPct,Integer chargeCriticalPct,Integer chargeReleasePct,
+ Integer powerDropWindowSeconds,Integer powerDropMinPct){
  /**
   * yieldAfterSeconds: how long a vehicle may wait for one standing idle in its way before that one
   * is moved aside (0 never). homeReturnSeconds: how long a vehicle may stand without work before it
   * is sent to its home node (0 never). The charge values are state of charge in percent: below
   * request an AGV asks to charge and work still wins; below critical, without a carrier, it must
   * charge and is given no work; above release the request ends.
+  *
+  * <p>The power-drop pair watches direction rather than level, for a vehicle fed from the rail: it
+  * has no charging cycle, so a threshold would answer the wrong question and answer it too late.
+  * How long a state of charge may fall without once rising, and how far it must have fallen over
+  * that time to be called a fault. Either left unset leaves the rule off, which is how a site that
+  * does not want it says so -- rather than by a value chosen so it never triggers.
   */
  public OperationOptions{
   if(yieldAfterSeconds==null) yieldAfterSeconds=5;
@@ -50,7 +57,11 @@ public record OperationOptions(String commType,int nodeCount,boolean moreEnabled
   int moreMinRemainingNodes,boolean moreVehicleSignal,String mergeControl,int transferMaxAttempts,String runMode){
   this(commType,nodeCount,moreEnabled,moreType,moreRemainingNodes,moreRemainingPercent,autoDispatch,commandMaxAttempts,
    commandRetrySeconds,positionStaleSeconds,moreMinRemainingNodes,moreVehicleSignal,mergeControl,transferMaxAttempts,runMode,
-   null,null,null,null,null);
+   null,null,null,null,null,null,null);
+ }
+ /** Whether the site watches for a state of charge that only falls. Both values or the rule is off. */
+ public boolean watchesPowerDrop(){
+  return powerDropWindowSeconds!=null&&powerDropWindowSeconds>0&&powerDropMinPct!=null&&powerDropMinPct>0;
  }
  public static final Set<String> COMM_TYPES=Set.of("PC","PLC","MQTT");
  public static final Set<String> MORE_TYPES=Set.of("NODE","DISTANCE");
@@ -80,5 +91,12 @@ public record OperationOptions(String commType,int nodeCount,boolean moreEnabled
   ConfigurationException.require(homeReturnSeconds>=0&&homeReturnSeconds<=3600,"INVALID_HOME_RETURN_SECONDS");
   ConfigurationException.require(chargeCriticalPct>=1&&chargeCriticalPct<chargeRequestPct
    &&chargeRequestPct<chargeReleasePct&&chargeReleasePct<=100,"INVALID_CHARGE_LEVELS");
+  // Half the pair would be a rule that cannot be stated: a window with no drop, or a drop with no
+  // time to have happened in. Off is spelled by leaving both unset.
+  ConfigurationException.require((powerDropWindowSeconds==null)==(powerDropMinPct==null),"INCOMPLETE_POWER_DROP_RULE");
+  ConfigurationException.require(powerDropWindowSeconds==null
+   ||(powerDropWindowSeconds>=30&&powerDropWindowSeconds<=86400),"INVALID_POWER_DROP_WINDOW");
+  ConfigurationException.require(powerDropMinPct==null
+   ||(powerDropMinPct>=1&&powerDropMinPct<=100),"INVALID_POWER_DROP_MIN");
  }
 }

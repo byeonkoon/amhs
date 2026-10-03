@@ -123,6 +123,90 @@ class SiteAlarmsSqlTest {
   }
  }
 
+ /**
+  * A vehicle fed from the rail is watched for direction, not level.
+  *
+  * <p>Its store is a buffer the rail keeps full, so a level says nothing until far too late and
+  * wherever the vehicle happens to be. Only falling -- for long enough, by far enough, without once
+  * rising -- is the vehicle not picking its power up. A rise is the event that says it is being fed
+  * again, so a rise ends the condition however low the reading is.
+  */
+ @Test void aRailPoweredVehicleIsWatchedForFallingNotForBeingLow(){
+  Integer window=jdbc.queryForObject(
+   "SELECT power_drop_window_seconds FROM platform.site_operation WHERE site_id=?",Integer.class,SITE);
+  Integer minPct=jdbc.queryForObject(
+   "SELECT power_drop_min_pct FROM platform.site_operation WHERE site_id=?",Integer.class,SITE);
+  try{
+   jdbc.update("UPDATE platform.site_operation SET power_drop_window_seconds=60,power_drop_min_pct=5 WHERE site_id=?",SITE);
+   reports("IDLE");
+
+   // Full, then falling: not yet, because it has not been falling for long enough.
+   tx.executeWithoutResult(s->fleet.reportBattery(SITE,REVISION,OHT,100.0));
+   tx.executeWithoutResult(s->fleet.reportBattery(SITE,REVISION,OHT,88.0));
+   assertThat(about("POWER_PICKUP:"+OHT)).as("falling, but not for long enough yet").isEmpty();
+
+   // The same drop, old enough to mean something.
+   jdbc.update("UPDATE fleet.vehicle_state SET soc_peak_at=now()-interval '10 minutes'"
+    +" WHERE vehicle_id=? AND revision_id=?",OHT,REVISION);
+   assertThat(about("POWER_PICKUP:"+OHT)).singleElement().satisfies(a->{
+    assertThat(a.severity()).isEqualTo(Alarm.Severity.CRITICAL);
+    assertThat(a.subject()).isEqualTo("OHT-01");
+    assertThat(a.effect()).contains("정비 구역");
+    assertThat(a.sinceMeans()).isEqualTo("마지막으로 오른 시각");
+   });
+   // And it is not the level that did it: the threshold rule never fires for this vehicle.
+   assertThat(about("BATTERY_CRITICAL:"+OHT)).isEmpty();
+
+   // One rise says the rail is feeding it again, and that ends it well below where it started --
+   // a buffer that recovers to its working level need never climb back to where it last was full.
+   tx.executeWithoutResult(s->fleet.reportBattery(SITE,REVISION,OHT,91.0));
+   assertThat(about("POWER_PICKUP:"+OHT)).as("it rose, so it is being fed").isEmpty();
+  } finally {
+   jdbc.update("UPDATE platform.site_operation SET power_drop_window_seconds=?,power_drop_min_pct=? WHERE site_id=?",
+    window,minPct,SITE);
+   tx.executeWithoutResult(s->fleet.reportBattery(SITE,REVISION,OHT,100.0));
+  }
+ }
+
+ /**
+  * Standing still is not falling, so a charge that is steady keeps starting the clock over.
+  *
+  * <p>This is the case that matters for a buffer the rail holds full: it reports the same value all
+  * day. If only a rise moved the anchor, it would sit frozen at whenever the vehicle first reached
+  * full, and a single dip hours later would read as hours of falling -- the window that exists to
+  * ride out transients would never be applied at all.
+  */
+ @Test void aChargeThatIsSteadyKeepsStartingTheClockOver(){
+  reports("IDLE");
+  // Set rather than arrived at: what is under test is what one reading does to the next.
+  jdbc.update("UPDATE fleet.vehicle_state SET battery_pct=100,soc_peak_pct=100,"
+   +"soc_peak_at=now()-interval '2 hours' WHERE vehicle_id=? AND revision_id=?",OHT,REVISION);
+
+  tx.executeWithoutResult(s->fleet.reportBattery(SITE,REVISION,OHT,100.0));
+  assertThat(peakAt()).as("flat is not falling, so the fall has not been going on for two hours")
+   .isAfter(java.time.OffsetDateTime.now().minusMinutes(1));
+
+  // A hair lower is inside the noise floor: still not a fall.
+  var afterFlat=peakAt();
+  tx.executeWithoutResult(s->fleet.reportBattery(SITE,REVISION,OHT,99.95));
+  assertThat(peakAt()).as("a hair lower is the same reading").isAfter(afterFlat.minusSeconds(1));
+
+  // Clearly lower is a fall, and it is measured from where it started.
+  tx.executeWithoutResult(s->fleet.reportBattery(SITE,REVISION,OHT,94.0));
+  var held=peakAt();
+  tx.executeWithoutResult(s->fleet.reportBattery(SITE,REVISION,OHT,91.0));
+  assertThat(peakAt()).as("still falling, so the start of the fall does not move").isEqualTo(held);
+
+  // Rising ends it, from wherever it got to.
+  tx.executeWithoutResult(s->fleet.reportBattery(SITE,REVISION,OHT,93.0));
+  assertThat(jdbc.queryForObject("SELECT soc_peak_pct FROM fleet.vehicle_state WHERE vehicle_id=? AND revision_id=?",
+   Double.class,OHT,REVISION)).isEqualTo(93.0);
+ }
+ private java.time.OffsetDateTime peakAt(){
+  return jdbc.queryForObject("SELECT soc_peak_at FROM fleet.vehicle_state WHERE vehicle_id=? AND revision_id=?",
+   java.time.OffsetDateTime.class,OHT,REVISION);
+ }
+
  /** Every line has to say what it is already causing, or the screen teaches people to skip it. */
  @Test void everyAlarmSaysWhatItIsCausingAndWhereToGo(){
   reports("ERROR");

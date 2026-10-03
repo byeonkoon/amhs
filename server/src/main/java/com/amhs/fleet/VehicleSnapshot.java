@@ -21,7 +21,31 @@ public record VehicleSnapshot(long id, String code, VehicleType vType, Long node
                               Boolean destinationChangeEnabled, Long homeNodeId,
                               String mode, String status,
                               Double xMm, Double yMm, Long chargeNodeId, int speedMmS,
-                              Double batteryPct, String chargingPolicy, java.time.OffsetDateTime idleSince) {
+                              Double batteryPct, String chargingPolicy, java.time.OffsetDateTime idleSince,
+                              Double socPeakPct, java.time.OffsetDateTime socPeakAt) {
+    /**
+     * Whether this vehicle carries its own charge, or is fed from the rail and carries a buffer.
+     *
+     * <p>The two look alike in a column of percentages and are not alike at all. A charge runs down
+     * as the vehicle works and is put back on purpose; a buffer is kept full by the rail, and the
+     * only thing that empties it is the vehicle not being fed.
+     */
+    public boolean carriesItsOwnCharge() {
+        return chargingPolicy != null && !"DISABLED".equals(chargingPolicy);
+    }
+
+    /**
+     * How far the state of charge has fallen since the current fall began.
+     *
+     * <p>{@code socPeakAt} is when it began: the last reading that was not lower than the one
+     * before it, so a charge that is steady or rising keeps starting over. Null when there is
+     * nothing to compare against. Falling is not a fault by itself -- a working vehicle's charge
+     * falls all day -- so the caller decides with the site's window and drop; this only says what
+     * the readings did.
+     */
+    public Double droppedSincePeak() {
+        return batteryPct == null || socPeakPct == null ? null : socPeakPct - batteryPct;
+    }
     /**
      * Whether the last report came at or after {@code cutoff}. Configuration alone is never a
      * report: a vehicle nobody has heard from is not somewhere just because it was set up there.

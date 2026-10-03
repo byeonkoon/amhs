@@ -57,7 +57,18 @@ public class SimulatedVehicles {
   */
  private final Map<Long,Double> battery=new ConcurrentHashMap<>();
  private final Map<Long,String> chargeOrder=new ConcurrentHashMap<>();
+ /**
+  * Vehicles simulating a failure to take power from the rail.
+  *
+  * <p>A rail-powered vehicle's store is a buffer, kept full by the track; it is not a traction
+  * battery and has no charging cycle. The way it goes down is the vehicle not picking the power up
+  * -- a pickup, a rail section, a vehicle-side circuit -- and that is what this stands in for, so
+  * the condition can be tried out without a fault being the only way to see it.
+  */
+ private final java.util.Set<Long> pickupFaulted=java.util.concurrent.ConcurrentHashMap.newKeySet();
  private static final double DRAIN_DRIVING=0.25, DRAIN_STANDING=0.01, CHARGE_RATE=1.5;
+ /** How fast the rail refills a buffer that is being fed, and how fast one that is not runs down. */
+ private static final double BUFFER_REFILL=5.0, BUFFER_DRAIN=0.35;
  /**
   * Held while a vehicle is moved or its state is changed, so a change somebody makes between two
   * motion ticks is not overwritten by a tick that read the vehicle before it.
@@ -77,6 +88,24 @@ public class SimulatedVehicles {
 
  /** One step of what a vehicle did, for a screen or a test to read. */
  public record Step(long vehicleId,String action,Long nodeId){}
+
+ /** Whether this vehicle carries its own charge, or is fed from the rail and carries a buffer. */
+ private static boolean charges(VehicleSnapshot state){
+  return state.chargingPolicy()!=null&&!"DISABLED".equals(state.chargingPolicy());
+ }
+
+ /**
+  * Simulates a rail-powered vehicle picking its power up, or failing to.
+  *
+  * <p>Failing is the condition worth being able to produce: the buffer then only falls, which is
+  * what tells a controller the vehicle is not being fed and should come off the main line before it
+  * stops somewhere that blocks everything behind it.
+  */
+ public void setPowerPickup(long vehicleId,boolean healthy){
+  if(healthy) pickupFaulted.remove(vehicleId); else pickupFaulted.add(vehicleId);
+ }
+ /** Which vehicles are simulating a pickup failure; for a screen or a test to read. */
+ public java.util.Set<Long> pickupFaults(){ return java.util.Set.copyOf(pickupFaulted); }
 
  /** Puts a vehicle on the track: online, under remote control, idle, empty. */
  public VehicleSnapshot place(long siteId,long vehicleId,long nodeId){
@@ -108,7 +137,7 @@ public class SimulatedVehicles {
  }
  public boolean isSimulated(long vehicleId){ return vehicles.containsKey(vehicleId); }
  /** Takes every vehicle out of the simulation. Their last reported state stays as it was. */
- public void clear(){ vehicles.clear(); maps.clear(); battery.clear(); chargeOrder.clear(); }
+ public void clear(){ vehicles.clear(); maps.clear(); battery.clear(); chargeOrder.clear(); pickupFaulted.clear(); }
 
  /** Sets a simulated vehicle's state of charge, as if it reported it; for trying charging out. */
  public VehicleSnapshot setBattery(long siteId,long vehicleId,double pct){
@@ -123,7 +152,10 @@ public class SimulatedVehicles {
   }
  }
  /** Stops simulating vehicles of sites that are no longer in simulation. */
- public void clearExcept(java.util.Set<Long> sites){ vehicles.values().removeIf(v->!sites.contains(v.siteId())); }
+ public void clearExcept(java.util.Set<Long> sites){
+  vehicles.values().removeIf(v->!sites.contains(v.siteId()));
+  pickupFaulted.removeIf(id->!vehicles.containsKey(id));
+ }
 
  /**
   * Puts every vehicle in use at the site on the track that is not simulated yet: where it last
@@ -193,10 +225,16 @@ public class SimulatedVehicles {
     if(sim.siteId()!=siteId) continue;
     var state=fleet.find(siteId,revisionId,sim.vehicleId()).orElse(null);
     if(state==null||state.nodeId()==null) continue;
-    // The battery runs down while it drives and slowly while it stands, and up while it charges.
     String status=state.effectiveStatus();
-    double rate="CHARGING".equals(status)?CHARGE_RATE
-     :("MOVING".equals(status)||state.betweenNodes())?-DRAIN_DRIVING:-DRAIN_STANDING;
+    // Two different things are being modelled, and running them together is what made a vehicle
+    // that cannot charge report an empty battery. A vehicle with a charging policy carries its own
+    // charge: it runs down driving, slower standing, and up while charging. A vehicle without one
+    // is powered from the rail, and what it carries is a buffer the rail keeps full -- it only
+    // falls when the power is not being picked up, which is a fault and not a duty cycle.
+    double rate=charges(state)
+     ?("CHARGING".equals(status)?CHARGE_RATE
+       :("MOVING".equals(status)||state.betweenNodes())?-DRAIN_DRIVING:-DRAIN_STANDING)
+     :(pickupFaulted.contains(sim.vehicleId())?-BUFFER_DRAIN:BUFFER_REFILL);
     battery.compute(sim.vehicleId(),(id,b)->Math.max(0,Math.min(100,(b==null?100:b)+rate*seconds)));
     if(held(state)) continue;
     driveOne(siteId,revisionId,map,sim.vehicleId(),state,seconds,orderOf.get(sim.vehicleId()));

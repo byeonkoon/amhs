@@ -193,6 +193,16 @@ export function SystemOptionsScreen({ session }: { session: Session }) {
           <input type="number" style={field} value={draft.chargeReleasePct ?? 80} min={3} max={100} disabled={!mayChange}
             onChange={e => set({ chargeReleasePct: Number(e.target.value) })} />
         </Field>
+        <Field label="집전 감시 시간 (초)"
+          note="레일에서 급전받는 차량은 충전 주기가 없어 임계값이 아니라 방향을 봅니다. 이 시간 동안 한 번도 오르지 않으면 집전 이상으로 봅니다. 두 값을 모두 비우면 감시하지 않습니다.">
+          <input type="number" style={field} value={draft.powerDropWindowSeconds ?? ''} min={30} max={86400} disabled={!mayChange}
+            onChange={e => set({ powerDropWindowSeconds: e.target.value === '' ? null : Number(e.target.value) })} />
+        </Field>
+        <Field label="집전 감시 하락폭 (%)"
+          note="그 시간 동안 이만큼 떨어져 있어야 이상으로 봅니다. 시간만 또는 하락폭만 두면 성립하지 않는 규칙이라 거부합니다.">
+          <input type="number" style={field} value={draft.powerDropMinPct ?? ''} min={1} max={100} disabled={!mayChange}
+            onChange={e => set({ powerDropMinPct: e.target.value === '' ? null : Number(e.target.value) })} />
+        </Field>
       </Panel>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
         <button type="button" style={primary} disabled={!mayChange || busy} onClick={save}>
