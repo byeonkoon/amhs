@@ -42,6 +42,31 @@ class VehicleStateController {
         if(progress!=null) body.put("traffic",progress);
         return body;
     }
+    /**
+     * Takes a vehicle out of service, or puts it back.
+     *
+     * <p>Out of service only stops it being given work; it does not move it. Where a vehicle should
+     * go, and whether it can still get there, is a decision somebody makes with what they can see --
+     * so it is driven to the maintenance area by the same move an operator uses for anything else.
+     * Marking it and moving it being two steps is what lets the marking happen first, which is the
+     * order that matters when a vehicle is about to stop where it stands.
+     */
+    @PutMapping("/{vehicleId}/service")
+    VehicleSnapshot service(@PathVariable long siteId,@PathVariable long revisionId,@PathVariable long vehicleId,
+                            @RequestBody ServiceBody body) {
+        return body.inService()
+            ? fleet.returnToService(siteId,revisionId,vehicleId)
+            : fleet.takeOutOfService(siteId,revisionId,vehicleId,body.reason(),actor());
+    }
+    record ServiceBody(boolean inService,String reason) {}
+    /** Who the access gate let through; a request that never passed it is just "api". */
+    private static String actor() {
+        var attributes=org.springframework.web.context.request.RequestContextHolder.getRequestAttributes();
+        var principal=attributes==null?null:attributes.getAttribute(com.amhs.platform.Principal.REQUEST_ATTRIBUTE,
+            org.springframework.web.context.request.RequestAttributes.SCOPE_REQUEST);
+        return principal instanceof com.amhs.platform.Principal p?p.code():"api";
+    }
+
     /** The report as sent. It becomes a VehicleReport here, so a bad mode or status is a 422, not a parse error. */
     /** {@code batteryPct}: state of charge, percent, when the vehicle reports one. */
     record Body(Long nodeId,boolean online,boolean remote,boolean idle,boolean carrierPresent,String source,

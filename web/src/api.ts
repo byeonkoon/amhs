@@ -215,6 +215,14 @@ export type VehicleSnapshot = {
   batteryPct?: number | null;
   /** DISABLED, HOME (own charge node) or NEAREST (nearest free charge point). */
   chargingPolicy?: string | null;
+  /**
+   * Somebody has said this vehicle is not to be worked, with who and when. Different from the
+   * configured "not for dispatch", which says how a vehicle is normally used; this says something
+   * happened to this one. Taking it out stops it being given work; it does not move it.
+   */
+  outOfServiceSince?: string | null;
+  outOfServiceReason?: string | null;
+  outOfServiceBy?: string | null;
 };
 
 /** A move without an order. stopRequestedAt is set once a stop was asked and it is winding down. */
@@ -273,8 +281,14 @@ export type DeadlockRecovery = {
   finishedAt: string | null; finishReason: string | null;
 };
 /** A set of nodes that admits at most `capacity` vehicles; vehicleIds are those counted inside it now. */
+/**
+ * `kind` is the same shape with the opposite intent. A TRAFFIC zone is passed through and a vehicle
+ * is moved out of it once its work there is done; a MAINTENANCE area is where a vehicle is put
+ * because it should not be on the line, and it stays until somebody drives it out.
+ */
 export type ZoneOccupancy = {
   id: number; revisionId: number; code: string; capacity: number; enabled: boolean;
+  kind: 'TRAFFIC' | 'MAINTENANCE';
   nodeIds: number[]; vehicleIds: number[];
 };
 
@@ -300,6 +314,9 @@ export type Extension = { orderId: number; vehicleId: number; decision: string; 
 
 export const opsApi = {
   vehicleState: (revisionId: number) => `/api/v1/sites/${SITE_ID}/maps/${revisionId}/vehicle-state`,
+  /** Takes a vehicle out of service, or puts it back. It does not move it; that is a separate act. */
+  vehicleService: (revisionId: number, vehicleId: number) =>
+    `/api/v1/sites/${SITE_ID}/maps/${revisionId}/vehicle-state/${vehicleId}/service`,
   reportVehicle: (revisionId: number, vehicleId: number) =>
     `/api/v1/sites/${SITE_ID}/maps/${revisionId}/vehicle-state/${vehicleId}`,
   reservations: (vehicleId?: number) =>

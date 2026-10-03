@@ -127,14 +127,15 @@ class JdbcTrafficControl implements TrafficControl {
 
  @Transactional(readOnly=true)
  public List<ZoneOccupancy> zones(long siteId){
-  record Row(long id,long revisionId,String code,int capacity,boolean enabled){}
-  var rows=jdbc.query("SELECT id,revision_id,code,capacity,enabled FROM topology.zone WHERE site_id=? ORDER BY id",
-   (r,n)->new Row(r.getLong(1),r.getLong(2),r.getString(3),r.getInt(4),r.getBoolean(5)),siteId);
+  record Row(long id,long revisionId,String code,int capacity,boolean enabled,String kind){}
+  var rows=jdbc.query("SELECT id,revision_id,code,capacity,enabled,kind FROM topology.zone WHERE site_id=? ORDER BY id",
+   (r,n)->new Row(r.getLong(1),r.getLong(2),r.getString(3),r.getInt(4),r.getBoolean(5),r.getString(6)),siteId);
   var out=new ArrayList<ZoneOccupancy>();
   for(var z:rows){
    var nodeIds=jdbc.query("SELECT node_id FROM topology.zone_node WHERE zone_id=? ORDER BY node_id",
     (r,n)->r.getLong(1),z.id());
-   out.add(new ZoneOccupancy(z.id(),z.revisionId(),z.code(),z.capacity(),z.enabled(),nodeIds,vehiclesIn(siteId,z.id(),null)));
+   out.add(new ZoneOccupancy(z.id(),z.revisionId(),z.code(),z.capacity(),z.enabled(),z.kind(),
+    nodeIds,vehiclesIn(siteId,z.id(),null)));
   }
   return out;
  }

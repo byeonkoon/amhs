@@ -71,6 +71,6 @@ export function freshnessOf(positionSource: string, lastReceivedAt?: string | nu
     : { kind: 'live', label: '실시간 수신', chip: 'ok' };
 }
 
-export function Chip({ tone, children }: { tone: string; children: React.ReactNode }) {
-  return <span className={`chip ${tone}`}>{children}</span>;
+export function Chip({ tone, title, children }: { tone: string; title?: string; children: React.ReactNode }) {
+  return <span className={`chip ${tone}`} title={title}>{children}</span>;
 }

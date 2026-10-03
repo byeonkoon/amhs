@@ -340,7 +340,12 @@ function MonitorScreen(props: {
                     <span className="mono">{v.code}</span>
                     <span className={v.nodeId === null ? 'mono muted' : 'mono'}>{nodeCode(v.nodeId)}</span>
                     <span><Chip tone={modeTone(v)}>{modeLabel(v)}</Chip></span>
-                    <span><Chip tone={stateTone(v)}>{stateLabel(v)}</Chip></span>
+                    <span>{v.outOfServiceSince
+                      // Out of service is said instead of the reported status, not beside it: what
+                      // the vehicle is doing stops mattering once nobody may work it.
+                      ? <Chip tone="wr" title={`${v.outOfServiceReason ?? ''}${v.outOfServiceBy ? ` · ${v.outOfServiceBy}` : ''}`}>
+                          서비스 제외</Chip>
+                      : <Chip tone={stateTone(v)}>{stateLabel(v)}</Chip>}</span>
                     <span><Chip tone={v.carrierPresent ? 'ac' : 'id'}>{v.carrierPresent ? '있음' : '없음'}</Chip></span>
                     <span className="mono" style={{ color: batteryColor(v, options) }} title={chargeMeaning(v)}>
                       {v.batteryPct == null ? '—' : `${Math.round(v.batteryPct)}%`}</span>
@@ -603,6 +608,23 @@ function ManualMove(props: {
             : props.target === vehicle.nodeId ? '이미 그 노드에 있습니다.'
               : !hasWriteToken() ? 'Lv2 운전 이상으로 로그인해야 명령할 수 있습니다.' : null;
 
+  async function toggleService() {
+    if (!vehicle) return;
+    const back = vehicle.outOfServiceSince != null;
+    const reason = back ? null
+      : window.prompt(`${vehicle.code}을(를) 왜 작업에서 빼는지 적어 주세요. 이유 없이 세워 둔 차량은 아무도 되돌리지 못합니다.`);
+    if (!back && (reason === null || !reason.trim())) return;
+    setBusy(true); setNotice(null);
+    try {
+      await send(opsApi.vehicleService(REVISION_ID, vehicle.id), 'PUT',
+        { inService: back, reason }, back ? '서비스 복귀' : '서비스 제외');
+      setNotice({ tone: 'ok', text: back ? '작업을 다시 받습니다.' : '작업을 받지 않습니다. 옮기려면 목표 노드를 골라 이동시키세요.' });
+      props.onDone();
+    } catch (cause) {
+      setNotice({ tone: 'er', text: cause instanceof ApiError ? explainDecision(cause.message) : '처리하지 못했습니다.' });
+    } finally { setBusy(false); }
+  }
+
   async function move() {
     if (!vehicle || props.target === null) return;
     setBusy(true); setNotice(null);
@@ -648,6 +670,24 @@ function ManualMove(props: {
               padding: '3px 12px', fontSize: 12, cursor: 'pointer' }}>이동 중지</button>
           )}
           {open.stopRequestedAt && <span className="hint">이미 받은 허가 끝에서 서면 이동을 닫습니다.</span>}
+        </div>
+      )}
+      {/* Taking a vehicle out of service and moving it are two acts on purpose: marking it first is
+          what stops the next dispatch picking it up while somebody decides where to put it. */}
+      {vehicle && (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button type="button" disabled={busy || !hasWriteToken()} onClick={toggleService} style={{
+            border: `1px solid ${vehicle.outOfServiceSince ? 'var(--ln2)' : 'var(--warn)'}`,
+            background: 'var(--srf)', color: vehicle.outOfServiceSince ? 'var(--ink2)' : '#8A5C05',
+            borderRadius: 5, padding: '3px 12px', fontSize: 12,
+            cursor: hasWriteToken() ? 'pointer' : 'default' }}>
+            {vehicle.outOfServiceSince ? '서비스 복귀' : '서비스 제외'}
+          </button>
+          <span className="hint">
+            {vehicle.outOfServiceSince
+              ? `${vehicle.outOfServiceReason ?? ''}${vehicle.outOfServiceBy ? ` · ${vehicle.outOfServiceBy}` : ''}`
+              : '작업을 주지 않게만 합니다. 옮기지는 않으니 정비 구역으로는 위에서 이동시키세요.'}
+          </span>
         </div>
       )}
       {notice && <p style={{ margin: 0 }}><Chip tone={notice.tone}>{notice.tone === 'er' ? '거부' : '완료'}</Chip> {notice.text}</p>}

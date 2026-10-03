@@ -58,9 +58,7 @@ public class ZoneEvacuation {
  @Transactional
  public List<Step> evacuateAll(long siteId){
   long revisionId=ledger.activeRevision(siteId);
-  var zoneOf=new HashMap<Long,Long>();
-  for(ZoneOccupancy zone:traffic.zones(siteId))
-   if(zone.enabled()&&zone.revisionId()==revisionId) for(Long node:zone.nodeIds()) zoneOf.put(node,zone.id());
+  var zoneOf=zoneOf(siteId,revisionId);
   var relocating=new HashSet<>(ledger.relocatingVehicleIds(siteId));
   var vehicles=fleet.snapshot(siteId,revisionId).stream()
    .sorted(Comparator.comparingLong(VehicleSnapshot::id)).toList();
@@ -210,10 +208,7 @@ public class ZoneEvacuation {
   var route=planner.find(map,vehicle.nodeId(),targetNodeId);
   if(route.status()!=RouteResult.Status.FOUND) throw new TransportRejected("NO_PATH","no route from where it stands",false);
   ledger.startRelocation(siteId,revisionId,vehicleId,null,route.nodeIds(),targetNodeId,Relocation.MANUAL);
-  var zoneOf=new HashMap<Long,Long>();
-  for(ZoneOccupancy zone:traffic.zones(siteId))
-   if(zone.enabled()&&zone.revisionId()==revisionId) for(Long node:zone.nodeIds()) zoneOf.put(node,zone.id());
-  return step(siteId,revisionId,vehicleId,zoneOf,fleet.snapshot(siteId,revisionId),cutoff);
+  return step(siteId,revisionId,vehicleId,zoneOf(siteId,revisionId),fleet.snapshot(siteId,revisionId),cutoff);
  }
 
  /**
@@ -293,10 +288,7 @@ public class ZoneEvacuation {
    throw new TransportRejected("NOT_A_MANUAL_MOVE","only an operator's move can be stopped here",false);
   ledger.requestRelocationStop(relocation.id());
   var cutoff=OffsetDateTime.now().minusSeconds(operations.get(siteId).settings().positionStaleSeconds());
-  var zoneOf=new HashMap<Long,Long>();
-  for(ZoneOccupancy zone:traffic.zones(siteId))
-   if(zone.enabled()&&zone.revisionId()==revisionId) for(Long node:zone.nodeIds()) zoneOf.put(node,zone.id());
-  return step(siteId,revisionId,vehicleId,zoneOf,fleet.snapshot(siteId,revisionId),cutoff);
+  return step(siteId,revisionId,vehicleId,zoneOf(siteId,revisionId),fleet.snapshot(siteId,revisionId),cutoff);
  }
 
  /** Open moves without an order at the site: who is going where, why, and whether a stop was asked. */
@@ -535,10 +527,19 @@ public class ZoneEvacuation {
   return false;
  }
  private Set<Long> zoneNodes(long siteId,long revisionId){ return zoneOf(siteId,revisionId).keySet(); }
+ /**
+  * Which nodes count as being in a zone a vehicle is moved out of.
+  *
+  * <p>A maintenance area is deliberately not among them. It is the same shape as a traffic zone and
+  * the opposite intent: a vehicle is put there because it should not be on the line, and moving it
+  * out once it stands idle would undo the only thing anyone wanted. It leaves when somebody drives
+  * it out.
+  */
  private Map<Long,Long> zoneOf(long siteId,long revisionId){
   var zoneOf=new HashMap<Long,Long>();
   for(ZoneOccupancy zone:traffic.zones(siteId))
-   if(zone.enabled()&&zone.revisionId()==revisionId) for(Long node:zone.nodeIds()) zoneOf.put(node,zone.id());
+   if(zone.enabled()&&zone.revisionId()==revisionId&&!zone.forMaintenance())
+    for(Long node:zone.nodeIds()) zoneOf.put(node,zone.id());
   return zoneOf;
  }
 

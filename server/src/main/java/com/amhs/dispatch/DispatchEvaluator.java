@@ -9,8 +9,14 @@ import java.util.*;
 /** Produces a proposal; transport must revalidate and claim resources atomically. */
 public final class DispatchEvaluator {
     /** currentNodeId is null when nothing has reported where the vehicle is. */
+    /**
+     * {@code assignmentEnabled} is how a vehicle is normally used; {@code outOfService} is that
+     * something happened to this one. They are kept apart because the answer a dispatcher gives
+     * should be the true reason: a vehicle nobody may work is not available, which is not the same
+     * as one that was available a moment ago and changed under the lock.
+     */
     public record Candidate(long id, VehicleType vType, Long currentNodeId, boolean enabled,
-        boolean assignmentEnabled, boolean online, boolean remote, boolean idle) {}
+        boolean assignmentEnabled, boolean online, boolean remote, boolean idle, boolean outOfService) {}
     /** Both legs keep their ordered segments so a claim can be built without replanning. */
     public record Proposal(long vehicleId, RouteResult toSource, RouteResult toDestination, double cost) {}
     public record Result(String reason, Optional<Proposal> proposal) {}
@@ -20,7 +26,7 @@ public final class DispatchEvaluator {
         if(source.isEmpty()||dest.isEmpty()) return new Result("PORT_NOT_FOUND",Optional.empty());
         if(sourcePortId==destinationPortId) return new Result("SAME_PORT",Optional.empty());
         if(source.get().accessVehicleType()!=dest.get().accessVehicleType()) return new Result("PORT_TYPE_MISMATCH",Optional.empty());
-        var available=candidates.stream().filter(c->c.vType()==source.get().accessVehicleType()&&c.enabled()&&c.assignmentEnabled()&&c.online()&&c.remote()&&c.idle()).toList();
+        var available=candidates.stream().filter(c->c.vType()==source.get().accessVehicleType()&&c.enabled()&&c.assignmentEnabled()&&!c.outOfService()&&c.online()&&c.remote()&&c.idle()).toList();
         if(available.isEmpty()) return new Result("NO_AVAILABLE_VEHICLE",Optional.empty());
         var planner=new RoutePlanner();
         // The loaded leg does not depend on which vehicle is chosen, so it is planned once.

@@ -22,7 +22,16 @@ public record VehicleSnapshot(long id, String code, VehicleType vType, Long node
                               String mode, String status,
                               Double xMm, Double yMm, Long chargeNodeId, int speedMmS,
                               Double batteryPct, String chargingPolicy, java.time.OffsetDateTime idleSince,
-                              Double socPeakPct, java.time.OffsetDateTime socPeakAt) {
+                              Double socPeakPct, java.time.OffsetDateTime socPeakAt,
+                              java.time.OffsetDateTime outOfServiceSince, String outOfServiceReason,
+                              String outOfServiceBy) {
+    /**
+     * Whether somebody has said this vehicle is not to be worked.
+     *
+     * <p>Different from the configured "not for dispatch", which says how a vehicle is normally
+     * used. This says something happened to this one, and it carries who said so and when.
+     */
+    public boolean outOfService() { return outOfServiceSince != null; }
     /**
      * Whether this vehicle carries its own charge, or is fed from the rail and carries a buffer.
      *

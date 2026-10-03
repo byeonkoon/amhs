@@ -159,7 +159,7 @@ public class TransportAssignment {
 
  private static DispatchEvaluator.Candidate candidate(VehicleSnapshot v){
   return new DispatchEvaluator.Candidate(v.id(),v.vType(),v.nodeId(),v.enabled(),v.assignmentEnabled(),
-   v.online(),v.remote(),v.idle());
+   v.online(),v.remote(),v.idle(),v.outOfService());
  }
  /**
   * The whole path the vehicle will travel, starting where it stands. The two legs share the
@@ -174,8 +174,16 @@ public class TransportAssignment {
  private OffsetDateTime staleBefore(long siteId){
   return OffsetDateTime.now().minusSeconds(operations.get(siteId).settings().positionStaleSeconds());
  }
+ /**
+  * Whether this vehicle may be given work.
+  *
+  * <p>Out of service is checked here rather than only at the screen, because taking a vehicle out
+  * has to mean it stops being used -- a vehicle somebody decided is not fit to run, that the next
+  * dispatch picks up anyway, was never taken out of anything.
+  */
  private static boolean eligible(VehicleSnapshot v){
-  return v.enabled()&&v.assignmentEnabled()&&v.online()&&v.remote()&&v.idle()&&v.nodeId()!=null&&!v.carrierPresent();
+  return v.enabled()&&v.assignmentEnabled()&&!v.outOfService()
+   &&v.online()&&v.remote()&&v.idle()&&v.nodeId()!=null&&!v.carrierPresent();
  }
 
  /**

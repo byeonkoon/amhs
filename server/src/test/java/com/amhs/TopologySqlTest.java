@@ -41,16 +41,17 @@ class TopologySqlTest {
         var types = new java.util.HashMap<Long,String>();
         draft.nodes().forEach(n -> types.put(n.id(),n.code().substring(0,3)));
         assertThat(draft.edges()).allSatisfy(e -> assertThat(types.get(e.fromNodeId())).isEqualTo(types.get(e.toNodeId())));
-        // The active layout is the simulation one: a twenty-node OHT ring with a three-node bay
-        // off it, and a twelve-node AGV loop that splits and rejoins, kept apart from the draft
-        // revision above.
+        // The active layout is the simulation one: a twenty-node OHT ring with a three-node bay and
+        // a two-node maintenance siding off it, and a twelve-node AGV loop that splits and
+        // rejoins, kept apart from the draft revision above.
         var active=maps.getMap(1,1);
-        assertThat(active.nodes()).hasSize(35);
-        assertThat(active.nodes().stream().filter(n -> n.code().startsWith("OHT-"))).hasSize(23);
+        assertThat(active.nodes()).hasSize(37);
+        assertThat(active.nodes().stream().filter(n -> n.code().startsWith("OHT-"))).hasSize(25);
         assertThat(active.nodes().stream().filter(n -> n.code().startsWith("AGV-"))).hasSize(12);
-        // The bay rejoins the ring at a merge point, and the AGV loop rejoins at another.
+        // Everything that rejoins the line rejoins at a merge point: the bay, the maintenance
+        // siding, and the AGV loop. Coming back on is where two vehicles can want the same place.
         assertThat(active.nodes().stream().filter(MapSnapshot.Node::mergePoint).map(MapSnapshot.Node::id))
-            .containsExactlyInAnyOrder(110L,207L);
+            .containsExactlyInAnyOrder(110L,113L,207L);
         // One-way: no span of the active layout carries an edge in both directions, which is what
         // keeps two vehicles from meeting nose to nose instead of queueing.
         var spans=active.edges().stream().map(e -> e.fromNodeId()+">"+e.toNodeId()).collect(java.util.stream.Collectors.toSet());

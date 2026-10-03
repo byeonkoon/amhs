@@ -24,4 +24,18 @@ public interface FleetState {
     VehicleSnapshot reportDriving(long siteId, long revisionId, long vehicleId, double xMm, double yMm);
     /** Locks the given vehicles in ascending id order so two assignments cannot deadlock. */
     void lockForAssignment(long siteId, List<Long> vehicleIds);
+    /**
+     * Takes a vehicle out of service, or puts it back.
+     *
+     * <p>This is an operating state and not configuration: the moment it is most needed is while
+     * the site is running, and a rule that asked for a shutdown first would be a reason to leave a
+     * vehicle that cannot be fed out on the line. It is also not the configured "not for dispatch",
+     * which says how a vehicle is normally used; this says something happened to this one, who said
+     * so, and when.
+     *
+     * <p>Taking it out stops it being given work. It does not move it: where it should go, and
+     * whether it can still drive there, is a decision somebody makes with what they can see.
+     */
+    VehicleSnapshot takeOutOfService(long siteId, long revisionId, long vehicleId, String reason, String by);
+    VehicleSnapshot returnToService(long siteId, long revisionId, long vehicleId);
 }

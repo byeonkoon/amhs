@@ -14,7 +14,7 @@ class DispatchContractTest {
   List.of(new MapSnapshot.Edge(1,1,2,10,true),new MapSnapshot.Edge(2,3,4,1,true)),
   List.of(new MapSnapshot.Port(1,"O-A","L",VehicleType.OHT,1),new MapSnapshot.Port(2,"O-B","U",VehicleType.OHT,2),new MapSnapshot.Port(3,"A-A","L",VehicleType.AGV,3)));
  }
- private DispatchEvaluator.Candidate vehicle(long id,VehicleType type,long node) { return new DispatchEvaluator.Candidate(id,type,node,true,true,true,true,true); }
+ private DispatchEvaluator.Candidate vehicle(long id,VehicleType type,long node) { return new DispatchEvaluator.Candidate(id,type,node,true,true,true,true,true,false); }
  @Test void closerAgvIsExcludedAndUnreachableOhtDoesNotBlockOtherCandidates() {
   var result=new DispatchEvaluator().evaluate(map(),1,2,List.of(vehicle(1,VehicleType.AGV,1),vehicle(2,VehicleType.OHT,5),vehicle(3,VehicleType.OHT,1)));
   assertThat(result.reason()).isEqualTo("PROPOSED"); assertThat(result.proposal().orElseThrow().vehicleId()).isEqualTo(3);
@@ -28,7 +28,7 @@ class DispatchContractTest {
   assertThat(r.find(map(),1,1).costSeconds()).isZero();
  }
  @Test void offlineVehicleIsExcluded() {
-  var v=new DispatchEvaluator.Candidate(1,VehicleType.OHT,1L,true,true,false,true,true);
+  var v=new DispatchEvaluator.Candidate(1,VehicleType.OHT,1L,true,true,false,true,true,false);
   assertThat(new DispatchEvaluator().evaluate(map(),1,2,List.of(v)).reason()).isEqualTo("NO_AVAILABLE_VEHICLE");
  }
  @Test void deterministicTieBreak() {

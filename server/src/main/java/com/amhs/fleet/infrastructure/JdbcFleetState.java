@@ -102,6 +102,26 @@ class JdbcFleetState implements FleetState {
  }
 
  @Transactional
+ public VehicleSnapshot takeOutOfService(long siteId,long revisionId,long vehicleId,String reason,String by){
+  // Why has to be recorded. A vehicle found standing out of service with nothing saying why is
+  // either put back by somebody guessing, or left there by everybody assuming somebody knew.
+  if(reason==null||reason.isBlank()) throw new IllegalArgumentException("OUT_OF_SERVICE_REASON_REQUIRED");
+  int changed=jdbc.update("UPDATE fleet.vehicle_state SET out_of_service_since=COALESCE(out_of_service_since,now()),"
+   +"out_of_service_reason=?,out_of_service_by=? WHERE site_id=? AND vehicle_id=? AND revision_id=?",
+   reason.substring(0,Math.min(reason.length(),256)),by,siteId,vehicleId,revisionId);
+  if(changed==0) throw new IllegalArgumentException("VEHICLE_NOT_REPORTING");
+  return find(siteId,revisionId,vehicleId).orElseThrow();
+ }
+
+ @Transactional
+ public VehicleSnapshot returnToService(long siteId,long revisionId,long vehicleId){
+  int changed=jdbc.update("UPDATE fleet.vehicle_state SET out_of_service_since=NULL,out_of_service_reason=NULL,"
+   +"out_of_service_by=NULL WHERE site_id=? AND vehicle_id=? AND revision_id=?",siteId,vehicleId,revisionId);
+  if(changed==0) throw new IllegalArgumentException("VEHICLE_NOT_REPORTING");
+  return find(siteId,revisionId,vehicleId).orElseThrow();
+ }
+
+ @Transactional
  public VehicleSnapshot reportDriving(long siteId,long revisionId,long vehicleId,double xMm,double yMm){
   int changed=jdbc.update("UPDATE fleet.vehicle_state SET x_mm=?,y_mm=?,status='MOVING',idle=FALSE,idle_since=NULL,"
    +"reported_at=clock_timestamp(),version=version+1 WHERE site_id=? AND vehicle_id=? AND revision_id=? AND node_id IS NOT NULL",
@@ -138,7 +158,7 @@ class JdbcFleetState implements FleetState {
   +"COALESCE(s.online,FALSE),COALESCE(s.remote,FALSE),COALESCE(s.idle,FALSE) AND s.x_mm IS NULL,COALESCE(s.carrier_present,FALSE),"
   +"COALESCE(s.source,'INITIAL_CONFIGURATION'),s.reported_at,s.destination_change_enabled,p.home_node_id,s.mode,s.status,"
   +"s.x_mm,s.y_mm,p.charge_node_id,p.speed_mm_s,s.battery_pct,p.charging_policy,s.idle_since,"
-  +"s.soc_peak_pct,s.soc_peak_at"
+  +"s.soc_peak_pct,s.soc_peak_at,s.out_of_service_since,s.out_of_service_reason,s.out_of_service_by"
   +" FROM fleet.vehicle_profile p LEFT JOIN fleet.vehicle_state s ON s.site_id=p.site_id AND s.vehicle_id=p.id"
   +" WHERE p.site_id=? AND p.revision_id=?";
  // reported_at stays null until something reports, so a screen can tell "never" from "a while ago".
@@ -150,5 +170,6 @@ class JdbcFleetState implements FleetState {
   r.getString(15),r.getString(16),r.getObject(17,Double.class),r.getObject(18,Double.class),
   r.getObject(19,Long.class),r.getInt(20),r.getObject(21,Double.class),r.getString(22),
   r.getObject(23,java.time.OffsetDateTime.class),
-  r.getObject(24,Double.class),r.getObject(25,java.time.OffsetDateTime.class));
+  r.getObject(24,Double.class),r.getObject(25,java.time.OffsetDateTime.class),
+  r.getObject(26,java.time.OffsetDateTime.class),r.getString(27),r.getString(28));
 }
