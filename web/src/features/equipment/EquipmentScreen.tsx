@@ -158,7 +158,7 @@ function SlotGrid({ slots, columns, onToggle }:
           <div style={{ display: 'grid', gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`, gap: 4, flex: 1 }}>
             {slots.filter(s => s.level === level).sort((a, b) => a.col - b.col).map(s => (
               <button key={s.id} type="button" disabled={!onToggle} onClick={() => onToggle?.(s)}
-                title={s.usable ? s.code : `${s.code} · 사용 금지 — ${s.unusableReason ?? ''}`}
+                title={`${s.code} · ${s.col}열 ${s.level}단${s.usable ? '' : ` · 사용 금지 — ${s.unusableReason ?? ''}`}`}
                 style={{
                   border: `1px solid ${s.usable ? 'var(--ln2)' : 'var(--warn)'}`,
                   background: s.usable ? 'var(--srf)' : '#FBF0DA',

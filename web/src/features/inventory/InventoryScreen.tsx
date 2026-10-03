@@ -297,11 +297,15 @@ function placeOf(p: Placement): string {
   return `${unit || p.portCode || '포트'} 인계 · 어느 칸인지는 기록되지 않았습니다`;
 }
 
-/** Both facts in one sentence, in the order somebody would ask them. */
+/**
+ * Both facts in one sentence, in the order somebody would ask them, after the cell's place spelled
+ * out in words. The code says the same thing, but spelling it out once is what teaches somebody
+ * which half of `20/08` is the column.
+ */
 function describe(c: CellView): string {
   const held = c.carrierCode ? `${c.carrierCode} 있음` : '비어 있음';
   const blocked = c.usable ? '' : ` · 사용 금지 — ${c.unusableReason ?? '사유 없음'}`;
-  return `${c.code} · ${held}${blocked}`;
+  return `${c.code} · ${c.col}열 ${c.level}단 · ${held}${blocked}`;
 }
 
 const TERMINAL = new Set(['COMPLETED', 'CANCELLED', 'FAILED']);

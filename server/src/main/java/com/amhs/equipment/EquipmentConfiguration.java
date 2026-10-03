@@ -105,12 +105,23 @@ public class EquipmentConfiguration {
    .getFirst();
  }
 
+ /**
+  * A cell's code: the rack, then the column and the level, as {@code R-A 20/08}.
+  *
+  * <p>The separator is the point. Run together, the two numbers read as one and somebody has to
+  * know the convention to see where the column stops -- which is the moment a person standing at a
+  * rack gets it wrong. Padded to two digits so a rack's codes line up, and not truncated beyond
+  * that: a rack may be 200 columns wide and the hundredth column is still the hundredth column.
+  */
+ static String slotCode(String rackCode,int level,int col){
+  return "%s %02d/%02d".formatted(rackCode,col,level);
+ }
  private void generate(long rackId,String code,int fromLevel,int toLevel,int fromCol,int toCol){
   for(int level=fromLevel;level<=toLevel;level++)
    for(int col=fromCol;col<=toCol;col++)
     jdbc.update("INSERT INTO equipment.slot(rack_id,level,col,code) VALUES(?,?,?,?)"
      +" ON CONFLICT(rack_id,level,col) DO NOTHING",
-     rackId,level,col,"%s-%02d%03d".formatted(code,level,col));
+     rackId,level,col,slotCode(code,level,col));
  }
  private void requireRevision(long site,long revisionId){
   int known=jdbc.queryForObject("SELECT count(*) FROM topology.map_revision WHERE site_id=? AND id=?",
