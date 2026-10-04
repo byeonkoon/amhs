@@ -2,6 +2,7 @@ package com.amhs;
 import com.amhs.mapio.MapDocument;
 import com.amhs.mapio.MapImport;
 import com.amhs.platform.ConfigurationException;
+import com.amhs.topology.TopologyConfiguration;
 import com.amhs.topology.TopologyQuery;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
@@ -25,6 +26,7 @@ import static org.assertj.core.api.Assertions.*;
 @EnabledIfEnvironmentVariable(named="AMHS_SQL_TEST",matches="true")
 class MapImportSqlTest {
  @Autowired MapImport maps; @Autowired TopologyQuery query; @Autowired JdbcTemplate jdbc;
+ @Autowired TopologyConfiguration topology;
  private static final long SITE=1, IN_USE=1;
  private final List<Long> mine=new java.util.ArrayList<>();
 
@@ -120,6 +122,36 @@ class MapImportSqlTest {
   assertThat(query.getMap(SITE,again).nodes()).hasSize(6);
   assertThat(jdbc.queryForObject("SELECT count(*) FROM fleet.vehicle_profile WHERE revision_id=? AND code=?",
    Integer.class,again,"T-OHT-01")).as("a code names a vehicle within one map, not across the site").isEqualTo(1);
+ }
+
+ /**
+  * A map brought in can be taken out again, and the one in use cannot.
+  *
+  * <p>Files arrive twice, so maps accumulate, and a list nobody can tidy is a list nobody reads.
+  * What stops a removal is the map being in use, or anything outside the configuration still
+  * remembering it -- a record naming a revision is a record of something that happened on that map,
+  * and the map is the only thing that says what its node numbers meant.
+  */
+ @Test void anUnusedMapCanBeTakenOutAgainAndTheUsedOneCannot(){
+  long id=maps.importDocument(SITE,smallSite()).id();
+  String mode=jdbc.queryForObject("SELECT mode FROM platform.site_operation WHERE site_id=?",String.class,SITE);
+  jdbc.update("UPDATE platform.site_operation SET mode='MAINTENANCE' WHERE site_id=?",SITE);
+  try{
+   topology.deleteRevision(SITE,id);
+   assertThat(jdbc.queryForObject("SELECT count(*) FROM topology.map_revision WHERE id=?",Integer.class,id)).isZero();
+   assertThat(jdbc.queryForObject("SELECT count(*) FROM topology.node WHERE revision_id=?",Integer.class,id)).isZero();
+   assertThat(jdbc.queryForObject("SELECT count(*) FROM fleet.vehicle_profile WHERE revision_id=?",Integer.class,id)).isZero();
+
+   refused(()->topology.deleteRevision(SITE,IN_USE),"REVISION_IN_USE");
+   // The sample map has orders and reported positions against it, which is the other refusal.
+   long second=imported(smallSite());
+   jdbc.update("INSERT INTO traffic.node_reservation(site_id,revision_id,node_id,vehicle_id,sequence)"
+    +" SELECT ?,?,id,999001,9991 FROM topology.node WHERE revision_id=? ORDER BY id LIMIT 1",SITE,second,second);
+   refused(()->topology.deleteRevision(SITE,second),"REVISION_HAS_HISTORY");
+   jdbc.update("DELETE FROM traffic.node_reservation WHERE revision_id=?",second);
+  }finally{
+   jdbc.update("UPDATE platform.site_operation SET mode=? WHERE site_id=?",mode,SITE);
+  }
  }
 
  @Test void aMapThatDoesNotHangTogetherIsRefusedBeforeAnythingIsWritten(){

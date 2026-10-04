@@ -173,6 +173,17 @@ function RevisionTab({ revisions, canWrite, onChanged }: {
       });
     } finally { setBusy(false); }
   }
+  async function remove(r: MapRevision) {
+    if (!window.confirm(`지도 버전 ${r.revision}과 그 안의 노드·구간·포트·차량을 지웁니다. 되돌릴 수 없습니다. 진행할까요?`)) return;
+    setBusy(true); setMessage(null);
+    try {
+      await send(cfgApi.deleteRevision(r.id), 'DELETE', undefined, `지도 버전 ${r.revision} 삭제`);
+      setMessage({ tone: 'ok', text: `지도 버전 ${r.revision}을 지웠습니다.` });
+      onChanged();
+    } catch (cause) {
+      setMessage({ tone: 'er', text: cause instanceof ApiError ? explainCode(cause.message) : '지우지 못했습니다.' });
+    } finally { setBusy(false); }
+  }
   async function download(r: MapRevision) {
     setBusy(true); setMessage(null);
     try {
@@ -221,6 +232,15 @@ function RevisionTab({ revisions, canWrite, onChanged }: {
                   border: '1px solid var(--ln2)', background: 'var(--srf)', color: 'var(--ink2)',
                   borderRadius: 5, padding: '3px 12px', fontSize: 12, cursor: busy ? 'default' : 'pointer',
                 }}>내보내기</button>
+              {r.status !== 'ACTIVE' && (
+                <button type="button" disabled={!canWrite || busy} onClick={() => remove(r)}
+                  title="쓰지 않고, 아무 기록도 가리키지 않는 버전만 지울 수 있습니다."
+                  style={{
+                    border: '1px solid var(--crit)', background: 'var(--srf)', color: 'var(--crit)',
+                    borderRadius: 5, padding: '3px 12px', fontSize: 12,
+                    cursor: canWrite && !busy ? 'pointer' : 'default',
+                  }}>삭제</button>
+              )}
             </span>
           </Row>
         ))}

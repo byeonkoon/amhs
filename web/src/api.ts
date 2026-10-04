@@ -167,11 +167,18 @@ export const cfgApi = {
   protocols: () => `/api/v1/sites/${SITE_ID}/configuration/protocols`,
   /** Site-wide options: not one machine's parameters, so they sit apart and need ADMIN. */
   system: () => `/api/v1/sites/${SITE_ID}/configuration/system`,
+  /**
+   * Whether the site is running or in maintenance. Configuration is refused while it runs, so this
+   * is the one setting that decides whether any of the others may be written.
+   */
+  siteMode: () => `/api/v1/sites/${SITE_ID}/configuration/system/mode`,
   /** Puts a map revision into use. ADMIN, and the site has to be in maintenance. */
   activateRevision: (revisionId: number) =>
     `/api/v1/sites/${SITE_ID}/configuration/topology/${revisionId}/activate`,
   /** A whole map in as one document: it becomes a new draft revision and touches nothing in use. */
   importMap: () => `/api/v1/sites/${SITE_ID}/configuration/topology/import`,
+  /** Removes a revision nothing uses and nothing remembers. Never the one in use. */
+  deleteRevision: (revisionId: number) => `/api/v1/sites/${SITE_ID}/configuration/topology/${revisionId}`,
   /** The same document back out, so a map can be taken, edited and brought in again. */
   exportMap: (revisionId: number) =>
     `/api/v1/sites/${SITE_ID}/configuration/topology/${revisionId}/export`,

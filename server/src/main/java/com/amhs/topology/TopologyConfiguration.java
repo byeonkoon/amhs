@@ -111,6 +111,38 @@ public class TopologyConfiguration {
  }
 
  /**
+  * Removes a whole revision and everything in it.
+  *
+  * <p>Maps accumulate -- a file brought in twice is two of them -- and a list nobody can tidy is a
+  * list nobody reads. So a revision can go, with two things true: it is not the one in use, and
+  * nothing outside the configuration remembers it. An order, a move, a granted road or a reported
+  * position naming a revision is a record of something that happened on that map, and the map is
+  * the only thing that says what its node numbers meant.
+  */
+ @Transactional
+ public void deleteRevision(long site,long revision){
+  guard.acquire(site);
+  var target=revisions(site).stream().filter(r->r.id()==revision).findFirst()
+   .orElseThrow(()->new ConfigurationException(404,"REVISION_NOT_FOUND"));
+  if(target.active()) throw new ConfigurationException(409,"REVISION_IN_USE");
+  refuseIfAny("REVISION_HAS_HISTORY","SELECT count(*) FROM transport.order WHERE site_id=? AND revision_id=?",
+   site,revision);
+  refuseIfAny("REVISION_HAS_HISTORY","SELECT count(*) FROM transport.relocation WHERE site_id=? AND revision_id=?",
+   site,revision);
+  refuseIfAny("REVISION_HAS_HISTORY","SELECT count(*) FROM traffic.node_reservation WHERE site_id=? AND revision_id=?",
+   site,revision);
+  refuseIfAny("REVISION_HAS_HISTORY","SELECT count(*) FROM fleet.vehicle_state WHERE site_id=? AND revision_id=?",
+   site,revision);
+  jdbc.update("DELETE FROM topology.zone_node WHERE site_id=? AND revision_id=?",site,revision);
+  jdbc.update("DELETE FROM topology.zone WHERE site_id=? AND revision_id=?",site,revision);
+  jdbc.update("DELETE FROM fleet.vehicle_profile WHERE site_id=? AND revision_id=?",site,revision);
+  jdbc.update("DELETE FROM topology.port WHERE site_id=? AND revision_id=?",site,revision);
+  jdbc.update("DELETE FROM topology.edge WHERE site_id=? AND revision_id=?",site,revision);
+  jdbc.update("DELETE FROM topology.node WHERE site_id=? AND revision_id=?",site,revision);
+  jdbc.update("DELETE FROM topology.map_revision WHERE site_id=? AND id=?",site,revision);
+ }
+
+ /**
   * Adds a node to a revision. A node on its own is unreachable until a segment reaches it, which
   * is the honest state of a layout being drawn and is left to say so rather than be guessed at.
   */

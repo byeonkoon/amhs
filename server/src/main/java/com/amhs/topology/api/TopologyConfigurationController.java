@@ -30,6 +30,11 @@ class TopologyConfigurationController {
             @PathVariable long id,@RequestParam long expectedVersion,@RequestBody NodeSettings settings) {
         return topology.updateNode(siteId,revisionId,id,expectedVersion,settings);
     }
+    /** Removes a revision nothing is using and nothing remembers. Never the one in use. */
+    @DeleteMapping
+    void deleteRevision(@PathVariable long siteId,@PathVariable long revisionId) {
+        topology.deleteRevision(siteId,revisionId);
+    }
     @PostMapping("/nodes")
     @org.springframework.web.bind.annotation.ResponseStatus(org.springframework.http.HttpStatus.CREATED)
     ConfigurationRecord<NodeSettings> createNode(@PathVariable long siteId,@PathVariable long revisionId,

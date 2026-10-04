@@ -33,6 +33,29 @@ export function SystemOptionsScreen({ session }: { session: Session }) {
   const mayChange = session.allows.includes('system');
   const set = (patch: Partial<OperationOptions>) => setDraft(d => d && ({ ...d, ...patch }));
 
+  // The site's own state is read and written on its own: it is not one of the options, it is what
+  // decides whether the options may be written at all.
+  const [mode, setMode] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    const controller = new AbortController();
+    get<{ mode: string }>(cfgApi.siteMode(), controller.signal)
+      .then(r => setMode(r.mode))
+      .catch(() => { /* a mode nobody could read is shown as unknown, not guessed */ });
+    return () => controller.abort();
+  }, []);
+  async function changeMode(wanted: string) {
+    setBusy(true); setError(null); setSaved(null);
+    try {
+      const now = await send<{ mode: string }>(cfgApi.siteMode(), 'PUT', { mode: wanted }, '운전 상태 변경');
+      setMode(now.mode);
+      setSaved(now.mode === 'MAINTENANCE'
+        ? '유지보수 상태입니다. 이제 선로·차량·포트·지도 버전을 바꿀 수 있습니다.'
+        : `운전 상태를 ${now.mode}로 바꿨습니다.`);
+    } catch (cause) {
+      setError(describe(cause));
+    } finally { setBusy(false); }
+  }
+
   async function save() {
     if (!record || !draft) return;
     setBusy(true); setError(null); setSaved(null);
@@ -66,6 +89,24 @@ export function SystemOptionsScreen({ session }: { session: Session }) {
           </p>
         </div></div>
       )}
+
+      {/* The switch that makes every other configuration change possible. It is kept here, next to
+          the run mode, because the two are the only settings about the site as a whole. */}
+      <h3 style={category}>상태 <span className="hint" style={{ fontWeight: 400 }}>설정을 바꿀 수 있는 상태인지</span></h3>
+      <Panel id="sys-mode" title="운전 상태" aux="설정 변경의 전제입니다" defaultOpen padded>
+        <Field label="운전 상태"
+          note="선로·차량·포트·설비·시스템 옵션과 지도 버전 적용은 유지보수 상태에서만 바꿀 수 있습니다. 이 값이 하는 일은 그 한 가지입니다 — 차량을 세우거나 작업을 멈추지는 않습니다.">
+          <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <select style={field} value={mode ?? 'RUNNING'} disabled={!mayChange || busy}
+              onChange={e => void changeMode(e.target.value)}>
+              <option value="RUNNING">RUNNING · 가동</option>
+              <option value="MAINTENANCE">MAINTENANCE · 유지보수(설정 변경 가능)</option>
+              <option value="RECOVERING">RECOVERING · 복구</option>
+            </select>
+            {mode === 'MAINTENANCE' && <Chip tone="wr">설정 변경 가능</Chip>}
+          </span>
+        </Field>
+      </Panel>
 
       <h3 style={category}>운전 <span className="hint" style={{ fontWeight: 400 }}>실제 장비로 돌릴지, 서버 안의 가상 차량으로 돌릴지</span></h3>
       <Panel id="sys-run" title="운전 모드" aux="저장하면 다음 주기부터 적용됩니다" defaultOpen padded>

@@ -36,6 +36,28 @@ public class OperationOptionConfiguration {
   return rows.getFirst();
  }
 
+ /**
+  * Puts the site into maintenance, or back to running.
+  *
+  * <p>Configuration is refused while the site is running, so this is the switch that makes every
+  * other change possible -- and it had no way of being thrown except by hand in the database,
+  * which meant the whole of configuration was out of reach of the people meant to use it.
+  *
+  * <p>What it does is exactly one thing: it decides whether configuration may be written. It does
+  * not stop vehicles, hold work or empty the site. Saying it stops the plant would be worse than
+  * useless -- somebody would believe it.
+  */
+ @Transactional
+ public String setMode(long site,String mode){
+  String wanted=mode==null?null:mode.trim().toUpperCase();
+  ConfigurationException.require("RUNNING".equals(wanted)||"MAINTENANCE".equals(wanted)||"RECOVERING".equals(wanted),
+   "INVALID_SITE_MODE");
+  guard.requireSite(site);
+  int changed=jdbc.update("UPDATE platform.site_operation SET mode=? WHERE site_id=?",wanted,site);
+  if(changed==0) throw new ConfigurationException(404,"SITE_NOT_CONFIGURED");
+  return wanted;
+ }
+
  /** The record id is the site id: there is exactly one option row per site. */
  public ConfigurationRecord<OperationOptions> get(long site){
   var rows=jdbc.query("SELECT "+COLS+" FROM platform.site_operation WHERE site_id=?",

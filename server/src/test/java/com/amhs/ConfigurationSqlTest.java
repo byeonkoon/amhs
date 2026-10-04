@@ -29,6 +29,7 @@ class ConfigurationSqlTest {
  private static final String BASE="/api/v1/sites/1/configuration/";
  @Autowired JdbcTemplate jdbc; @Autowired MockMvc mvc; @Autowired ObjectMapper json;
  @Autowired VehicleConfiguration vehicles; @Autowired PortConfiguration ports;
+ @Autowired com.amhs.platform.OperationOptionConfiguration options;
  @Autowired ConnectionConfiguration connections; @Autowired ProtocolConfiguration protocols; @Autowired CommunicationConfiguration communications;
  private VehicleSettings vehicle(String code){
   return new VehicleSettings(1,code,code,VehicleType.OHT,1100,1500,900,101L,102L,null,true,false,"CONTROLLER_MANAGED","REQUIRED","DISABLED",null);
@@ -65,6 +66,33 @@ class ConfigurationSqlTest {
   mvc.perform(post(BASE+"ports").header("Authorization",TOKEN).contentType("application/json").content("{"))
    .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("INVALID_JSON"));
  }
+ /**
+  * The switch that makes configuration possible is itself reachable.
+  *
+  * <p>Every configuration change is refused while the site runs, and until now nothing could put
+  * it into maintenance except a hand on the database -- which put the whole of configuration out
+  * of reach of the people it is for. Changing the state is an administrator's write like the rest,
+  * and it is the one write that does not itself require maintenance.
+  */
+ @Test void theSiteCanBePutIntoMaintenanceAndBack(){
+  String before=options.mode(1);
+  try{
+   jdbc.update("UPDATE platform.site_operation SET mode='RUNNING' WHERE site_id=1");
+   rejected(()->vehicles.create(1,vehicle("BLOCKED-BY-MODE")),409,"SITE_NOT_IN_MAINTENANCE");
+
+   assertThat(options.setMode(1,"maintenance")).as("written the way it is read").isEqualTo("MAINTENANCE");
+   assertThat(options.mode(1)).isEqualTo("MAINTENANCE");
+   long id=vehicles.create(1,vehicle("TEST-OHT-MODE")).id();
+   jdbc.update("DELETE FROM fleet.vehicle_profile WHERE id=?",id);
+
+   assertThat(options.setMode(1,"RUNNING")).isEqualTo("RUNNING");
+   rejected(()->vehicles.create(1,vehicle("BLOCKED-AGAIN")),409,"SITE_NOT_IN_MAINTENANCE");
+   rejected(()->options.setMode(1,"SLEEPING"),422,"INVALID_SITE_MODE");
+  }finally{
+   jdbc.update("UPDATE platform.site_operation SET mode=? WHERE site_id=1",before);
+  }
+ }
+
  @Test void runningAndRecoveringRejectAllWrites(){
   for(String mode:List.of("RUNNING","RECOVERING")){
    jdbc.update("UPDATE platform.site_operation SET mode=? WHERE site_id=1",mode);
