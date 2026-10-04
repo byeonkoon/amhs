@@ -25,6 +25,7 @@ class SimulatedTransportSqlTest {
  @Autowired com.amhs.equipment.SimulatedEquipment equipment;
  @Autowired TransportAssignment assignment;
  @Autowired com.amhs.transport.TransportLedger ledger;
+ @Autowired com.amhs.integration.CommandOutbox outbox;
  private static final long SITE=1, OHT=1;
 
  @BeforeEach @AfterEach void clean(){
@@ -253,6 +254,68 @@ class SimulatedTransportSqlTest {
   assertThat(ledger.find(SITE,id).orElseThrow().status())
    .isEqualTo(com.amhs.transport.OrderStatus.CANCELLED);
   assertThat(traffic.heldBy(SITE,OHT)).isEmpty();
+ }
+
+ /**
+  * A movement already on its way must not drive the vehicle after it has been set down elsewhere.
+  *
+  * <p>Taking the commands back marks them, but one already being sent is settled by its own result
+  * -- right for a vehicle still on its road, wrong for one that has been picked up and put
+  * somewhere else. Arriving afterwards, it would drive the old route from the new place.
+  */
+ @Test void aMovementSentBeforeTheVehicleWasMovedDoesNotDriveItAfterwards() throws Exception {
+  simulator.place(SITE,OHT,101L);
+  long id=accept("OHT-C");
+  assertThat(sweep.run(SITE,"test",null).assigned()).contains(id);
+  // A movement that actually goes somewhere. The first one can be a single node when the vehicle
+  // already stands at the pickup, and a road of one has no "onward" to be driven to.
+  var json=new com.fasterxml.jackson.databind.ObjectMapper();
+  com.amhs.integration.DeviceCommand sent=null; var road=new ArrayList<Long>();
+  for(int i=0;i<6&&road.size()<2;i++){
+   for(var c:outbox.byOrder(SITE,id)){
+    if(!"MOVE".equals(c.commandType())&&!"MORE".equals(c.commandType())) continue;
+    var nodes=new ArrayList<Long>();
+    json.readTree(c.payload()).path("authorizedNodeIds").forEach(n->nodes.add(n.asLong()));
+    if(nodes.size()>road.size()){ road.clear(); road.addAll(nodes); sent=c; }
+   }
+   if(road.size()<2){ sweep.run(SITE,"test",null); simulator.step(SITE); }
+  }
+  assertThat(road).as("a movement with somewhere to go").hasSizeGreaterThanOrEqualTo(2);
+  assertThat(sent).isNotNull();
+  // Set down on the road it was given, which is the case that bites: the old authority still names
+  // where the vehicle now stands, so acting on it would send it onward from here.
+  long onItsOldRoad=road.get(road.size()-2);
+
+  simulator.place(SITE,OHT,onItsOldRoad,true);
+  // It arrives now. It is taken as delivered, because it did arrive.
+  var late=sent;
+  assertThat(simulator.receive(late)).isTrue();
+
+  simulator.step(SITE);
+  assertThat(fleet.find(SITE,1,OHT).orElseThrow().nodeId())
+   .as("a road planned before it was moved is not a road it is on").isEqualTo(onItsOldRoad);
+  assertThat(traffic.heldBy(SITE,OHT)).isEmpty();
+ }
+
+ /**
+  * A handover already under way cannot be cancelled, so forcing a move makes it a question instead.
+  *
+  * <p>The carrier is between the vehicle and the equipment. Going through the cancel path would
+  * simply be refused, and refusing the move with it would leave no way to take the vehicle off.
+  */
+ @Test void movingAVehicleMidHandoverLeavesTheWorkAsAQuestion(){
+  simulator.place(SITE,OHT,101L);
+  long id=accept("OHT-C");
+  runUntilFinished(id,30);
+  // Held at a handover by hand: the state machine passes through it in one step, and what is under
+  // test is what happens while it is there, not how it gets there.
+  jdbc.update("UPDATE transport.order SET status='UNLOADING' WHERE id=?",id);
+  jdbc.update("UPDATE transport.assignment SET released_at=NULL WHERE order_id=?",id);
+
+  simulator.place(SITE,OHT,119L,true);
+  assertThat(ledger.find(SITE,id).orElseThrow().status())
+   .as("where the carrier is became a question the moment the vehicle moved")
+   .isEqualTo(com.amhs.transport.OrderStatus.RECOVERY_REQUIRED);
  }
 
  /** Setting the charge by hand says it is this now, so an injected pickup fault stops. */

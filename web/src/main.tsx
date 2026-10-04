@@ -443,6 +443,11 @@ function VehicleDetail(props: {
   const [placeAt, setPlaceAt] = React.useState<number | ''>('');
   const [pickupFaulted, setPickupFaulted] = React.useState<number[]>([]);
 
+  // A node chosen for one vehicle means nothing for the next. The lists are per network, so a node
+  // left selected after switching is one the new vehicle cannot even reach -- and the request would
+  // still be sent, asking to put an AGV on an OHT rail.
+  React.useEffect(() => { setPlaceAt(''); setStateError(null); }, [props.vehicle.id]);
+
   // Which vehicles are simulating a power-pickup failure, so a charge that keeps falling is
   // explained on the screen rather than looking like the control not working.
   React.useEffect(() => {
@@ -483,8 +488,11 @@ function VehicleDetail(props: {
    * choice the person makes knowingly: moving it leaves the job somewhere, and that somewhere is
    * recovery, not nothing.
    */
+  /** Only a node this vehicle's own network has. The lists differ, so a leftover id is not one. */
+  const placeable = placeAt !== '' && (props.placeNodes ?? []).some(n => n.id === placeAt);
+
   async function place(releaseWork = false) {
-    if (!r || placeAt === '') return;
+    if (!r || !placeable) return;
     setStateError(null);
     try {
       await send(opsApi.simulatedPlace(r.id), 'POST', { nodeId: placeAt, releaseWork }, '시뮬레이션 위치 지정');
@@ -572,7 +580,7 @@ function VehicleDetail(props: {
             <option value="">노드</option>
             {props.placeNodes!.map(n => <option key={n.id} value={n.id}>{n.code}</option>)}
           </select>
-          <button type="button" style={tiny} disabled={!hasWriteToken() || placeAt === ''}
+          <button type="button" style={tiny} disabled={!hasWriteToken() || !placeable}
             onClick={() => place()}>놓기</button>
           <span className="hint">
             주행이 아니라 그 자리에 놓습니다. 쥐고 있던 구간은 모두 반납합니다. 작업이나 이동 중이면 한 번 되묻고,

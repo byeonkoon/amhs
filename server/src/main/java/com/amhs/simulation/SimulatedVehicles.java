@@ -66,6 +66,16 @@ public class SimulatedVehicles {
   * the condition can be tried out without a fault being the only way to see it.
   */
  private final java.util.Set<Long> pickupFaulted=java.util.concurrent.ConcurrentHashMap.newKeySet();
+ /**
+  * When each vehicle was last put somewhere by hand.
+  *
+  * <p>A movement written before that moment describes a journey starting from where the vehicle
+  * used to be. Taking the commands back marks them, but one already being sent is settled by its
+  * own result -- which is right for a vehicle that is still on its road and wrong for one that has
+  * been picked up and set down elsewhere. It arrives afterwards and would drive the old route from
+  * the new place.
+  */
+ private final Map<Long,java.time.OffsetDateTime> placedAt=new ConcurrentHashMap<>();
  private static final double DRAIN_DRIVING=0.25, DRAIN_STANDING=0.01, CHARGE_RATE=1.5;
  /** How fast the rail refills a buffer that is being fed, and how fast one that is not runs down. */
  private static final double BUFFER_REFILL=5.0, BUFFER_DRAIN=0.35;
@@ -155,6 +165,15 @@ public class SimulatedVehicles {
      if(a.vehicleId()==vehicleId){
       var order=ledger.find(siteId,a.orderId()).orElse(null);
       if(order==null||order.status().isTerminal()) continue;
+      // A handover already under way cannot be cancelled -- the carrier is between the vehicle and
+      // the equipment, so the order finishes or becomes a question, and moving the vehicle is what
+      // makes it a question. Going through the cancel path here would simply be refused.
+      if(order.status()!=com.amhs.transport.OrderStatus.CANCEL_REQUESTED&&order.status().cancelTarget()==null){
+       ledger.transition(siteId,a.orderId(),com.amhs.transport.OrderStatus.RECOVERY_REQUIRED,
+        "PLACED_BY_HAND: 인수도 중 차량을 손으로 옮겨 화물 위치를 확인해야 합니다","simulator",
+        java.util.UUID.randomUUID().toString());
+       continue;
+      }
       // An order already winding down has nothing left to cancel; asking again is refused, and
       // rightly. What it still needs is the thing below.
       var now=order.status()==com.amhs.transport.OrderStatus.CANCEL_REQUESTED ? order
@@ -174,6 +193,7 @@ public class SimulatedVehicles {
     for(var r:ledger.openRelocations(siteId))
      if(r.vehicleId()==vehicleId) ledger.finishRelocation(r.id(),"PLACED_BY_HAND");
    traffic.releaseAll(siteId,vehicleId,"PLACED_BY_HAND");
+   placedAt.put(vehicleId,java.time.OffsetDateTime.now());
    vehicles.put(vehicleId,new Sim(siteId,vehicleId,List.of(),false,false));
    battery.putIfAbsent(vehicleId,100.0);
    var placed=report(siteId,vehicleId,nodeId,"IDLE",false);
@@ -201,7 +221,9 @@ public class SimulatedVehicles {
  }
  public boolean isSimulated(long vehicleId){ return vehicles.containsKey(vehicleId); }
  /** Takes every vehicle out of the simulation. Their last reported state stays as it was. */
- public void clear(){ vehicles.clear(); maps.clear(); battery.clear(); chargeOrder.clear(); pickupFaulted.clear(); }
+ public void clear(){
+  vehicles.clear(); maps.clear(); battery.clear(); chargeOrder.clear(); pickupFaulted.clear(); placedAt.clear();
+ }
 
  /** Sets a simulated vehicle's state of charge, as if it reported it; for trying charging out. */
  public VehicleSnapshot setBattery(long siteId,long vehicleId,double pct){
@@ -251,11 +273,16 @@ public class SimulatedVehicles {
   * A command reaches the vehicle. A movement replaces what it may drive: the authorized nodes run
   * from where it stands. Anything else it receives is accepted and does nothing.
   */
- boolean receive(DeviceCommand command){
+ public boolean receive(DeviceCommand command){
   if(command.vehicleId()==null) return false;
   var sim=vehicles.get(command.vehicleId());
   if(sim==null) return false;
   if("MOVE".equals(command.commandType())||"MORE".equals(command.commandType())){
+   // A movement planned before the vehicle was set down somewhere else is not a road it is on. It
+   // is taken as delivered -- it did arrive -- and does nothing, because acting on it would drive
+   // the old route from the new place. Refusing delivery instead would only have it sent again.
+   var placed=placedAt.get(command.vehicleId());
+   if(placed!=null&&command.createdAt()!=null&&command.createdAt().isBefore(placed)) return true;
    try{
     var nodes=new ArrayList<Long>();
     json.readTree(command.payload()).path("authorizedNodeIds").forEach(n->nodes.add(n.asLong()));
