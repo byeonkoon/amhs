@@ -147,6 +147,28 @@ class FaultResponseSqlTest {
  }
 
  /**
+  * A second kind of fault on the same vehicle is news, even while the first one is still there.
+  *
+  * <p>What has been decided is this fault, not this vehicle. An operator who put a still-erroring
+  * vehicle back has said something about the error; they have said nothing about the power pickup
+  * it loses afterwards, and that is a different reason to stop working it.
+  */
+ @Test void aDifferentFaultOnTheSameVehicleIsActedOnAgain(){
+  reports("ERROR");
+  assertThat(look()).contains(OHT);
+  tx.executeWithoutResult(s->fleet.returnToService(SITE,REVISION,OHT));
+  assertThat(look()).as("the error is already decided").doesNotContain(OHT);
+
+  // Still in error, and now not being fed from the rail either.
+  jdbc.update("UPDATE fleet.vehicle_state SET battery_pct=90,soc_peak_pct=100,"
+   +"soc_peak_at=now()-interval '1 hour' WHERE site_id=? AND vehicle_id=? AND revision_id=?",
+   SITE,OHT,REVISION);
+
+  assertThat(look()).as("a fault nobody has decided anything about").contains(OHT);
+  assertThat(fleet.find(SITE,REVISION,OHT).orElseThrow().outOfServiceReason()).contains("전력");
+ }
+
+ /**
   * A low charge is a vehicle doing its job, not one that cannot.
   *
   * <p>The charging regime already answers it by sending the vehicle to charge. Taking it out of

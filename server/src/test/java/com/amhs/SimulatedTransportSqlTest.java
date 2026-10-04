@@ -330,6 +330,61 @@ class SimulatedTransportSqlTest {
   assertThat(fleet.find(SITE,1,OHT).orElseThrow().batteryPct()).isEqualTo(100.0);
  }
 
+ /**
+  * A cancel the vehicle has to confirm gets confirmed, and the work ends.
+  *
+  * <p>Cancelling while a movement command has already gone out cannot end the order on the spot --
+  * the vehicle may still be driving on that road. So the order waits to be told the vehicle
+  * stopped. In simulation that vehicle is the simulator's, so the simulator has to say it, and if
+  * it never does the order sits in CANCEL_REQUESTED forever: it cannot be finished, it keeps its
+  * vehicle assigned, and that vehicle takes no further work.
+  */
+ @Test void aCancelTheVehicleMustConfirmIsConfirmedAndFrees(){
+  simulator.place(SITE,OHT,101L);
+  long id=accept("OHT-C");
+  // Run until it is on the road for this order, so the cancel has a sent command to wait on.
+  for(int i=0;i<20&&orders.find(SITE,id).orElseThrow().status()==OrderStatus.QUEUED;i++){
+   sweep.run(SITE,"test",null); simulator.step(SITE);
+  }
+  assertThat(ledger.assignedVehicleIds(SITE)).contains(OHT);
+
+  var cancelled=orders.cancel(SITE,id,"운전자 취소","test",null);
+  assertThat(cancelled.status())
+   .as("it is driving on a command that already went out, so the vehicle has to answer")
+   .isEqualTo(OrderStatus.CANCEL_REQUESTED);
+
+  var after=runUntilFinished(id,40);
+  assertThat(after.status()).as("nothing was picked up, so the work simply ends").isEqualTo(OrderStatus.CANCELLED);
+  assertThat(ledger.assignedVehicleIds(SITE)).as("a finished order holds no vehicle").doesNotContain(OHT);
+  assertThat(path(id)).containsSubsequence("CANCEL_REQUESTED","CANCELLED");
+
+  // And the freed vehicle is given the next job rather than sitting out the rest of the day.
+  long next=accept("OHT-C");
+  assertThat(runUntilFinished(next,80).status()).isEqualTo(OrderStatus.COMPLETED);
+ }
+
+ /**
+  * The same confirmation after a pickup does not end the order: it asks where the carrier is.
+  *
+  * <p>The vehicle saying it stopped is not a statement about what it is holding. That is the
+  * ledger's rule, and the simulated vehicle must not talk its way past it by claiming the carrier
+  * is somewhere.
+  */
+ @Test void aCancelConfirmedWithTheCarrierAboardBecomesAQuestion(){
+  simulator.place(SITE,OHT,101L);
+  long id=accept("OHT-C");
+  for(int i=0;i<40&&orders.find(SITE,id).orElseThrow().status()!=OrderStatus.TO_DESTINATION;i++){
+   sweep.run(SITE,"test",null); simulator.step(SITE);
+  }
+  assertThat(orders.find(SITE,id).orElseThrow().status()).isEqualTo(OrderStatus.TO_DESTINATION);
+
+  assertThat(orders.cancel(SITE,id,"운전자 취소","test",null).status()).isEqualTo(OrderStatus.CANCEL_REQUESTED);
+  var after=runUntilFinished(id,40);
+  assertThat(after.status()).isEqualTo(OrderStatus.RECOVERY_REQUIRED);
+  assertThat(ledger.assignedVehicleIds(SITE))
+   .as("the carrier is still on it, so it is not free for other work").contains(OHT);
+ }
+
  @Test void enteringSimulationPutsTheVehiclesInUseOnTheTrack(){
   jdbc.update("UPDATE fleet.vehicle_profile SET enabled=TRUE WHERE site_id=?",SITE);
   simulator.placeAll(SITE,configuration);

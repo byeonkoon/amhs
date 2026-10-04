@@ -525,6 +525,18 @@ public class SimulatedVehicles {
     report(siteId,sim.vehicleId(),at,"IDLE",false);
     return new Step(sim.vehicleId(),"DROPPED",at);
    }
+   // A cancel the vehicle has to confirm. It has driven to the end of the authority it was already
+   // holding -- nothing more was sent, the cancel took that back -- and it is standing still, so
+   // the thing the controller is waiting for is true and saying it is this vehicle's job. Without
+   // this the order waits for a report that never comes, keeps the vehicle assigned, and so keeps
+   // a working vehicle out of every later decision.
+   //
+   // What the cancel settles into is not decided here. The vehicle only says that it stopped; the
+   // ledger turns that into an ending before a pickup, or a question about the carrier after one.
+   case CANCEL_REQUESTED -> {
+    move(siteId,order,OrderStatus.CANCELLED,TransitionEvidence.system());
+    return new Step(sim.vehicleId(),"CANCEL_ACKNOWLEDGED",at);
+   }
    default -> {}
   }
   return new Step(sim.vehicleId(),"WAITING",at);

@@ -32,15 +32,23 @@ class FaultResponse {
  private final TransportLedger ledger; private final OperationOptionConfiguration operations;
 
  /**
-  * Vehicles already faulted at the last look, per site.
+  * The faults already decided at the last look, per site, each as the alarm key that named it.
   *
   * <p>The trigger is the fault arriving, not the fault being there. Acting on its presence would
   * fight the operator: somebody who puts a still-faulted vehicle back in service on purpose would
   * have it taken out again a second later, forever. Held in memory because it describes this run
   * of the program; after a restart a fault that is present is treated as newly seen, which is the
   * right answer for a controller that has just started and does not know what was decided before.
+  *
+  * <p>Keys rather than vehicles, because a vehicle can be faulted in more than one way and the
+  * second way is news. A vehicle somebody put back while it was still reporting an error has had
+  * that decided; it losing its power pickup afterwards has not.
+  *
+  * <p>Only what was actually decided is remembered. A fault whose exclusion did not go through --
+  * the write failed, the site was unreadable for a moment -- is left unrecorded, so the next look
+  * tries it again rather than remembering a decision that never happened.
   */
- private final Map<Long,Set<Long>> faultedLastLook=new ConcurrentHashMap<>();
+ private final Map<Long,Set<String>> faultedLastLook=new ConcurrentHashMap<>();
 
  FaultResponse(SiteAlarms alarms,FleetState fleet,TransportLedger ledger,
                OperationOptionConfiguration operations){
@@ -60,28 +68,40 @@ class FaultResponse {
 
  /** One look at one site. Returns the vehicles it took out of service this time. */
  Set<Long> respond(long siteId){
-  var faultedNow=new LinkedHashSet<Long>();
-  var reasons=new java.util.LinkedHashMap<Long,String>();
+  var faultedNow=new java.util.LinkedHashMap<String,Long>();
+  var reasons=new java.util.LinkedHashMap<String,String>();
   for(Alarm alarm:alarms.alarms(siteId)){
    String reason=reasonFor(alarm);
    if(reason==null) continue;
    Long vehicleId=vehicleOf(alarm.key());
    if(vehicleId==null) continue;
-   faultedNow.add(vehicleId);
-   reasons.putIfAbsent(vehicleId,reason);
+   faultedNow.put(alarm.key(),vehicleId);
+   reasons.put(alarm.key(),reason);
   }
   var before=faultedLastLook.getOrDefault(siteId,Set.of());
-  faultedLastLook.put(siteId,faultedNow);
-
   long revisionId=ledger.activeRevision(siteId);
+  var decided=new LinkedHashSet<String>();
   var removed=new LinkedHashSet<Long>();
-  for(Long vehicleId:faultedNow){
-   if(before.contains(vehicleId)) continue;   // the same fault, still there: already decided
-   var vehicle=fleet.find(siteId,revisionId,vehicleId).orElse(null);
-   if(vehicle==null||vehicle.outOfService()) continue;
-   fleet.takeOutOfService(siteId,revisionId,vehicleId,reasons.get(vehicleId),"system");
-   removed.add(vehicleId);
+  for(var fault:faultedNow.entrySet()){
+   String key=fault.getKey();
+   if(before.contains(key)){ decided.add(key); continue; }  // the same fault: already decided
+   try{
+    var vehicle=fleet.find(siteId,revisionId,fault.getValue()).orElse(null);
+    if(vehicle!=null&&!vehicle.outOfService()){
+     fleet.takeOutOfService(siteId,revisionId,fault.getValue(),reasons.get(key),"system");
+     removed.add(fault.getValue());
+    }
+    decided.add(key);
+   }catch(RuntimeException e){
+    // Not decided, so not remembered: the next look comes back to it. One vehicle that could not
+    // be taken out must not stop the others, and must not look like it was dealt with.
+    SiteAlarms.log.warn("could not take vehicle {} out of service for {}: {}",
+     fault.getValue(),key,e.toString());
+   }
   }
+  // Only the faults still live and decided. One that has ended drops out, so the same fault
+  // arriving again later is news again.
+  faultedLastLook.put(siteId,decided);
   return removed;
  }
 

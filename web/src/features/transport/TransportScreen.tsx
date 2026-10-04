@@ -44,7 +44,7 @@ export function TransportScreen(props: {
   const cancel = (orderId: number) => act(async () => {
     const res = await send<TransportOrder>(opsApi.cancel(orderId), 'POST', undefined, '운전자 취소');
     return res.status === 'CANCEL_REQUESTED'
-      ? { tone: 'wr', text: `작업 #${orderId} 취소를 요청했습니다. 이동 명령이 이미 나갔거나 화물을 실은 뒤라 장비가 멈춘 것을 확인해야 끝납니다.` }
+      ? { tone: 'wr', text: `작업 #${orderId} 취소를 요청했습니다. 이동 명령이 이미 나갔거나 화물을 실은 뒤라, 차량이 멈췄다는 보고가 와야 끝납니다. 화물을 실은 뒤였다면 화물 위치 확인으로 넘어갑니다.` }
       : { tone: 'ok', text: `작업 #${orderId}를 취소했습니다. 나가지 않은 이동 명령은 거둬들였습니다.` };
   });
 
