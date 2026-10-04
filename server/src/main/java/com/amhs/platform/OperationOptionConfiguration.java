@@ -13,6 +13,11 @@ public class OperationOptionConfiguration {
  private final JdbcTemplate jdbc; private final ConfigurationLock guard;
  public OperationOptionConfiguration(JdbcTemplate jdbc,ConfigurationLock guard){this.jdbc=jdbc;this.guard=guard;}
 
+ /** Every configured site, for work that has to visit all of them rather than the simulated ones. */
+ public java.util.List<Long> sites(){
+  return jdbc.query("SELECT site_id FROM platform.site_operation ORDER BY site_id",(r,n)->r.getLong(1));
+ }
+
  /** Sites currently set to run on simulated vehicles. */
  public java.util.List<Long> simulatedSites(){
   return jdbc.query("SELECT site_id FROM platform.site_operation WHERE run_mode='SIMULATION' ORDER BY site_id",(r,n)->r.getLong(1));
