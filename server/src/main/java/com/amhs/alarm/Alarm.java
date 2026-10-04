@@ -21,7 +21,27 @@ import java.time.OffsetDateTime;
 public record Alarm(String key,Severity severity,String rule,
                     String subject,String summary,String effect,
                     OffsetDateTime since,String sinceMeans,
-                    String screen){
+                    String screen,Seen seen){
  /** How bad it is, in the only two degrees worth telling apart: act now, or see to it. */
  public enum Severity{ CRITICAL,WARNING }
+
+ /**
+  * That somebody has looked at this, and what they said about it. Null until anybody has.
+  *
+  * <p>It does not clear the alarm and cannot: the condition is still true, and a screen that lets
+  * a person remove a true condition is how a real fault disappears. What it changes is only what
+  * the next reader needs to do about it -- a room of people can tell a new fault from one already
+  * being dealt with.
+  */
+ public record Seen(String reason,String actorCode,OffsetDateTime at){}
+
+ /** A rule raises an alarm; whether anybody has looked at it is attached afterwards. */
+ public Alarm(String key,Severity severity,String rule,String subject,String summary,String effect,
+              OffsetDateTime since,String sinceMeans,String screen){
+  this(key,severity,rule,subject,summary,effect,since,sinceMeans,screen,null);
+ }
+ public Alarm withSeen(Seen seen){
+  return new Alarm(key,severity,rule,subject,summary,effect,since,sinceMeans,screen,seen);
+ }
+ public boolean acknowledged(){ return seen!=null; }
 }

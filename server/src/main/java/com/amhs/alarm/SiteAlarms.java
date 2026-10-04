@@ -30,14 +30,17 @@ import java.util.List;
  */
 @Service
 public class SiteAlarms {
+ static final org.slf4j.Logger log=org.slf4j.LoggerFactory.getLogger(SiteAlarms.class);
  private final FleetState fleet; private final TrafficControl traffic;
  private final TransportLedger ledger; private final CommandOutbox outbox;
  private final OperationOptionConfiguration operations;
+ private final org.springframework.jdbc.core.JdbcTemplate jdbc;
 
  public SiteAlarms(FleetState fleet,TrafficControl traffic,TransportLedger ledger,
-                   CommandOutbox outbox,OperationOptionConfiguration operations){
+                   CommandOutbox outbox,OperationOptionConfiguration operations,
+                   org.springframework.jdbc.core.JdbcTemplate jdbc){
   this.fleet=fleet; this.traffic=traffic; this.ledger=ledger;
-  this.outbox=outbox; this.operations=operations;
+  this.outbox=outbox; this.operations=operations; this.jdbc=jdbc;
  }
 
  /** Everything true now, worst first, and within a severity the oldest first. */
@@ -52,7 +55,71 @@ public class SiteAlarms {
   commands(siteId,out);
   out.sort(Comparator.comparing(Alarm::severity)
    .thenComparing(a->a.since()==null?OffsetDateTime.MIN:a.since()));
+  return withWhoHasLooked(siteId,out);
+ }
+
+ /**
+  * Attaches, to each live alarm, whether anybody has said they have seen it.
+  *
+  * <p>An acknowledgement is only ever read here, never applied as a reason to leave an alarm out.
+  * Seeing something is not fixing it.
+  */
+ private List<Alarm> withWhoHasLooked(long siteId,List<Alarm> alarms){
+  if(alarms.isEmpty()) return List.of();
+  var seen=new java.util.HashMap<String,Alarm.Seen>();
+  jdbc.query("SELECT alarm_key,reason,actor_code,acknowledged_at FROM platform.alarm_acknowledgement"
+   +" WHERE site_id=?",(r,n)->seen.put(r.getString(1),
+    new Alarm.Seen(r.getString(2),r.getString(3),r.getObject(4,OffsetDateTime.class))),siteId);
+  var out=new ArrayList<Alarm>(alarms.size());
+  for(Alarm a:alarms) out.add(seen.containsKey(a.key())?a.withSeen(seen.get(a.key())):a);
   return List.copyOf(out);
+ }
+
+ /**
+  * Records that somebody has looked at an alarm that is true right now.
+  *
+  * <p>Refused for an alarm that is not live: acknowledging something the site is not saying would
+  * put a mark on a condition nobody can see, and leave it waiting for the next time that condition
+  * comes back. The alarm stays in the list -- it is still true, and that is the whole point.
+  */
+ @Transactional
+ public Alarm acknowledge(long siteId,String alarmKey,String reason,String actorCode){
+  if(reason==null||reason.isBlank())
+   throw new IllegalArgumentException("ACKNOWLEDGE_REASON_REQUIRED");
+  var live=alarms(siteId).stream().filter(a->a.key().equals(alarmKey)).findFirst()
+   .orElseThrow(()->new IllegalArgumentException("ALARM_NOT_LIVE"));
+  jdbc.update("INSERT INTO platform.alarm_acknowledgement(site_id,alarm_key,reason,actor_code)"
+   +" VALUES(?,?,?,?) ON CONFLICT (site_id,alarm_key) DO UPDATE SET reason=EXCLUDED.reason,"
+   +"actor_code=EXCLUDED.actor_code,acknowledged_at=now()",
+   siteId,alarmKey,reason.substring(0,Math.min(reason.length(),256)),actorCode);
+  return alarms(siteId).stream().filter(a->a.key().equals(alarmKey)).findFirst().orElse(live);
+ }
+
+ /**
+  * Forgets acknowledgements of conditions that are no longer true.
+  *
+  * <p>An acknowledgement belongs to one occurrence. Kept past the end of the condition, it would
+  * silence the next one: the same fault returning would arrive already marked as seen by somebody
+  * who saw a different one, possibly weeks ago.
+  *
+  * <p>This runs with the site's sweep rather than when the list is read, because reading must not
+  * write -- the list is open to anyone, and a read that changes the database is a read that can be
+  * made to change it. The cost is a window: a condition that clears and comes back between two
+  * sweeps is still marked seen. The sweep is the site's own heartbeat, so that window is short, and
+  * it is the honest trade rather than a hidden one.
+  */
+ @Transactional
+ public int retireAcknowledgementsOfEndedConditions(long siteId){
+  var live=alarms(siteId).stream().map(Alarm::key).toList();
+  if(live.isEmpty())
+   return jdbc.update("DELETE FROM platform.alarm_acknowledgement WHERE site_id=?",siteId);
+  var marks=new StringBuilder();
+  for(int i=0;i<live.size();i++) marks.append(i==0?"?":",?");
+  var args=new Object[live.size()+1];
+  args[0]=siteId;
+  for(int i=0;i<live.size();i++) args[i+1]=live.get(i);
+  return jdbc.update("DELETE FROM platform.alarm_acknowledgement WHERE site_id=?"
+   +" AND alarm_key NOT IN ("+marks+")",args);
  }
 
  /** How many of each, for a screen that wants the count without the list. */
@@ -60,9 +127,15 @@ public class SiteAlarms {
  public Count count(long siteId){
   var all=alarms(siteId);
   int critical=(int)all.stream().filter(a->a.severity()==Severity.CRITICAL).count();
-  return new Count(all.size(),critical,all.size()-critical);
+  int unseen=(int)all.stream().filter(a->!a.acknowledged()).count();
+  return new Count(all.size(),critical,all.size()-critical,unseen);
  }
- public record Count(int total,int critical,int warning){}
+ /**
+  * {@code unseen} is how many nobody has said they have looked at. It is counted apart so a badge
+  * can stop shouting about a fault somebody is already standing in front of, without pretending
+  * the fault is gone.
+  */
+ public record Count(int total,int critical,int warning,int unseen){}
 
  private void vehicles(long siteId,long revisionId,OperationOptions options,List<Alarm> out){
   var staleBefore=OffsetDateTime.now().minusSeconds(Math.max(1,options.positionStaleSeconds()));

@@ -482,12 +482,20 @@ export type Alarm = {
   since: string | null; sinceMeans: string;
   /** The screen that can do something about it. */
   screen: MenuTarget;
+  /**
+   * That somebody has looked at this, and what they said. Null until anybody has. It does not
+   * clear the alarm and cannot: the condition is still true, and a screen that lets a person
+   * remove a true condition is how a real fault disappears.
+   */
+  seen: { reason: string; actorCode: string | null; at: string } | null;
 };
 export type MenuTarget = 'fleet' | 'transport' | 'traffic' | 'diagnostics' | 'inventory';
-export type AlarmCount = { total: number; critical: number; warning: number };
+/** `unseen` is how many nobody has said they have looked at yet. */
+export type AlarmCount = { total: number; critical: number; warning: number; unseen: number };
 export const alarmApi = {
   alarms: () => `/api/v1/sites/${SITE_ID}/alarms`,
   count: () => `/api/v1/sites/${SITE_ID}/alarms/count`,
+  seen: (alarmKey: string) => `/api/v1/sites/${SITE_ID}/alarms/${encodeURIComponent(alarmKey)}/seen`,
 };
 
 /** Authority levels, lowest first. A screen offers what the session says it may do. */

@@ -1,5 +1,5 @@
 import React from 'react';
-import { alarmApi, get, type Alarm, type MenuTarget } from '../../api';
+import { ApiError, alarmApi, get, hasWriteToken, send, type Alarm, type MenuTarget } from '../../api';
 import { Chip, Empty } from '../../shell/States';
 import { Grid, Row } from '../../shell/Panel';
 import { aborted } from '../equipment/EquipmentScreen';
@@ -19,6 +19,26 @@ import { aborted } from '../equipment/EquipmentScreen';
 export function AlarmsScreen({ onGo }: { onGo: (screen: MenuTarget) => void }) {
   const [alarms, setAlarms] = React.useState<Alarm[] | null>(null);
   const [failed, setFailed] = React.useState(false);
+  const [notice, setNotice] = React.useState<string | null>(null);
+  const [busy, setBusy] = React.useState(false);
+
+  /**
+   * Records that somebody looked. It does not clear the line, and the button never implies it
+   * will: a control that removed a true condition would be a control for hiding faults.
+   */
+  async function markSeen(alarm: Alarm) {
+    const reason = window.prompt(
+      `${alarm.rule} · ${alarm.subject}\n\n무엇을 확인했는지, 또는 무엇을 하고 있는지 적어 주세요.`
+      + `\n조건은 그대로 남습니다 — 고쳐야 사라집니다.`);
+    if (reason === null || !reason.trim()) return;
+    setBusy(true); setNotice(null);
+    try {
+      const updated = await send<Alarm>(alarmApi.seen(alarm.key), 'PUT', { reason }, '알람 확인');
+      setAlarms(list => list?.map(a => a.key === updated.key ? updated : a) ?? list);
+    } catch (cause) {
+      setNotice(cause instanceof ApiError ? explainAck(cause.message) : '기록하지 못했습니다.');
+    } finally { setBusy(false); }
+  }
 
   React.useEffect(() => {
     let live = true;
@@ -44,6 +64,7 @@ export function AlarmsScreen({ onGo }: { onGo: (screen: MenuTarget) => void }) {
 
   const critical = alarms.filter(a => a.severity === 'CRITICAL');
   const warning = alarms.filter(a => a.severity === 'WARNING');
+  const unseen = alarms.filter(a => !a.seen);
 
   return (
     <>
@@ -53,9 +74,16 @@ export function AlarmsScreen({ onGo }: { onGo: (screen: MenuTarget) => void }) {
           <span className="d">{critical.length ? '지금 손이 필요합니다' : ''}</span></span>
         <span className="s"><span className="k">주의</span>
           <span className="v" style={warning.length ? { color: 'var(--warn)' } : undefined}>{warning.length}</span></span>
+        <span className="s"><span className="k">미확인</span>
+          <span className="v" style={unseen.length ? { color: 'var(--warn)' } : undefined}>{unseen.length}</span>
+          <span className="d">{unseen.length ? '아무도 봤다고 하지 않았습니다' : ''}</span></span>
         <span className="s"><span className="k">갱신</span><span className="v">3초</span>
           <span className="d">{failed ? '서버를 읽지 못했습니다 · 아래는 마지막으로 읽은 내용입니다' : '지금 상태에서 매번 다시 판정합니다'}</span></span>
       </div>
+
+      {notice && <div className="card"><div className="cb" style={{ padding: '10px 14px' }}>
+        <p style={{ margin: 0, fontSize: 12 }}><Chip tone="er">거부</Chip> {notice}</p>
+      </div></div>}
 
       {alarms.length === 0
         ? <section className="card">
@@ -68,8 +96,8 @@ export function AlarmsScreen({ onGo }: { onGo: (screen: MenuTarget) => void }) {
               <h2>지금 성립하는 조건</h2>
               <span className="aux">해제할 항목이 없습니다 — 조건이 사라지면 줄도 사라집니다</span>
             </div>
-            <Grid cols="54px 104px 150px 1fr 128px 58px"
-              head={['등급', '규칙', '대상', '내용과 그 영향', '시각', '']}>
+            <Grid cols="54px 104px 150px 1fr 128px 132px"
+              head={['등급', '규칙', '대상', '내용과 그 영향', '시각', '확인']}>
               {alarms.map(a => (
                 <Row key={a.key}>
                   <span>
@@ -89,9 +117,20 @@ export function AlarmsScreen({ onGo }: { onGo: (screen: MenuTarget) => void }) {
                     {a.since ? <><div className="mono">{when(a.since)}</div><div>{a.sinceMeans}</div></>
                       : <span title="이 조건이 언제부터였는지는 어디에도 기록되어 있지 않습니다.">{a.sinceMeans}</span>}
                   </span>
-                  <span>
+                  <span style={{ display: 'grid', gap: 3, minWidth: 0 }}>
+                    {a.seen
+                      // Said, not shown as cleared: the line stays because the condition does.
+                      ? <span title={`${a.seen.reason}${a.seen.actorCode ? ` · ${a.seen.actorCode}` : ''} · ${when(a.seen.at)}`}
+                          style={{ fontSize: 10.5, color: 'var(--mut)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          <Chip tone="id">확인됨</Chip> {a.seen.actorCode ?? ''}
+                        </span>
+                      : <button type="button" style={ghost} disabled={busy || !hasWriteToken()}
+                          title={hasWriteToken()
+                            ? '봤다는 것만 남깁니다. 조건은 그대로이며 고쳐야 사라집니다.'
+                            : 'Lv2 운전 이상으로 로그인해야 기록할 수 있습니다.'}
+                          onClick={() => markSeen(a)}>확인함</button>}
                     <button type="button" style={ghost} onClick={() => onGo(a.screen)}>
-                      {SCREEN_LABEL[a.screen]}
+                      {SCREEN_LABEL[a.screen]} ›
                     </button>
                   </span>
                 </Row>
@@ -101,11 +140,22 @@ export function AlarmsScreen({ onGo }: { onGo: (screen: MenuTarget) => void }) {
               이 목록은 저장된 사건 기록이 아닙니다. 매번 사이트의 현재 상태에서 다시 판정하므로, 이미 끝난
               일이 남아 있거나 아무도 보고 있지 않은 동안 생긴 일이 빠지는 일이 없습니다. 지나간 일은 이력
               화면에서 봅니다.
+              <br />
+              <b>‘확인함’은 봤다는 기록일 뿐 해제가 아닙니다.</b> 조건이 사라져야 줄도 사라집니다. 조건이
+              끝나면 그 확인 기록도 함께 폐기되므로, 같은 고장이 다시 나면 다시 미확인으로 올라옵니다 —
+              몇 주 전에 다른 건을 본 사람의 확인이 오늘의 고장을 조용히 덮지 않습니다.
             </p>
           </section>
         )}
     </>
   );
+}
+
+function explainAck(code: string): string {
+  if (code === 'ALARM_NOT_LIVE') return '그 조건은 이미 사라졌습니다. 없는 것을 확인해 둘 수는 없습니다 — 목록을 다시 읽어 주세요.';
+  if (code === 'ACKNOWLEDGE_REASON_REQUIRED') return '무엇을 확인했는지 적어야 합니다. 눌렀다는 사실만으로는 다음 사람에게 알려줄 것이 없습니다.';
+  if (code === 'ROLE_OPERATOR_REQUIRED') return 'Lv2 운전 이상 권한이 필요합니다.';
+  return code;
 }
 
 const SCREEN_LABEL: Record<MenuTarget, string> = {

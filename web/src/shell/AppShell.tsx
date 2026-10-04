@@ -61,8 +61,12 @@ export function AppShell(props: {
   subtitle: string;
   server: ServerState;
   session: Session;
-  /** How many conditions are true now, so the count is visible from every screen. */
-  alarms?: { critical: number; warning: number };
+  /**
+   * How many conditions are true now, so the count is visible from every screen. `unseen` is how
+   * many nobody has said they have looked at: the badge shows that, because a fault somebody is
+   * already standing in front of should stop shouting without being made to look fixed.
+   */
+  alarms?: { critical: number; warning: number; unseen: number };
   /** The site's run mode as stored, so the frame never claims simulation for a site on real devices. */
   runMode?: 'SIMULATION' | 'OPERATION' | null;
   onAccount: (item: 'system' | 'accounts' | 'signin') => void;
@@ -99,10 +103,10 @@ export function AppShell(props: {
                   </span>
                   {entry.ready && !allowed && <span className="need">Lv{ROLE_LEVEL[entry.needs]}</span>}
                   {/* A count on the entry, so a fault is visible from whatever screen is open. */}
-                  {entry.key === 'alarms' && open && props.alarms && (props.alarms.critical + props.alarms.warning) > 0 && (
+                  {entry.key === 'alarms' && open && props.alarms && props.alarms.unseen > 0 && (
                     <span className={`count${props.alarms.critical ? ' crit' : ''}`}
-                      title={`심각 ${props.alarms.critical} · 주의 ${props.alarms.warning}`}>
-                      {props.alarms.critical + props.alarms.warning}
+                      title={`미확인 ${props.alarms.unseen} · 심각 ${props.alarms.critical} · 주의 ${props.alarms.warning}`}>
+                      {props.alarms.unseen}
                     </span>
                   )}
                 </button>

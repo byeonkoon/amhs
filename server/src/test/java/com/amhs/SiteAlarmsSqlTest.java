@@ -28,6 +28,9 @@ class SiteAlarmsSqlTest {
  @Autowired JdbcTemplate jdbc; @Autowired TransactionTemplate tx;
  private static final long SITE=1, REVISION=1, OHT=1, NODE=101;
 
+ @AfterEach void forgetWhatWasAcknowledged(){
+  jdbc.update("DELETE FROM platform.alarm_acknowledgement WHERE site_id=?",SITE);
+ }
  @AfterEach void leaveItAsItWas(){
   tx.executeWithoutResult(s->fleet.report(SITE,REVISION,OHT,
    new VehicleReport(NODE,true,true,true,false,"SIMULATED",null,"REMOTE","IDLE")));
@@ -232,6 +235,63 @@ class SiteAlarmsSqlTest {
   assertThat(count.total()).isEqualTo(all.size());
   assertThat(count.critical()).isEqualTo((int)severities.stream().filter(s->s==Alarm.Severity.CRITICAL).count());
   assertThat(count.critical()+count.warning()).isEqualTo(count.total());
+ }
+
+ /**
+  * Acknowledging is not fixing, and must never look like it.
+  *
+  * <p>The line stays, because the condition does. What changes is only that the next reader can
+  * tell a new fault from one somebody is already standing in front of.
+  */
+ @Test void sayingYouHaveSeenItDoesNotTakeItOffTheList(){
+  reports("ERROR");
+  String key="VEHICLE_ERROR:"+OHT;
+  assertThat(about(key)).singleElement().satisfies(a->assertThat(a.acknowledged()).isFalse());
+
+  var seen=alarms.acknowledge(SITE,key,"현장 확인 중, 정비 요청함","mgr1");
+  assertThat(seen.acknowledged()).isTrue();
+  assertThat(seen.seen().reason()).isEqualTo("현장 확인 중, 정비 요청함");
+  assertThat(seen.seen().actorCode()).isEqualTo("mgr1");
+
+  assertThat(about(key)).as("still true, so still listed").singleElement()
+   .satisfies(a->assertThat(a.acknowledged()).isTrue());
+  var count=alarms.count(SITE);
+  assertThat(count.unseen()).as("it no longer counts as something nobody has looked at")
+   .isLessThan(count.total());
+ }
+
+ /** Saying how you know is required: that somebody clicked tells the next reader nothing. */
+ @Test void anAcknowledgementHasToSaySomething(){
+  reports("ERROR");
+  String key="VEHICLE_ERROR:"+OHT;
+  assertThatThrownBy(()->alarms.acknowledge(SITE,key,"  ","mgr1"))
+   .isInstanceOf(IllegalArgumentException.class).hasMessage("ACKNOWLEDGE_REASON_REQUIRED");
+  assertThatThrownBy(()->alarms.acknowledge(SITE,"VEHICLE_ERROR:999999","현장 확인","mgr1"))
+   .as("nothing to acknowledge, so nothing is left waiting for the next time")
+   .isInstanceOf(IllegalArgumentException.class).hasMessage("ALARM_NOT_LIVE");
+ }
+
+ /**
+  * An acknowledgement belongs to one occurrence.
+  *
+  * <p>Kept past the end of the condition it would silence the next one: the same fault returning
+  * would arrive already marked as seen, by somebody who saw a different one.
+  */
+ @Test void theSameFaultComingBackIsNotAlreadyAcknowledged(){
+  reports("ERROR");
+  String key="VEHICLE_ERROR:"+OHT;
+  alarms.acknowledge(SITE,key,"현장 확인 중","mgr1");
+  assertThat(about(key)).singleElement().satisfies(a->assertThat(a.acknowledged()).isTrue());
+
+  // Fixed. The line goes, and the acknowledgement has nothing left to be about.
+  reports("IDLE");
+  assertThat(about(key)).isEmpty();
+  assertThat(alarms.retireAcknowledgementsOfEndedConditions(SITE)).isPositive();
+
+  // It happens again. Nobody has seen this one.
+  reports("ERROR");
+  assertThat(about(key)).singleElement().satisfies(a->
+   assertThat(a.acknowledged()).as("a different occurrence, seen by nobody").isFalse());
  }
 
  /** Keys identify the thing, so the same condition on the same vehicle is one line and not two. */
