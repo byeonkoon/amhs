@@ -1,6 +1,6 @@
 import React from 'react';
 import {
-  ApiError, cfgApi, get, opsApi, send, ROLE_LABEL,
+  ApiError, cfgApi, get, getAs, opsApi, send, ROLE_LABEL,
   type Cfg, type ConnectionSettings, type EquipmentSettings, type MapData, type MapRevision, type OperationOptions,
   type PortSettings, type ProtocolSettings,
   type Session, type VdaProfileSettings, type VehicleSettings,
@@ -102,8 +102,9 @@ function useOne<T>(url: string) {
   return { item, error, reload: () => setTick(v => v + 1) };
 }
 
-function SaveBar({ issues, canWrite, busy, message, onSave }: {
+function SaveBar({ issues, canWrite, busy, message, onSave, saveLabel, onRemove }: {
   issues: string[]; canWrite: boolean; busy: boolean; message: string | null; onSave: () => void;
+  saveLabel?: string; onRemove?: () => void;
 }) {
   return (
     <div style={{ marginTop: 12, borderTop: '1px solid var(--ln)', paddingTop: 12 }}>
@@ -115,8 +116,14 @@ function SaveBar({ issues, canWrite, busy, message, onSave }: {
       {message && <p style={{ margin: '0 0 10px', fontSize: 12 }}>{message}</p>}
       <button type="button" style={{ ...btn, background: 'var(--acc)', color: '#fff', borderColor: 'var(--acc)' }}
         disabled={!canWrite || issues.length > 0 || busy} onClick={onSave}>
-        {busy ? '저장 중…' : '저장'}
+        {busy ? '처리 중…' : (saveLabel ?? '저장')}
       </button>
+      {/* Removing sits next to saving but is not the same act: it is the one that cannot be undone
+          by filling the form in again, so it asks first and the server names what still depends. */}
+      {onRemove && (
+        <button type="button" style={{ ...btn, marginLeft: 8, borderColor: 'var(--crit)', color: 'var(--crit)' }}
+          disabled={!canWrite || busy} onClick={onRemove}>삭제</button>
+      )}
       {!canWrite && <span className="hint" style={{ marginLeft: 10 }}>Lv4 관리자로 로그인하면 저장할 수 있습니다.</span>}
     </div>
   );
@@ -145,13 +152,49 @@ function RevisionTab({ revisions, canWrite, onChanged }: {
       setMessage({ tone: 'er', text: cause instanceof ApiError ? explainCode(cause.message) : '바꾸지 못했습니다.' });
     } finally { setBusy(false); }
   }
+  // A map laid out elsewhere comes in as a file. It becomes a draft of its own, so nothing the site
+  // is running on changes until somebody chooses it above.
+  async function upload(file: File) {
+    setBusy(true); setMessage(null);
+    try {
+      const document = JSON.parse(await file.text());
+      const made = await send<MapRevision>(cfgApi.importMap(), 'POST', document, `지도 파일 올리기 (${file.name})`);
+      setMessage({
+        tone: 'ok',
+        text: `지도 버전 ${made.revision}을 만들었습니다 — 노드 ${made.nodes}개, 구간 ${made.segments}개, 포트 ${made.ports}개, 차량 ${made.vehicles}대. 아직 사용하지는 않습니다.`,
+      });
+      onChanged();
+    } catch (cause) {
+      setMessage({
+        tone: 'er',
+        text: cause instanceof ApiError ? explainCode(cause.message)
+          : cause instanceof SyntaxError ? 'JSON 형식이 아닙니다. 파일 내용을 확인해 주세요.'
+            : '올리지 못했습니다.',
+      });
+    } finally { setBusy(false); }
+  }
+  async function download(r: MapRevision) {
+    setBusy(true); setMessage(null);
+    try {
+      // The export is behind the same login as the rest of configuration, so it goes out with the token.
+      const document = await getAs<unknown>(cfgApi.exportMap(r.id));
+      const url = URL.createObjectURL(new Blob([JSON.stringify(document, null, 2)], { type: 'application/json' }));
+      const link = window.document.createElement('a');
+      link.href = url; link.download = `amhs-map-r${r.revision}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+      setMessage({ tone: 'ok', text: `지도 버전 ${r.revision}을 파일로 내려받았습니다. 고쳐서 다시 올리면 새 버전이 됩니다.` });
+    } catch (cause) {
+      setMessage({ tone: 'er', text: cause instanceof ApiError ? explainCode(cause.message) : '내보내지 못했습니다.' });
+    } finally { setBusy(false); }
+  }
   if (revisions.length === 0) return <Empty title="지도 버전을 읽지 못했습니다" />;
   return (
     <div>
       {message && <p style={{ margin: '0 0 9px', fontSize: 12 }}>
         <Chip tone={message.tone}>{message.tone === 'er' ? '거부' : '완료'}</Chip> {message.text}
       </p>}
-      <Grid cols="90px 96px 1fr 1fr 1fr 1fr 120px"
+      <Grid cols="90px 96px 1fr 1fr 1fr 1fr 190px"
         head={['버전', '상태', '노드', '구간', '포트', '차량', '']}>
         {revisions.map(r => (
           <Row key={r.id}>
@@ -163,7 +206,7 @@ function RevisionTab({ revisions, canWrite, onChanged }: {
             <span className="mono">{r.segments}</span>
             <span className="mono">{r.ports}</span>
             <span className="mono">{r.vehicles}</span>
-            <span>
+            <span style={{ display: 'flex', gap: 6 }}>
               {r.status === 'ACTIVE'
                 ? <span className="hint">현재 사용</span>
                 : <button type="button" disabled={!canWrite || busy} onClick={() => activate(r)}
@@ -172,10 +215,34 @@ function RevisionTab({ revisions, canWrite, onChanged }: {
                     color: canWrite ? '#fff' : 'var(--mut)', borderRadius: 5, padding: '3px 12px', fontSize: 12,
                     cursor: canWrite && !busy ? 'pointer' : 'default',
                   }}>사용</button>}
+              <button type="button" disabled={busy} onClick={() => download(r)}
+                title="이 버전을 JSON 파일로 받습니다. 고쳐서 다시 올리면 새 버전이 됩니다."
+                style={{
+                  border: '1px solid var(--ln2)', background: 'var(--srf)', color: 'var(--ink2)',
+                  borderRadius: 5, padding: '3px 12px', fontSize: 12, cursor: busy ? 'default' : 'pointer',
+                }}>내보내기</button>
             </span>
           </Row>
         ))}
       </Grid>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 10, flexWrap: 'wrap' }}>
+        <label htmlFor="map-file" style={{
+          border: `1px solid ${canWrite ? 'var(--acc)' : 'var(--ln2)'}`,
+          background: canWrite ? 'var(--acc)' : 'var(--srf)', color: canWrite ? '#fff' : 'var(--mut)',
+          borderRadius: 5, padding: '5px 14px', fontSize: 12, cursor: canWrite && !busy ? 'pointer' : 'default',
+        }}>{busy ? '처리 중…' : 'JSON 지도 파일 올리기'}</label>
+        <input id="map-file" type="file" accept="application/json,.json,.txt" disabled={!canWrite || busy}
+          style={{ display: 'none' }}
+          onChange={e => {
+            const file = e.target.files?.[0];
+            e.target.value = '';   // the same file picked twice is two uploads, not one ignored
+            if (file) void upload(file);
+          }} />
+        <span className="hint">
+          nodes · segments · ports · vehicles · zones를 담은 한 파일입니다. 서로를 코드로 가리키며 id는 쓰지
+          않습니다 — 파일 안의 id는 다른 DB에서 다른 것을 뜻하게 됩니다.
+        </span>
+      </div>
       <p className="hint" style={{ marginTop: 9 }}>
         지도 버전을 바꾸면 그 뒤의 모든 작업·경로·점유가 새 지도 위에서 결정됩니다. 그래서 진행 중인 작업,
         끝나지 않은 이동, 아직 반납되지 않은 구간 점유가 하나라도 있으면 거절합니다 — 그 기록들이 가리키는
@@ -199,21 +266,51 @@ function VehicleTab({ map, canWrite }: { map: MapData; canWrite: boolean }) {
   React.useEffect(() => { setDraft(null); setMessage(null); }, [items]);
   if (error) return <Failed error={error} onRetry={reload} />;
   if (!items) return <Loading what="차량 설정" />;
-  if (items.length === 0) return <Empty title="등록된 차량 설정이 없습니다" />;
   const s = draft?.settings;
   const set = (patch: Partial<VehicleSettings>) => setDraft(d => d && ({ ...d, settings: { ...d.settings, ...patch } }));
+  // A draft with no id yet is one being added. The same form fills it, because a new vehicle needs
+  // exactly the same answers as a changed one -- offering fewer is how a half-set-up vehicle happens.
+  const adding = draft?.id === 0;
+  const newVehicle = (): Cfg<VehicleSettings> => ({
+    id: 0, version: 0,
+    settings: {
+      revisionId: map.revisionId, code: '', name: '', vType: 'OHT',
+      widthMm: 1000, lengthMm: 1000, heightMm: 1000,
+      initialNodeId: map.nodes[0]?.id ?? 0, homeNodeId: null, chargeNodeId: null,
+      enabled: false, assignmentEnabled: false,
+      controlAuthority: 'CONTROLLER_MANAGED', bcrPolicy: 'DISABLED', chargingPolicy: 'DISABLED',
+      vdaProfileId: null, speedMmS: 2000,
+    },
+  });
 
   const save = async () => {
     if (!draft) return;
     setBusy(true); setMessage(null);
     try {
-      await send(`${cfgApi.vehicles()}/${draft.id}?expectedVersion=${draft.version}`, 'PUT', draft.settings, '설정 화면에서 수정');
-      setMessage('저장했습니다.'); reload();
+      if (adding) {
+        await send(cfgApi.vehicles(), 'POST', draft.settings, `차량 ${draft.settings.code} 추가`);
+        setMessage('추가했습니다.');
+      } else {
+        await send(`${cfgApi.vehicles()}/${draft.id}?expectedVersion=${draft.version}`, 'PUT', draft.settings, '설정 화면에서 수정');
+        setMessage('저장했습니다.');
+      }
+      reload();
     } catch (e) {
       const code = e instanceof ApiError ? e.message : String(e);
       setMessage(e instanceof ApiError && e.status === 409
         ? `${explainCode('VERSION_CONFLICT')} (${explainCode(code)})`
         : explainCode(code));
+    } finally { setBusy(false); }
+  };
+  const remove = async () => {
+    if (!draft || adding) return;
+    if (!window.confirm(`차량 ${draft.settings.code}을 이 지도에서 지웁니다. 마지막으로 보고한 상태도 함께 지워집니다. 진행할까요?`)) return;
+    setBusy(true); setMessage(null);
+    try {
+      await send(`${cfgApi.vehicles()}/${draft.id}`, 'DELETE', undefined, `차량 ${draft.settings.code} 삭제`);
+      setMessage('지웠습니다.'); reload();
+    } catch (e) {
+      setMessage(e instanceof ApiError ? explainCode(e.message) : '지우지 못했습니다.');
     } finally { setBusy(false); }
   };
 
@@ -228,6 +325,13 @@ function VehicleTab({ map, canWrite }: { map: MapData; canWrite: boolean }) {
               {v.settings.vdaProfileId ? ` · ${profiles?.find(p => p.id === v.settings.vdaProfileId)?.settings.code ?? 'VDA'}` : ''} · v{v.version}</span>
           </button>
         ))}
+        {canWrite && (
+          <button type="button" className={`vehicle-btn${adding ? ' sel' : ''}`}
+            onClick={() => { setDraft(newVehicle()); setMessage(null); }}>
+            <b>+ 새 차량</b>
+            <span>이 지도에 차량을 추가합니다</span>
+          </button>
+        )}
       </div>
       <div>
         {!s || !draft ? <p className="hint" style={{ margin: 0 }}>왼쪽에서 차량을 선택하면 파라미터를 편집할 수 있습니다.</p> : (
@@ -332,7 +436,9 @@ function VehicleTab({ map, canWrite }: { map: MapData; canWrite: boolean }) {
                 <label><input type="checkbox" checked={s.assignmentEnabled} onChange={e => set({ assignmentEnabled: e.target.checked })} /> 배차 허용</label>
               </div>
             </div>
-            <SaveBar issues={[...vehicleIssues(s), ...vehicleVdaIssues(s, commType)]} canWrite={canWrite} busy={busy} message={message} onSave={save} />
+            <SaveBar issues={[...vehicleIssues(s), ...vehicleVdaIssues(s, commType)]} canWrite={canWrite} busy={busy}
+              message={message} onSave={save} saveLabel={adding ? '추가' : '저장'}
+              onRemove={adding ? undefined : remove} />
           </>
         )}
       </div>
@@ -349,18 +455,42 @@ function PortTab({ map, canWrite }: { map: MapData; canWrite: boolean }) {
   React.useEffect(() => { setDraft(null); setMessage(null); }, [items]);
   if (error) return <Failed error={error} onRetry={reload} />;
   if (!items) return <Loading what="포트 설정" />;
-  if (items.length === 0) return <Empty title="등록된 포트 설정이 없습니다" />;
   const s = draft?.settings;
   const set = (patch: Partial<PortSettings>) => setDraft(d => d && ({ ...d, settings: { ...d.settings, ...patch } }));
+  const adding = draft?.id === 0;
+  const newPort = (): Cfg<PortSettings> => ({
+    id: 0, version: 0,
+    settings: {
+      revisionId: map.revisionId, code: '', portType: 'LOAD', accessVehicleType: 'OHT',
+      linkedNodeId: map.nodes[0]?.id ?? 0, equipmentUnitId: null,
+    },
+  });
   const save = async () => {
     if (!draft) return;
     setBusy(true); setMessage(null);
     try {
-      await send(`${cfgApi.ports()}/${draft.id}?expectedVersion=${draft.version}`, 'PUT', draft.settings, '설정 화면에서 수정');
-      setMessage('저장했습니다.'); reload();
+      if (adding) {
+        await send(cfgApi.ports(), 'POST', draft.settings, `포트 ${draft.settings.code} 추가`);
+        setMessage('추가했습니다.');
+      } else {
+        await send(`${cfgApi.ports()}/${draft.id}?expectedVersion=${draft.version}`, 'PUT', draft.settings, '설정 화면에서 수정');
+        setMessage('저장했습니다.');
+      }
+      reload();
     } catch (e) {
       const code = e instanceof ApiError ? e.message : String(e);
       setMessage(e instanceof ApiError && e.status === 409 ? explainCode('VERSION_CONFLICT') : explainCode(code));
+    } finally { setBusy(false); }
+  };
+  const remove = async () => {
+    if (!draft || adding) return;
+    if (!window.confirm(`포트 ${draft.settings.code}을 지웁니다. 진행 중인 작업이 있으면 거절됩니다.`)) return;
+    setBusy(true); setMessage(null);
+    try {
+      await send(`${cfgApi.ports()}/${draft.id}`, 'DELETE', undefined, `포트 ${draft.settings.code} 삭제`);
+      setMessage('지웠습니다.'); reload();
+    } catch (e) {
+      setMessage(e instanceof ApiError ? explainCode(e.message) : '지우지 못했습니다.');
     } finally { setBusy(false); }
   };
   return (
@@ -373,6 +503,13 @@ function PortTab({ map, canWrite }: { map: MapData; canWrite: boolean }) {
             <span>{p.settings.portType} · {p.settings.accessVehicleType} · v{p.version}</span>
           </button>
         ))}
+        {canWrite && (
+          <button type="button" className={`vehicle-btn${adding ? ' sel' : ''}`}
+            onClick={() => { setDraft(newPort()); setMessage(null); }}>
+            <b>+ 새 포트</b>
+            <span>이 지도에 인수도 포트를 추가합니다</span>
+          </button>
+        )}
       </div>
       <div>
         {!s || !draft ? <p className="hint" style={{ margin: 0 }}>왼쪽에서 포트를 선택하세요.</p> : (
@@ -406,7 +543,9 @@ function PortTab({ map, canWrite }: { map: MapData; canWrite: boolean }) {
                 <span className="hint">지도에는 포트 코드 대신 이 설비 이름이 표시됩니다.</span>
               </div>
             </div>
-            <SaveBar issues={s.code.trim() ? [] : ['포트 코드를 입력해 주세요.']} canWrite={canWrite} busy={busy} message={message} onSave={save} />
+            <SaveBar issues={s.code.trim() ? [] : ['포트 코드를 입력해 주세요.']} canWrite={canWrite} busy={busy}
+              message={message} onSave={save} saveLabel={adding ? '추가' : '저장'}
+              onRemove={adding ? undefined : remove} />
           </>
         )}
       </div>

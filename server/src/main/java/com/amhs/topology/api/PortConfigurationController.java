@@ -13,6 +13,8 @@ class PortConfigurationController {
  @GetMapping("/{id}") ConfigurationRecord<PortSettings> get(@PathVariable long siteId,@PathVariable long id){return service.get(siteId,id);}
  @PostMapping @ResponseStatus(HttpStatus.CREATED)
  ConfigurationRecord<PortSettings> create(@PathVariable long siteId,@RequestBody PortSettings settings){return service.create(siteId,settings);}
+ @DeleteMapping("/{id}")
+ void delete(@PathVariable long siteId,@PathVariable long id){service.delete(siteId,id);}
  @PutMapping("/{id}")
  ConfigurationRecord<PortSettings> update(@PathVariable long siteId,@PathVariable long id,@RequestParam long expectedVersion,@RequestBody PortSettings settings){return service.update(siteId,id,expectedVersion,settings);}
 }

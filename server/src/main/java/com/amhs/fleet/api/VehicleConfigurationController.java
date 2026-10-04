@@ -13,6 +13,8 @@ class VehicleConfigurationController {
  @GetMapping("/{id}") ConfigurationRecord<VehicleSettings> get(@PathVariable long siteId,@PathVariable long id){return service.get(siteId,id);}
  @PostMapping @ResponseStatus(HttpStatus.CREATED)
  ConfigurationRecord<VehicleSettings> create(@PathVariable long siteId,@RequestBody VehicleSettings settings){return service.create(siteId,settings);}
+ @DeleteMapping("/{id}")
+ void delete(@PathVariable long siteId,@PathVariable long id){service.delete(siteId,id);}
  @PutMapping("/{id}")
  ConfigurationRecord<VehicleSettings> update(@PathVariable long siteId,@PathVariable long id,@RequestParam long expectedVersion,@RequestBody VehicleSettings settings){return service.update(siteId,id,expectedVersion,settings);}
 }

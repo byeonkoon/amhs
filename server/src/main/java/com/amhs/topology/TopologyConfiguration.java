@@ -110,6 +110,100 @@ public class TopologyConfiguration {
   return node(site,revision,id);
  }
 
+ /**
+  * Adds a node to a revision. A node on its own is unreachable until a segment reaches it, which
+  * is the honest state of a layout being drawn and is left to say so rather than be guessed at.
+  */
+ @Transactional
+ public ConfigurationRecord<NodeSettings> createNode(long site,long revision,NodeSettings s){
+  guard.acquire(site);
+  s.validate();
+  requireRevision(site,revision);
+  int clash=jdbc.queryForObject("SELECT count(*) FROM topology.node WHERE site_id=? AND revision_id=? AND code=?",
+   Integer.class,site,revision,s.code());
+  if(clash>0) throw new ConfigurationException(409,"NODE_CODE_IN_USE");
+  long id=guard.nextId();
+  jdbc.update("INSERT INTO topology.node(id,site_id,revision_id,code,x_mm,y_mm,enabled,stop_node,merge_point,"
+   +"charge_point,wait_for) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+   id,site,revision,s.code(),s.xMm(),s.yMm(),s.enabled(),s.stopNode(),s.mergePoint(),s.chargePoint(),s.waitFor());
+  return node(site,revision,id);
+ }
+
+ /**
+  * Removes a node, and only one nothing points at.
+  *
+  * <p>A node is named by segments, ports, vehicle settings and zones. Letting it go while any of
+  * them still name it would turn a layout into one that cannot be read -- so each is reported by
+  * name instead, and the person removes the thing that depends on it first. The site also has to
+  * be quiet: open work names nodes too, and that naming is not in the configuration at all.
+  */
+ @Transactional
+ public void deleteNode(long site,long revision,long id){
+  guard.acquire(site);
+  node(site,revision,id);
+  requireNothingOpen(site);
+  if(heldNodes(site).contains(id)) throw new ConfigurationException(409,"NODE_IN_USE");
+  refuseIfAny("NODE_HAS_SEGMENTS","SELECT count(*) FROM topology.edge WHERE site_id=? AND revision_id=?"
+   +" AND (from_node_id=? OR to_node_id=?)",site,revision,id,id);
+  refuseIfAny("NODE_HAS_PORT","SELECT count(*) FROM topology.port WHERE site_id=? AND revision_id=?"
+   +" AND linked_node_id=?",site,revision,id);
+  refuseIfAny("NODE_IN_VEHICLE_SETTINGS","SELECT count(*) FROM fleet.vehicle_profile WHERE site_id=? AND revision_id=?"
+   +" AND (initial_node_id=? OR home_node_id=? OR charge_node_id=?)",site,revision,id,id,id);
+  refuseIfAny("NODE_IN_ZONE","SELECT count(*) FROM topology.zone_node WHERE site_id=? AND revision_id=? AND node_id=?",
+   site,revision,id);
+  jdbc.update("DELETE FROM topology.node WHERE site_id=? AND revision_id=? AND id=?",site,revision,id);
+ }
+
+ /** Adds a one-way segment. Both ends must be in this revision, and the pair must be new. */
+ @Transactional
+ public ConfigurationRecord<EdgeSettings> createEdge(long site,long revision,EdgeSettings s){
+  guard.acquire(site);
+  s.validate();
+  requireRevision(site,revision);
+  ConfigurationException.require(s.fromNodeId()!=s.toNodeId(),"SEGMENT_ENDS_AT_ITS_START");
+  node(site,revision,s.fromNodeId());
+  node(site,revision,s.toNodeId());
+  int clash=jdbc.queryForObject("SELECT count(*) FROM topology.edge WHERE site_id=? AND revision_id=?"
+   +" AND from_node_id=? AND to_node_id=?",Integer.class,site,revision,s.fromNodeId(),s.toNodeId());
+  if(clash>0) throw new ConfigurationException(409,"SEGMENT_ALREADY_EXISTS");
+  long id=guard.nextId();
+  jdbc.update("INSERT INTO topology.edge(id,site_id,revision_id,from_node_id,to_node_id,cost,enabled,curve_mm)"
+   +" VALUES(?,?,?,?,?,?,?,?)",id,site,revision,s.fromNodeId(),s.toNodeId(),s.cost(),s.enabled(),s.curveMm());
+  return edge(site,revision,id);
+ }
+
+ /**
+  * Removes a segment. Nothing in the configuration names a segment, so what has to be true is that
+  * nobody is driving on one: the site quiet, and neither end held.
+  */
+ @Transactional
+ public void deleteEdge(long site,long revision,long id){
+  guard.acquire(site);
+  var current=edge(site,revision,id).settings();
+  requireNothingOpen(site);
+  var held=heldNodes(site);
+  if(held.contains(current.fromNodeId())||held.contains(current.toNodeId()))
+   throw new ConfigurationException(409,"SEGMENT_IN_USE");
+  jdbc.update("DELETE FROM topology.edge WHERE site_id=? AND revision_id=? AND id=?",site,revision,id);
+ }
+
+ private void requireRevision(long site,long revision){
+  Integer count=jdbc.queryForObject("SELECT count(*) FROM topology.map_revision WHERE site_id=? AND id=?",
+   Integer.class,site,revision);
+  if(count==null||count==0) throw new ConfigurationException(404,"REVISION_NOT_FOUND");
+ }
+ /** Nothing may be removed from under work that is still going on. */
+ private void requireNothingOpen(long site){
+  for(var work:openWork){
+   String why=work.whyBusy(site);
+   if(why!=null) throw new ConfigurationException(409,why);
+  }
+ }
+ private void refuseIfAny(String code,String sql,Object... args){
+  Integer count=jdbc.queryForObject(sql,Integer.class,args);
+  if(count!=null&&count>0) throw new ConfigurationException(409,code);
+ }
+
  @Transactional
  public ConfigurationRecord<EdgeSettings> updateEdge(long site,long revision,long id,long expectedVersion,EdgeSettings s){
   guard.acquire(site); ConfigurationException.require(expectedVersion>=0,"INVALID_VERSION");

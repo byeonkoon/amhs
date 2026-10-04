@@ -56,6 +56,20 @@ function TrackTab({ session, revisionId, kind }: { session: Session; revisionId:
       setNotice({ tone: 'er', text: cause instanceof ApiError ? explain(cause.message) : '변경하지 못했습니다.' });
     } finally { setBusy(false); }
   }
+  async function act(url: string, method: 'POST' | 'DELETE', body: unknown, what: string, done: string) {
+    setBusy(true); setNotice(null);
+    try {
+      await send(url, method, body, what);
+      setReload(v => v + 1);
+      setNotice({ tone: 'ok', text: done });
+    } catch (cause) {
+      setNotice({ tone: 'er', text: cause instanceof ApiError ? explain(cause.message) : '처리하지 못했습니다.' });
+    } finally { setBusy(false); }
+  }
+  const removeStyle: React.CSSProperties = {
+    border: '1px solid var(--crit)', background: 'var(--srf)', color: 'var(--crit)',
+    borderRadius: 5, padding: '2px 10px', fontSize: 12, cursor: 'pointer',
+  };
 
   const banner = (
     <>
@@ -72,8 +86,8 @@ function TrackTab({ session, revisionId, kind }: { session: Session; revisionId:
     <div>
       {banner}
       {nodes.length === 0 ? <Empty title="이 지도 revision에 노드가 없습니다" /> : (
-        <Grid cols="80px 1fr 90px 90px 96px 96px 96px 96px 104px 104px"
-          head={['코드', '', 'X (mm)', 'Y (mm)', '사용', '정지 노드', '합류 지점', '충전 지점', '대기(AGV)', '대기(OHT)']}>
+        <Grid cols="80px 1fr 90px 90px 96px 96px 96px 96px 104px 104px 74px"
+          head={['코드', '', 'X (mm)', 'Y (mm)', '사용', '정지 노드', '합류 지점', '충전 지점', '대기(AGV)', '대기(OHT)', '']}>
           {nodes.map(n => (
             <Row key={n.id}>
               <span className="mono">{n.settings.code}</span>
@@ -124,10 +138,22 @@ function TrackTab({ session, revisionId, kind }: { session: Session; revisionId:
                   </button>
                 </span>
               ))}
+              <span>
+                {/* Removing is not undone by changing it back, so the server names whatever still
+                    points at the node and refuses; this only asks. */}
+                <button type="button" disabled={!mayEdit || busy} style={removeStyle}
+                  onClick={() => {
+                    if (!window.confirm(`노드 ${n.settings.code}을 지웁니다. 이 노드를 쓰는 구간·포트·차량·Zone이 있으면 거절됩니다.`)) return;
+                    void act(`${opsApi.nodes(revisionId)}/${n.id}`, 'DELETE', undefined,
+                      `노드 ${n.settings.code} 삭제`, '지웠습니다.');
+                  }}>삭제</button>
+              </span>
             </Row>
           ))}
         </Grid>
       )}
+      {mayEdit && <NewNode busy={busy} onCreate={draft =>
+        act(opsApi.nodes(revisionId), 'POST', draft, `노드 ${draft.code} 추가`, '추가했습니다.')} />}
       <p className="hint" style={{ marginTop: 9 }}>
         차량이 점유 중인 노드는 사용 금지로 바꿀 수 없습니다. 그 자리에 있어도 된다고 허가받은 차량이 있는데
         닫으면, 다른 차량을 그리로 보내게 됩니다. 정지 노드에서는 이동 허가가 끝나고 연장 없이 차량이 섭니다.
@@ -144,7 +170,7 @@ function TrackTab({ session, revisionId, kind }: { session: Session; revisionId:
     <div>
       {banner}
       {segments.length === 0 ? <Empty title="이 지도 revision에 구간이 없습니다" /> : (
-        <Grid cols="54px 1fr 108px 116px 96px" head={['', '구간', '비용(초)', '곡률(mm)', '사용']}>
+        <Grid cols="54px 1fr 108px 116px 96px 74px" head={['', '구간', '비용(초)', '곡률(mm)', '사용', '']}>
           {segments.map(e => (
             <Row key={e.id}>
               <span className="muted mono">#{e.id}</span>
@@ -166,16 +192,103 @@ function TrackTab({ session, revisionId, kind }: { session: Session; revisionId:
                   {e.settings.enabled ? '사용' : '통행 금지'}
                 </button>
               </span>
+              <span>
+                <button type="button" disabled={!mayEdit || busy} style={removeStyle}
+                  onClick={() => {
+                    if (!window.confirm(`구간 ${nodeCode(e.settings.fromNodeId)} → ${nodeCode(e.settings.toNodeId)}을 지웁니다.`)) return;
+                    void act(`${opsApi.segments(revisionId)}/${e.id}`, 'DELETE', undefined,
+                      '구간 삭제', '지웠습니다.');
+                  }}>삭제</button>
+              </span>
             </Row>
           ))}
         </Grid>
       )}
+      {mayEdit && <NewSegment nodes={nodes} busy={busy} onCreate={draft =>
+        act(opsApi.segments(revisionId), 'POST', draft, '구간 추가', '추가했습니다.')} />}
       <p className="hint" style={{ marginTop: 9 }}>
         구간의 양 끝은 그 구간이 무엇인지를 정하므로 여기서 바꾸지 않습니다. 끝을 바꾸는 것은 고치는 것이 아니라
         다른 구간을 만드는 것입니다. 양 끝 중 하나를 차량이 점유 중이면 통행 금지로 바꿀 수 없습니다.
+        구간은 한 방향입니다 — 양방향으로 다니게 하려면 반대 방향도 따로 만듭니다. 곡률은 Bay 진입처럼
+        차량이 직각으로 돌 수 없는 자리를 표현합니다.
       </p>
     </div>
   );
+}
+
+/**
+ * A new node: a code and where it is.
+ *
+ * <p>Nothing else is asked for. A node is a place first; whether it is a stop, a junction, a
+ * charger or a waiting place is decided by looking at the layout, which is easier once the node is
+ * on it. The flags are one click away in the row.
+ */
+function NewNode({ busy, onCreate }: { busy: boolean; onCreate: (draft: NodeSettings) => void }) {
+  const [code, setCode] = React.useState('');
+  const [x, setX] = React.useState('0');
+  const [y, setY] = React.useState('0');
+  const ready = code.trim().length > 0 && Number.isFinite(Number(x)) && Number.isFinite(Number(y));
+  return (
+    <div style={{ display: 'flex', gap: 7, alignItems: 'center', marginTop: 10, flexWrap: 'wrap' }}>
+      <span className="hint">노드 추가</span>
+      <input value={code} onChange={e => setCode(e.target.value)} placeholder="코드" style={fieldStyle(96)} />
+      <input type="number" value={x} onChange={e => setX(e.target.value)} placeholder="X (mm)" style={fieldStyle(96)} />
+      <input type="number" value={y} onChange={e => setY(e.target.value)} placeholder="Y (mm)" style={fieldStyle(96)} />
+      <button type="button" disabled={!ready || busy} style={addStyle(ready && !busy)}
+        onClick={() => {
+          onCreate({ code: code.trim(), xMm: Number(x), yMm: Number(y), enabled: true, stopNode: false, mergePoint: false });
+          setCode('');
+        }}>추가</button>
+      <span className="hint">새 노드는 어떤 구간도 닿지 않은 상태로 생깁니다 — 선로를 그리는 중이라는 뜻이고, 구간을 붙이면 이어집니다.</span>
+    </div>
+  );
+}
+
+/** A new one-way segment between two nodes of this map. */
+function NewSegment({ nodes, busy, onCreate }: {
+  nodes: Cfg<NodeSettings>[]; busy: boolean; onCreate: (draft: EdgeSettings) => void;
+}) {
+  const [from, setFrom] = React.useState('');
+  const [to, setTo] = React.useState('');
+  const [cost, setCost] = React.useState('3000');
+  const [curve, setCurve] = React.useState('0');
+  const ready = from !== '' && to !== '' && from !== to && Number(cost) >= 0;
+  const options = [...nodes].sort((a, b) => a.settings.code.localeCompare(b.settings.code));
+  return (
+    <div style={{ display: 'flex', gap: 7, alignItems: 'center', marginTop: 10, flexWrap: 'wrap' }}>
+      <span className="hint">구간 추가</span>
+      <select value={from} onChange={e => setFrom(e.target.value)} style={fieldStyle(130)}>
+        <option value="">시작 노드</option>
+        {options.map(n => <option key={n.id} value={n.id}>{n.settings.code}</option>)}
+      </select>
+      <span>→</span>
+      <select value={to} onChange={e => setTo(e.target.value)} style={fieldStyle(130)}>
+        <option value="">끝 노드</option>
+        {options.map(n => <option key={n.id} value={n.id}>{n.settings.code}</option>)}
+      </select>
+      <input type="number" value={cost} onChange={e => setCost(e.target.value)} title="비용" style={fieldStyle(84)} />
+      <input type="number" value={curve} onChange={e => setCurve(e.target.value)} title="곡률(mm)" style={fieldStyle(84)} />
+      <button type="button" disabled={!ready || busy} style={addStyle(ready && !busy)}
+        onClick={() => {
+          onCreate({ fromNodeId: Number(from), toNodeId: Number(to), cost: Number(cost), enabled: true, curveMm: Number(curve) });
+          setFrom(''); setTo('');
+        }}>추가</button>
+    </div>
+  );
+}
+
+function fieldStyle(width: number): React.CSSProperties {
+  return {
+    border: '1px solid var(--ln2)', borderRadius: 5, padding: '3px 6px', fontSize: 12, width,
+    background: 'var(--srf)', color: 'var(--ink)',
+  };
+}
+function addStyle(ready: boolean): React.CSSProperties {
+  return {
+    border: '1px solid var(--acc)', background: ready ? 'var(--acc)' : 'var(--srf)',
+    color: ready ? '#fff' : 'var(--mut)', borderRadius: 5, padding: '3px 14px', fontSize: 12,
+    cursor: ready ? 'pointer' : 'default',
+  };
 }
 
 /** Cost is typed and committed, not changed per keystroke: each commit is a versioned write. */

@@ -8,7 +8,11 @@ import org.springframework.transaction.annotation.Transactional;
 public class VehicleConfiguration {
  private final JdbcTemplate jdbc; private final ConfigurationLock guard;
  private final com.amhs.topology.TopologyValidation topology; private final OperationOptionConfiguration options;
- public VehicleConfiguration(JdbcTemplate jdbc,ConfigurationLock guard,com.amhs.topology.TopologyValidation topology,OperationOptionConfiguration options){this.jdbc=jdbc;this.guard=guard;this.topology=topology;this.options=options;}
+ private final List<SiteWork> openWork;
+ public VehicleConfiguration(JdbcTemplate jdbc,ConfigurationLock guard,com.amhs.topology.TopologyValidation topology,
+                             OperationOptionConfiguration options,List<SiteWork> openWork){
+  this.jdbc=jdbc;this.guard=guard;this.topology=topology;this.options=options;this.openWork=List.copyOf(openWork);
+ }
  private final RowMapper<ConfigurationRecord<VehicleSettings>> mapper=(r,n)->new ConfigurationRecord<>(r.getLong("id"),r.getLong("version"),new VehicleSettings(r.getLong("revision_id"),r.getString("code"),r.getString("name"),VehicleType.valueOf(r.getString("v_type")),r.getInt("width_mm"),r.getInt("length_mm"),r.getInt("height_mm"),r.getLong("initial_node_id"),r.getObject("home_node_id",Long.class),r.getObject("charge_node_id",Long.class),r.getBoolean("enabled"),r.getBoolean("assignment_enabled"),r.getString("control_authority"),r.getString("bcr_policy"),r.getString("charging_policy"),r.getObject("vda_profile_id",Long.class),r.getInt("speed_mm_s")));
  public List<ConfigurationRecord<VehicleSettings>> list(long site){guard.requireSite(site);return jdbc.query("SELECT * FROM fleet.vehicle_profile WHERE site_id=? ORDER BY id",mapper,site);}
  public ConfigurationRecord<VehicleSettings> get(long site,long id){
@@ -38,5 +42,27 @@ public class VehicleConfiguration {
   validate(site,id,s);
   guard.changed(jdbc.update("UPDATE fleet.vehicle_profile SET revision_id=?,code=?,name=?,v_type=?,width_mm=?,length_mm=?,height_mm=?,initial_node_id=?,home_node_id=?,charge_node_id=?,enabled=?,assignment_enabled=?,control_authority=?,bcr_policy=?,charging_policy=?,vda_profile_id=?,speed_mm_s=?,version=version+1 WHERE site_id=? AND id=? AND version=?",s.revisionId(),s.code(),s.name(),s.vType().name(),s.widthMm(),s.lengthMm(),s.heightMm(),s.initialNodeId(),s.homeNodeId(),s.chargeNodeId(),s.enabled(),s.assignmentEnabled(),s.controlAuthority(),s.bcrPolicy(),s.chargingPolicy(),s.vdaProfileId(),s.speedMmS(),site,id,expectedVersion));
   return get(site,id);
+ }
+
+ /**
+  * Removes a vehicle from a map, with whatever it last reported.
+  *
+  * <p>Taking a vehicle out is not the same as switching it off: "not in use" leaves it on the
+  * screen, where somebody can see that it is meant to be there and is not working. Removing it
+  * says it is not part of this layout at all. The site has to be quiet first -- a vehicle holding
+  * an order or a road is one the records still name -- and its last reported state goes with it,
+  * because a position for a vehicle that no longer exists is a position nothing can act on.
+  */
+ @Transactional
+ public void delete(long site,long id){
+  guard.acquire(site);
+  var vehicle=get(site,id);
+  for(var work:openWork){
+   String why=work.whyBusy(site);
+   if(why!=null) throw new ConfigurationException(409,why);
+  }
+  jdbc.update("DELETE FROM fleet.vehicle_state WHERE site_id=? AND vehicle_id=?",site,id);
+  jdbc.update("DELETE FROM fleet.vehicle_profile WHERE site_id=? AND id=? AND version=?",
+   site,id,vehicle.version());
  }
 }

@@ -7,8 +7,10 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class PortConfiguration {
  private final JdbcTemplate jdbc; private final ConfigurationLock guard;
- private final TopologyValidation topology;
- public PortConfiguration(JdbcTemplate jdbc,ConfigurationLock guard,TopologyValidation topology){this.jdbc=jdbc;this.guard=guard;this.topology=topology;}
+ private final TopologyValidation topology; private final List<SiteWork> openWork;
+ public PortConfiguration(JdbcTemplate jdbc,ConfigurationLock guard,TopologyValidation topology,List<SiteWork> openWork){
+  this.jdbc=jdbc;this.guard=guard;this.topology=topology;this.openWork=List.copyOf(openWork);
+ }
  private final RowMapper<ConfigurationRecord<PortSettings>> mapper=(r,n)->new ConfigurationRecord<>(r.getLong("id"),r.getLong("version"),new PortSettings(r.getLong("revision_id"),r.getString("code"),r.getString("port_type"),VehicleType.valueOf(r.getString("access_vehicle_type")),r.getLong("linked_node_id"),r.getObject("equipment_unit_id",Long.class)));
  public List<ConfigurationRecord<PortSettings>> list(long site){guard.requireSite(site);return jdbc.query("SELECT * FROM topology.port WHERE site_id=? ORDER BY id",mapper,site);}
  public ConfigurationRecord<PortSettings> get(long site,long id){
@@ -33,5 +35,21 @@ public class PortConfiguration {
   validate(site,id,s);
   guard.changed(jdbc.update("UPDATE topology.port SET revision_id=?,code=?,port_type=?,access_vehicle_type=?,linked_node_id=?,equipment_unit_id=?,version=version+1 WHERE site_id=? AND id=? AND version=?",s.revisionId(),s.code(),s.portType(),s.accessVehicleType().name(),s.linkedNodeId(),s.equipmentUnitId(),site,id,expectedVersion));
   return get(site,id);
+ }
+
+ /**
+  * Removes a port. A port is where work is handed over, so an order names one at each end: a port
+  * taken away under an unfinished order leaves work pointing at a place that does not exist. The
+  * site has to be quiet, and no order may ever have named it unless that order is finished.
+  */
+ @Transactional
+ public void delete(long site,long id){
+  guard.acquire(site);
+  get(site,id);
+  for(var work:openWork){
+   String why=work.whyBusy(site);
+   if(why!=null) throw new ConfigurationException(409,why);
+  }
+  jdbc.update("DELETE FROM topology.port WHERE site_id=? AND id=?",site,id);
  }
 }

@@ -170,6 +170,11 @@ export const cfgApi = {
   /** Puts a map revision into use. ADMIN, and the site has to be in maintenance. */
   activateRevision: (revisionId: number) =>
     `/api/v1/sites/${SITE_ID}/configuration/topology/${revisionId}/activate`,
+  /** A whole map in as one document: it becomes a new draft revision and touches nothing in use. */
+  importMap: () => `/api/v1/sites/${SITE_ID}/configuration/topology/import`,
+  /** The same document back out, so a map can be taken, edited and brought in again. */
+  exportMap: (revisionId: number) =>
+    `/api/v1/sites/${SITE_ID}/configuration/topology/${revisionId}/export`,
   vdaProfiles: () => `/api/v1/sites/${SITE_ID}/configuration/vda-profiles`,
   /** Who may do what. ADMIN only; a password goes in here and never comes back out. */
   accounts: () => `/api/v1/sites/${SITE_ID}/configuration/accounts`,

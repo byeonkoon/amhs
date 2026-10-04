@@ -30,6 +30,26 @@ class TopologyConfigurationController {
             @PathVariable long id,@RequestParam long expectedVersion,@RequestBody NodeSettings settings) {
         return topology.updateNode(siteId,revisionId,id,expectedVersion,settings);
     }
+    @PostMapping("/nodes")
+    @org.springframework.web.bind.annotation.ResponseStatus(org.springframework.http.HttpStatus.CREATED)
+    ConfigurationRecord<NodeSettings> createNode(@PathVariable long siteId,@PathVariable long revisionId,
+            @RequestBody NodeSettings settings) {
+        return topology.createNode(siteId,revisionId,settings);
+    }
+    @DeleteMapping("/nodes/{id}")
+    void deleteNode(@PathVariable long siteId,@PathVariable long revisionId,@PathVariable long id) {
+        topology.deleteNode(siteId,revisionId,id);
+    }
+    @PostMapping("/segments")
+    @org.springframework.web.bind.annotation.ResponseStatus(org.springframework.http.HttpStatus.CREATED)
+    ConfigurationRecord<EdgeSettings> createSegment(@PathVariable long siteId,@PathVariable long revisionId,
+            @RequestBody EdgeSettings settings) {
+        return topology.createEdge(siteId,revisionId,settings);
+    }
+    @DeleteMapping("/segments/{id}")
+    void deleteSegment(@PathVariable long siteId,@PathVariable long revisionId,@PathVariable long id) {
+        topology.deleteEdge(siteId,revisionId,id);
+    }
     @GetMapping("/segments")
     List<ConfigurationRecord<EdgeSettings>> segments(@PathVariable long siteId,@PathVariable long revisionId) {
         return topology.edges(siteId,revisionId);
