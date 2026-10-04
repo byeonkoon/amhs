@@ -57,6 +57,7 @@ Flyway 활성 경로는 `server/src/main/resources/db/postgresql`입니다. `db/
 ## 다음 작업과 형상 관리
 
 - [설계 결정 기록](docs/design-decisions.md): 각 구조를 왜 그렇게 정했는지와 현재 구현 상태.
+- [AMHS 공개 설계 개요](docs/portfolio-amhs-design.md): 개인 포트폴리오용으로 정리한 아키텍처와 설계 의도. [검증 시나리오](docs/portfolio-amhs-validation.md) 및 개념도 포함.
 - 기능 Inventory → 도메인 매핑 → 구현 순서를 따릅니다. 확장 예정 범위는 IO 맵핑, 스토커·버퍼 셀 관리, 상위 시스템 작업 접수, AGV/OHT 공통 Traffic입니다.
 - 수정·검증이 끝난 단위로 커밋·푸시합니다. 다른 PC에서는 [PC 전환 안내](docs/pc-handoff.md)에 따라 최신 이력과 비공개 인수인계 기록을 확인합니다.
 - **개발 완료 전 작업 기록과 기존 현장 시스템 참고 자료는 이 저장소에 올리지 않습니다.** 저장소 외부에서 관리하고, 여기에는 정리된 작업·진행 상황·검증 결과만 반영합니다. 원본 소스·DB 백업·로그·암호·로컬 도구·빌드 결과도 제외합니다.
