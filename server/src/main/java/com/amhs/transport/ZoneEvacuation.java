@@ -90,14 +90,14 @@ public class ZoneEvacuation {
    if(relocation!=null) ledger.finishRelocation(relocation.id(),"ORDER_TOOK_OVER");
    return none(vehicleId,"HAS_ORDER");
   }
-  // Taken out of use, or out of automatic work, by somebody: it is not moved on the controller's
-  // own initiative either. It stays where it is until an operator moves it or turns it back on.
-  // An operator's own move is the operator deciding, so only taking it out of use stops that.
-  boolean manual=relocation!=null&&Relocation.MANUAL.equals(relocation.purpose());
-  // Taken out of use or out of automatic work, or an operator asked the move to stop: whichever
-  // came, the move is wound down the same way.
+  // Taken out of use by somebody: it is not moved on the controller's own initiative either. It
+  // stays where it is until an operator moves it or turns it back on.
+  //
+  // Not for dispatch does not stop a move. That setting excludes the vehicle from transport work,
+  // and a vehicle still on the track has to charge, give way and go home whether or not it is
+  // being given jobs -- stopping those is how a vehicle nobody dispatches ends up flat in front of
+  // everything else.
   String decision=!vehicle.enabled()?"VEHICLE_DISABLED"
-   :!manual&&!vehicle.assignmentEnabled()?"ASSIGNMENT_DISABLED"
    :relocation!=null&&relocation.stopRequestedAt()!=null?"MOVE_STOPPED":null;
   if(decision!=null){
    if(relocation!=null){
@@ -208,6 +208,57 @@ public class ZoneEvacuation {
   var route=planner.find(map,vehicle.nodeId(),targetNodeId);
   if(route.status()!=RouteResult.Status.FOUND) throw new TransportRejected("NO_PATH","no route from where it stands",false);
   ledger.startRelocation(siteId,revisionId,vehicleId,null,route.nodeIds(),targetNodeId,Relocation.MANUAL);
+  return step(siteId,revisionId,vehicleId,zoneOf(siteId,revisionId),fleet.snapshot(siteId,revisionId),cutoff);
+ }
+
+ /**
+  * An operator sends a vehicle to charge now, or tells it to stop charging.
+  *
+  * <p>The thresholds are what the controller decides on its own. This is somebody deciding for
+  * their own reason -- a shift ending, a vehicle they want full before a busy hour -- so the level
+  * is not consulted. What is still consulted is everything that makes charging possible at all: a
+  * vehicle in use, controllable, standing idle with nothing in flight, carrying nothing, and a
+  * charge point free to take it.
+  *
+  * <p>Starting puts the vehicle under the ordinary charge request, so the same rules end it: it
+  * stops when charged past the release level, or when work of its kind is waiting and nothing else
+  * is free. Stopping clears the request, but a charge below the site's critical level is the
+  * controller's to insist on and will be asked for again.
+  */
+ @Transactional
+ public Step chargeNow(long siteId,long vehicleId,boolean start){
+  long revisionId=ledger.activeRevision(siteId);
+  fleet.lockForAssignment(siteId,List.of(vehicleId));
+  var vehicle=fleet.find(siteId,revisionId,vehicleId)
+   .orElseThrow(()->new TransportRejected("VEHICLE_NOT_FOUND","unknown vehicle",false));
+  if(vehicle.chargingPolicy()==null||"DISABLED".equals(vehicle.chargingPolicy()))
+   throw new TransportRejected("CHARGING_DISABLED","this vehicle has no charge of its own",false);
+  boolean charging="CHARGING".equals(vehicle.effectiveStatus());
+  if(!outbox.unresolvedForVehicle(siteId,vehicleId).isEmpty())
+   throw new TransportRejected("COMMAND_OUTSTANDING","an earlier command is not settled yet",true);
+  if(!start){
+   if(!charging) throw new TransportRejected("NOT_CHARGING","the vehicle is not charging",true);
+   ledger.setChargeLevel(siteId,vehicleId,0);
+   if(ledger.chargeSession(siteId,vehicleId)==null) ledger.openChargeSession(siteId,vehicleId);
+   ledger.requestChargeStop(siteId,vehicleId);
+   chargeCommand(siteId,vehicle,"CHARGE_STOP","OPERATOR");
+   return none(vehicleId,"CHARGE_STOPPING");
+  }
+  if(charging) throw new TransportRejected("ALREADY_CHARGING","the vehicle is already charging",true);
+  if(vehicle.carrierPresent())
+   throw new TransportRejected("CARRIER_ON_BOARD","the vehicle is holding a carrier",true);
+  var cutoff=OffsetDateTime.now().minusSeconds(operations.get(siteId).settings().positionStaleSeconds());
+  String busy=whyNotFree(siteId,vehicle,cutoff);
+  if(busy!=null) throw new TransportRejected(busy,"the vehicle cannot be sent to charge now",true);
+  var charger=chooseCharger(siteId,revisionId,topology.getMap(siteId,revisionId),vehicle);
+  if(charger==null) throw new TransportRejected("NO_FREE_CHARGER","no charge point it can reach is free",true);
+  ledger.setChargeLevel(siteId,vehicleId,1);
+  if(charger.route().size()<=1){
+   ledger.openChargeSession(siteId,vehicleId);
+   chargeCommand(siteId,vehicle,"CHARGE_START","OPERATOR");
+   return none(vehicleId,"CHARGE_STARTED");
+  }
+  ledger.startRelocation(siteId,revisionId,vehicleId,null,charger.route(),charger.nodeId(),Relocation.CHARGE);
   return step(siteId,revisionId,vehicleId,zoneOf(siteId,revisionId),fleet.snapshot(siteId,revisionId),cutoff);
  }
 
@@ -340,9 +391,14 @@ public class ZoneEvacuation {
  }
 
  /**
-  * A vehicle with a home node, standing elsewhere with nothing to do for longer than the site
-  * allows, goes home when its home is free (nobody stands on, holds or is heading for it). A
-  * vehicle with a carrier on board stays where it is, as in the existing system.
+  * A vehicle standing with nothing to do for longer than the site allows goes to its waiting
+  * place, when that place is free (nobody stands on, holds or is heading for it). A vehicle with a
+  * carrier on board stays where it is, as in the existing system.
+  *
+  * <p>Its own home node is its waiting place when it has one. Otherwise the site's waiting places
+  * for its kind are used, nearest first -- that is what lets a site be laid out once instead of
+  * every vehicle being given its own spot, and it is why the places name a kind: the two kinds do
+  * not share track.
   */
  @Transactional
  public List<Step> returnHome(long siteId){
@@ -353,8 +409,9 @@ public class ZoneEvacuation {
   var cutoff=now.minusSeconds(settings.positionStaleSeconds());
   var quietSince=now.minusSeconds(settings.homeReturnSeconds());
   var out=new ArrayList<Step>();
+  var map=topology.getMap(siteId,revisionId);
   var candidates=fleet.snapshot(siteId,revisionId).stream()
-   .filter(v->v.homeNodeId()!=null&&v.nodeId()!=null&&!v.homeNodeId().equals(v.nodeId())&&!v.carrierPresent())
+   .filter(v->v.nodeId()!=null&&!v.carrierPresent()&&!waitingPlaces(map,v).isEmpty())
    .sorted(Comparator.comparingLong(VehicleSnapshot::id)).toList();
   for(var seen:candidates){
    // Idle long enough: since it last became idle on a node, and since its last work or move ended.
@@ -364,11 +421,18 @@ public class ZoneEvacuation {
    fleet.lockForAssignment(siteId,List.of(seen.id()));
    var vehicle=fleet.find(siteId,revisionId,seen.id()).orElse(null);
    if(whyNotFree(siteId,vehicle,cutoff)!=null||vehicle.carrierPresent()) continue;
-   long home=vehicle.homeNodeId();
-   if(placeTaken(siteId,revisionId,home,vehicle.id())) continue;
-   var route=planner.find(topology.getMap(siteId,revisionId),vehicle.nodeId(),home);
-   if(route.status()!=RouteResult.Status.FOUND) continue;
-   ledger.startRelocation(siteId,revisionId,vehicle.id(),null,route.nodeIds(),home,Relocation.HOME);
+   // Already standing in one of them: it is where it is meant to be.
+   var places=waitingPlaces(map,vehicle);
+   if(places.contains(vehicle.nodeId())) continue;
+   RouteResult best=null; Long target=null;
+   for(long place:places){
+    if(placeTaken(siteId,revisionId,place,vehicle.id())) continue;
+    var route=planner.find(map,vehicle.nodeId(),place);
+    if(route.status()!=RouteResult.Status.FOUND) continue;
+    if(best==null||route.costSeconds()<best.costSeconds()){ best=route; target=place; }
+   }
+   if(best==null) continue;
+   ledger.startRelocation(siteId,revisionId,vehicle.id(),null,best.nodeIds(),target,Relocation.HOME);
    out.add(step(siteId,revisionId,vehicle.id(),zoneOf(siteId,revisionId),fleet.snapshot(siteId,revisionId),cutoff));
   }
   return out;
@@ -448,7 +512,10 @@ public class ZoneEvacuation {
    }
    if(next==0) continue;
    if(v.carrierPresent()){ out.add(none(v.id(),"CHARGE_WAITS_FOR_CARRIER")); continue; }
-   if(whyNotFree(siteId,v,cutoff)!=null) continue;
+   // Why a vehicle that is asking to charge is not being sent. Silence here is the state nobody
+   // can explain: a battery falling on the screen with no reason given anywhere.
+   String busy=whyNotFree(siteId,v,cutoff);
+   if(busy!=null){ out.add(none(v.id(),"CHARGE_"+busy)); continue; }
    var map=topology.getMap(siteId,revisionId);
    var charger=chooseCharger(siteId,revisionId,map,v);
    if(charger==null){ out.add(none(v.id(),"NO_FREE_CHARGER")); continue; }
@@ -507,7 +574,9 @@ public class ZoneEvacuation {
  private String whyNotFree(long siteId,VehicleSnapshot vehicle,OffsetDateTime cutoff){
   if(vehicle==null) return "VEHICLE_NOT_FOUND";
   if(!vehicle.enabled()) return "VEHICLE_DISABLED";
-  if(!vehicle.assignmentEnabled()) return "ASSIGNMENT_DISABLED";
+  // Not for dispatch is deliberately not here. It says this vehicle is not given transport work;
+  // it does not say the vehicle may run flat, block a junction or sit in a zone. Charging, giving
+  // way and going home are the controller looking after a vehicle that is still on the track.
   if(vehicle.nodeId()==null) return "POSITION_UNKNOWN";
   if(!vehicle.reportedSince(cutoff)) return "POSITION_STALE";
   if(!vehicle.online()||!vehicle.remote()) return "VEHICLE_NOT_CONTROLLABLE";
@@ -519,6 +588,24 @@ public class ZoneEvacuation {
   if(!outbox.unresolvedForVehicle(siteId,vehicle.id()).isEmpty()) return "COMMAND_OUTSTANDING";
   return null;
  }
+ /**
+  * Where this vehicle may stand with nothing to do.
+  *
+  * <p>Its own home node when it has one: that is this vehicle's place and nothing else should take
+  * it. Otherwise every node the site marks as a waiting place for its kind -- laid out once for
+  * the fleet rather than vehicle by vehicle. A node out of service is not one of them.
+  */
+ private Set<Long> waitingPlaces(MapSnapshot map,VehicleSnapshot vehicle){
+  if(vehicle==null) return Set.of();
+  if(vehicle.homeNodeId()!=null){
+   var home=map.nodes().stream().filter(n->n.id()==vehicle.homeNodeId()).findFirst().orElse(null);
+   return home!=null&&home.enabled()?Set.of(home.id()):Set.of();
+  }
+  var places=new TreeSet<Long>();
+  for(var node:map.nodes()) if(node.enabled()&&node.waitsFor(vehicle.vType())) places.add(node.id());
+  return places;
+ }
+
  /** Somebody else stands on, holds, or is being sent to this node. */
  private boolean placeTaken(long siteId,long revisionId,long nodeId,long vehicleId){
   for(var v:fleet.snapshot(siteId,revisionId)) if(v.id()!=vehicleId&&Long.valueOf(nodeId).equals(v.nodeId())) return true;

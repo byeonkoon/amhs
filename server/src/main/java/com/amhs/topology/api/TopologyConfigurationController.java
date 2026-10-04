@@ -12,6 +12,15 @@ class TopologyConfigurationController {
     private final TopologyConfiguration topology;
     TopologyConfigurationController(TopologyConfiguration topology) { this.topology=topology; }
 
+    /**
+     * Puts this revision into use. Administrator-only, and the site has to be in maintenance like
+     * every other track change -- swapping the ground under open work is the one change that
+     * cannot be undone by editing it back.
+     */
+    @PostMapping("/activate")
+    TopologyConfiguration.RevisionView activate(@PathVariable long siteId,@PathVariable long revisionId) {
+        return topology.activate(siteId,revisionId);
+    }
     @GetMapping("/nodes")
     List<ConfigurationRecord<NodeSettings>> nodes(@PathVariable long siteId,@PathVariable long revisionId) {
         return topology.nodes(siteId,revisionId);

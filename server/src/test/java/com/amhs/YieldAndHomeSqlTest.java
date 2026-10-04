@@ -35,6 +35,7 @@ class YieldAndHomeSqlTest {
   jdbc.update("DELETE FROM traffic.node_reservation");
   jdbc.update("UPDATE integration.command_outbox SET status='WITHDRAWN' WHERE status IN ('PENDING','DISPATCHING','FAILED')");
   jdbc.update("UPDATE integration.command_outbox SET status='ACCEPTED' WHERE status='SENT'");
+  jdbc.update("UPDATE topology.node SET wait_for=NULL WHERE site_id=? AND revision_id=?",SITE,REVISION);
   jdbc.update("DELETE FROM fleet.vehicle_state WHERE site_id=?",SITE);
   jdbc.update("UPDATE fleet.vehicle_profile SET enabled=TRUE,assignment_enabled=FALSE,home_node_id=NULL WHERE site_id=?",SITE);
   jdbc.update("UPDATE platform.site_operation SET auto_dispatch=FALSE,node_count=20,more_remaining_nodes=3,"
@@ -80,9 +81,32 @@ class YieldAndHomeSqlTest {
   assertThat(now(AGV1).nodeId()).isNotEqualTo(202L);
  }
 
- @Test void aVehicleThatMayNotBeMovedOnItsOwnIsLeftWhereItIs(){
+ /**
+  * Not for dispatch is not permission to block the road.
+  *
+  * <p>That setting says this vehicle is not given transport work. A vehicle standing in another
+  * one's way is nothing to do with work, and leaving it there stops the vehicle that does have a
+  * job -- so it still steps aside.
+  */
+ @Test void aVehicleNotForDispatchStillStepsAside(){
   simulate();
   jdbc.update("UPDATE fleet.vehicle_profile SET assignment_enabled=FALSE WHERE site_id=? AND id=?",SITE,AGV1);
+  simulator.place(SITE,AGV2,212L);
+  simulator.place(SITE,AGV1,202L);
+  tx.execute(s->moves.moveTo(SITE,AGV2,203L));
+  boolean yielded=false;
+  for(int i=0;i<60&&now(AGV2).nodeId()!=203L;i++){
+   tick();
+   if(moveOf(AGV1).map(r->r.purpose().equals(Relocation.YIELD)).orElse(false)) yielded=true;
+  }
+  assertThat(yielded).isTrue();
+  assertThat(now(AGV2).nodeId()).isEqualTo(203L);
+ }
+
+ /** Taken out of use is. Nobody moves it until somebody turns it back on. */
+ @Test void aVehicleTakenOutOfUseIsLeftWhereItIs(){
+  simulate();
+  jdbc.update("UPDATE fleet.vehicle_profile SET enabled=FALSE WHERE site_id=? AND id=?",SITE,AGV1);
   simulator.place(SITE,AGV2,212L);
   simulator.place(SITE,AGV1,202L);
   tx.execute(s->moves.moveTo(SITE,AGV2,203L));
@@ -94,7 +118,7 @@ class YieldAndHomeSqlTest {
   List<ZoneEvacuation.Step> steps=tx.execute(s->moves.yieldAll(SITE));
   assertThat(steps).anySatisfy(st->{
    assertThat(st.vehicleId()).isEqualTo(AGV1);
-   assertThat(st.decision()).isEqualTo("YIELD_ASSIGNMENT_DISABLED");
+   assertThat(st.decision()).isEqualTo("YIELD_VEHICLE_DISABLED");
   });
  }
 
@@ -133,6 +157,37 @@ class YieldAndHomeSqlTest {
   simulator.clear();
   fleet.report(SITE,REVISION,AGV1,new VehicleReport(203L,true,true,true,true,"SIMULATED"));
   assertThat(home()).isEmpty();
+  assertThat(moveOf(AGV1)).isEmpty();
+ }
+
+ /**
+  * A vehicle with no home node of its own uses the site's waiting places for its kind.
+  *
+  * <p>Laying a site out once beats giving every vehicle its own spot, and the kind is part of the
+  * place because the two kinds do not share track: an AGV sent to an OHT's waiting place would be
+  * sent somewhere it cannot go.
+  */
+ @Test void aVehicleWithoutItsOwnHomeWaitsAtTheSitesWaitingPlace(){
+  simulate();
+  jdbc.update("UPDATE platform.site_operation SET home_return_seconds=1 WHERE site_id=?",SITE);
+  jdbc.update("UPDATE fleet.vehicle_profile SET home_node_id=NULL WHERE site_id=? AND id=?",SITE,AGV1);
+  jdbc.update("UPDATE topology.node SET wait_for='AGV' WHERE site_id=? AND revision_id=? AND id=?",SITE,REVISION,211L);
+  // An OHT waiting place is not somewhere an AGV can be sent, so it must not be chosen.
+  jdbc.update("UPDATE topology.node SET wait_for='OHT' WHERE site_id=? AND revision_id=? AND id=?",SITE,REVISION,104L);
+  jdbc.update("UPDATE transport.relocation SET finished_at=now()-interval '1 hour' WHERE site_id=? AND vehicle_id=?",SITE,AGV1);
+  jdbc.update("UPDATE transport.assignment SET released_at=now()-interval '1 hour' WHERE vehicle_id=? AND released_at>now()-interval '1 hour'",AGV1);
+  simulator.place(SITE,AGV1,203L);
+  jdbc.update("UPDATE fleet.vehicle_state SET idle_since=now()-interval '1 minute' WHERE site_id=? AND vehicle_id=?",SITE,AGV1);
+
+  boolean sent=false;
+  for(int i=0;i<40&&now(AGV1).nodeId()!=211L;i++){
+   tick();
+   sent|=moveOf(AGV1).map(r->r.purpose().equals(Relocation.HOME)).orElse(false);
+  }
+  assertThat(sent).isTrue();
+  assertThat(now(AGV1).nodeId()).isEqualTo(211L);
+  // Standing in it already: nothing more to do.
+  tick();
   assertThat(moveOf(AGV1)).isEmpty();
  }
 

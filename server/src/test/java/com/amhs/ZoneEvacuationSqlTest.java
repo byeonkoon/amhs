@@ -148,14 +148,23 @@ class ZoneEvacuationSqlTest {
   assertThat(ledger.relocatingVehicleIds(SITE)).doesNotContain(OHT);
  }
 
- @Test void aVehicleTakenOutOfUseOrOutOfAutomaticWorkIsNotMovedOut(){
+ /**
+  * Taken out of use stays put; not for dispatch still leaves the bay.
+  *
+  * <p>The two settings are not the same thing. Out of use means nobody drives this vehicle until
+  * somebody turns it back on. Not for dispatch means it is not given transport work -- and sitting
+  * in a bay other vehicles need is not transport work, it is being in the way.
+  */
+ @Test void aVehicleTakenOutOfUseIsNotMovedOutButOneMerelyNotDispatchedIs(){
   finishedInTheBay();
   jdbc.update("UPDATE fleet.vehicle_profile SET enabled=FALSE WHERE site_id=? AND id=?",SITE,OHT);
   assertThat(stepOf(OHT).decision()).isEqualTo("VEHICLE_DISABLED");
-  jdbc.update("UPDATE fleet.vehicle_profile SET enabled=TRUE,assignment_enabled=FALSE WHERE site_id=? AND id=?",SITE,OHT);
-  assertThat(stepOf(OHT).decision()).isEqualTo("ASSIGNMENT_DISABLED");
   assertThat(outbox.unresolvedForVehicle(SITE,OHT)).isEmpty();
   assertThat(ledger.relocatingVehicleIds(SITE)).doesNotContain(OHT);
+
+  jdbc.update("UPDATE fleet.vehicle_profile SET enabled=TRUE,assignment_enabled=FALSE WHERE site_id=? AND id=?",SITE,OHT);
+  assertThat(stepOf(OHT).decision()).isNotEqualTo("VEHICLE_DISABLED");
+  assertThat(ledger.relocatingVehicleIds(SITE)).contains(OHT);
  }
 
  @Test void theSiteSweepMovesItOutAfterOfferingNewWorkFirst(){

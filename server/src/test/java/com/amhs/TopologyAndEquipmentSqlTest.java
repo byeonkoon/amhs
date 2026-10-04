@@ -122,6 +122,31 @@ class TopologyAndEquipmentSqlTest {
    422,"REVISION_NOT_FOUND");
  }
 
+ /**
+  * A waiting place names one kind of vehicle, and a charger is not one.
+  *
+  * <p>The kinds do not share track, so "a place to wait" without saying whose is a value the
+  * controller has to guess at. And a vehicle parked on a charge point is a charger nobody else can
+  * use -- the one mistake here that takes a charger out of service without saying so.
+  */
+ @Test void aWaitingPlaceNamesAKindAndIsNotACharger(){
+  var before=node(104);
+  var s=before.settings();
+  rejected(()->topology.updateNode(SITE,REVISION,104,before.version(),
+   new NodeSettings(s.code(),s.xMm(),s.yMm(),s.enabled(),s.stopNode(),s.mergePoint(),false,"BOTH")),
+   422,"WAIT_FOR_INVALID");
+  rejected(()->topology.updateNode(SITE,REVISION,104,before.version(),
+   new NodeSettings(s.code(),s.xMm(),s.yMm(),s.enabled(),s.stopNode(),s.mergePoint(),true,"AGV")),
+   422,"CHARGE_POINT_NOT_A_WAIT_PLACE");
+
+  var saved=topology.updateNode(SITE,REVISION,104,before.version(),
+   new NodeSettings(s.code(),s.xMm(),s.yMm(),s.enabled(),s.stopNode(),s.mergePoint(),false,"oht"));
+  assertThat(saved.settings().waitFor()).as("written the way the controller reads it").isEqualTo("OHT");
+  topology.updateNode(SITE,REVISION,104,saved.version(),
+   new NodeSettings(s.code(),s.xMm(),s.yMm(),s.enabled(),s.stopNode(),s.mergePoint(),false,null));
+  assertThat(node(104).settings().waitFor()).isNull();
+ }
+
  @Test void configurationStillNeedsMaintenance(){
   jdbc.update("UPDATE platform.site_operation SET mode='RUNNING' WHERE site_id=?",SITE);
   var before=node(103);

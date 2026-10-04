@@ -37,6 +37,7 @@ class ChargingSqlTest {
   jdbc.update("DELETE FROM transport.charge_session");
   jdbc.update("UPDATE integration.command_outbox SET status='WITHDRAWN' WHERE status IN ('PENDING','DISPATCHING','FAILED')");
   jdbc.update("UPDATE integration.command_outbox SET status='ACCEPTED' WHERE status='SENT'");
+  jdbc.update("UPDATE topology.node SET wait_for=NULL WHERE site_id=? AND revision_id=?",SITE,REVISION);
   jdbc.update("DELETE FROM fleet.vehicle_state WHERE site_id=?",SITE);
   jdbc.update("UPDATE fleet.vehicle_profile SET enabled=TRUE,assignment_enabled=FALSE,home_node_id=NULL WHERE site_id=?",SITE);
   jdbc.update("UPDATE fleet.vehicle_profile SET charging_policy='NEAREST',charge_node_id=CASE id WHEN 2 THEN 212 ELSE 205 END"
@@ -187,6 +188,61 @@ class ChargingSqlTest {
   assertThat(now(AGV1).status()).isEqualTo("IDLE");
   assertThat(now(AGV1).mode()).isEqualTo("MANUAL");
  }
+ /**
+  * Not for dispatch still charges.
+  *
+  * <p>That setting excludes a vehicle from transport work. It says nothing about the vehicle's own
+  * charge, and a vehicle nobody dispatches is exactly the one nobody notices going flat -- which
+  * it then does in front of everything else.
+  */
+ @Test void anAgvNotForDispatchIsStillSentToCharge(){
+  simulate();
+  jdbc.update("UPDATE fleet.vehicle_profile SET assignment_enabled=FALSE WHERE site_id=? AND id=?",SITE,AGV1);
+  simulator.place(SITE,AGV1,203L);
+  simulator.setBattery(SITE,AGV1,35);
+  boolean charged=false;
+  for(int i=0;i<150&&!charged;i++){
+   tick();
+   charged="CHARGING".equals(now(AGV1).status());
+  }
+  assertThat(charged).as("it is not given work, which is not a reason to let it run flat").isTrue();
+  assertThat(level(AGV1)).isNotZero();
+ }
+
+ /**
+  * An operator charges a vehicle for a reason the thresholds do not know, and stops one.
+  *
+  * <p>A full-enough vehicle is never sent by the rule, so this is the only way it goes; and what
+  * ends the charge is the same rule as always, not a second one written for this path.
+  */
+ @Test void anOperatorSendsAVehicleToChargeAndStopsIt(){
+  simulate();
+  jdbc.update("UPDATE fleet.vehicle_profile SET assignment_enabled=FALSE WHERE site_id=? AND id=?",SITE,AGV2);
+  simulator.place(SITE,AGV1,212L);
+  simulator.setBattery(SITE,AGV1,70);   // above the request level: the rule leaves it alone
+  sweep.run(SITE,"test",null);
+  assertThat(level(AGV1)).isZero();
+  assertThat(now(AGV1).status()).isEqualTo("IDLE");
+
+  assertThat(tx.execute(s->moves.chargeNow(SITE,AGV1,true)).decision()).isEqualTo("CHARGE_STARTED");
+  for(int i=0;i<5&&!"CHARGING".equals(now(AGV1).status());i++) tick();
+  assertThat(now(AGV1).status()).isEqualTo("CHARGING");
+
+  // And stopping it is the operator's too, before it is full.
+  assertThat(tx.execute(s->moves.chargeNow(SITE,AGV1,false)).decision()).isEqualTo("CHARGE_STOPPING");
+  for(int i=0;i<5&&"CHARGING".equals(now(AGV1).status());i++) tick();
+  assertThat(now(AGV1).status()).isEqualTo("IDLE");
+  assertThat(level(AGV1)).isZero();
+ }
+
+ /** An OHT is fed from the rail, so there is no charge for anybody to ask for. */
+ @Test void anOperatorCannotChargeAVehicleThatHasNoChargeOfItsOwn(){
+  simulate();
+  simulator.place(SITE,OHT1,101L);
+  assertThatThrownBy(()->tx.execute(s->moves.chargeNow(SITE,OHT1,true)))
+   .isInstanceOfSatisfying(TransportRejected.class,e->assertThat(e.code()).isEqualTo("CHARGING_DISABLED"));
+ }
+
  @Test void aVehicleStartingToChargeIsNeitherSentHomeNorMovedAside(){
   simulate();
   jdbc.update("UPDATE fleet.vehicle_profile SET assignment_enabled=FALSE WHERE site_id=? AND id=?",SITE,AGV2);

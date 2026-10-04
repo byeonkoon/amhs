@@ -72,7 +72,8 @@ function TrackTab({ session, revisionId, kind }: { session: Session; revisionId:
     <div>
       {banner}
       {nodes.length === 0 ? <Empty title="이 지도 revision에 노드가 없습니다" /> : (
-        <Grid cols="80px 1fr 90px 90px 96px 96px 96px 96px" head={['코드', '', 'X (mm)', 'Y (mm)', '사용', '정지 노드', '합류 지점', '충전 지점']}>
+        <Grid cols="80px 1fr 90px 90px 96px 96px 96px 96px 104px 104px"
+          head={['코드', '', 'X (mm)', 'Y (mm)', '사용', '정지 노드', '합류 지점', '충전 지점', '대기(AGV)', '대기(OHT)']}>
           {nodes.map(n => (
             <Row key={n.id}>
               <span className="mono">{n.settings.code}</span>
@@ -103,10 +104,26 @@ function TrackTab({ session, revisionId, kind }: { session: Session; revisionId:
               <span>
                 <button type="button" disabled={!mayEdit || busy} style={flagStyle(!!n.settings.chargePoint)}
                   onClick={() => change(`${opsApi.nodes(revisionId)}/${n.id}`, n.version,
-                    { ...n.settings, chargePoint: !n.settings.chargePoint }, '충전 지점 지정 변경')}>
+                    // Turning a node into a charger gives up its waiting place: a vehicle standing
+                    // there to wait is a charger nobody else can use, and the server refuses both.
+                    { ...n.settings, chargePoint: !n.settings.chargePoint, waitFor: n.settings.chargePoint ? n.settings.waitFor : null },
+                    '충전 지점 지정 변경')}>
                   {n.settings.chargePoint ? '충전' : '—'}
                 </button>
               </span>
+              {/* A waiting place belongs to one kind of vehicle: the two kinds do not share track,
+                  so marking one clears the other rather than adding to it. */}
+              {(['AGV', 'OHT'] as const).map(kind => (
+                <span key={kind}>
+                  <button type="button" disabled={!mayEdit || busy || !!n.settings.chargePoint}
+                    style={flagStyle(n.settings.waitFor === kind)}
+                    title={n.settings.chargePoint ? '충전 지점은 대기 위치로 쓰지 않습니다.' : undefined}
+                    onClick={() => change(`${opsApi.nodes(revisionId)}/${n.id}`, n.version,
+                      { ...n.settings, waitFor: n.settings.waitFor === kind ? null : kind }, `대기 위치(${kind}) 지정 변경`)}>
+                    {n.settings.waitFor === kind ? '대기' : '—'}
+                  </button>
+                </span>
+              ))}
             </Row>
           ))}
         </Grid>
@@ -114,7 +131,11 @@ function TrackTab({ session, revisionId, kind }: { session: Session; revisionId:
       <p className="hint" style={{ marginTop: 9 }}>
         차량이 점유 중인 노드는 사용 금지로 바꿀 수 없습니다. 그 자리에 있어도 된다고 허가받은 차량이 있는데
         닫으면, 다른 차량을 그리로 보내게 됩니다. 정지 노드에서는 이동 허가가 끝나고 연장 없이 차량이 섭니다.
-        합류 지점에서는 먼저 요청한 차량이 먼저 지나갑니다.
+        합류 지점에서는 먼저 요청한 차량이 먼저 지나갑니다. 충전 지점은 AGV가 충전하는 자리입니다.
+        대기 위치는 할 일 없는 차량이 서 있을 자리이며, 차종을 함께 정합니다 — OHT와 AGV는 선로를 공유하지
+        않으므로 한쪽의 대기 자리가 다른 쪽에는 갈 수 없는 곳입니다. 차량에 대기 노드가 따로 지정돼 있으면
+        그 노드가 먼저이고, 없으면 같은 차종의 대기 위치 중 가까운 빈 자리로 갑니다. 복귀까지의 대기 시간은
+        시스템 옵션의 Home 복귀 시간입니다(0이면 보내지 않습니다).
       </p>
     </div>
   );

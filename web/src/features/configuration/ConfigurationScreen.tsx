@@ -1,10 +1,12 @@
 import React from 'react';
 import {
   ApiError, cfgApi, get, opsApi, send, ROLE_LABEL,
-  type Cfg, type ConnectionSettings, type EquipmentSettings, type MapData, type OperationOptions, type PortSettings, type ProtocolSettings,
+  type Cfg, type ConnectionSettings, type EquipmentSettings, type MapData, type MapRevision, type OperationOptions,
+  type PortSettings, type ProtocolSettings,
   type Session, type VdaProfileSettings, type VehicleSettings,
 } from '../../api';
-import { Empty, Failed, Loading } from '../../shell/States';
+import { Chip, Empty, Failed, Loading } from '../../shell/States';
+import { Grid, Row } from '../../shell/Panel';
 import { NodeTab, SegmentTab } from './TopologyTabs';
 import { layerOfNode } from '../map/MapView';
 import {
@@ -18,15 +20,18 @@ import {
  * vehicle and every command rather than to one of these, so they sit behind the account menu
  * where changing them needs the authority that reach deserves.
  */
-type Tab = "vehicles" | "vda" | "ports" | "nodes" | "segments" | "connections" | "protocols";
+type Tab = "revisions" | "vehicles" | "vda" | "ports" | "nodes" | "segments" | "connections" | "protocols";
 const TABS: { key: Tab; label: string }[] = [
+  { key: 'revisions', label: '지도 버전' },
   { key: 'vehicles', label: '차량' }, { key: 'vda', label: 'VDA 프로파일' },
   { key: 'ports', label: '포트' },
   { key: 'nodes', label: '노드' }, { key: 'segments', label: '구간' },
   { key: 'connections', label: '연결' }, { key: 'protocols', label: '프로토콜' },
 ];
 
-export function ConfigurationScreen({ map, session }: { map: MapData; session: Session }) {
+export function ConfigurationScreen({ map, session, revisions, onChanged }: {
+  map: MapData; session: Session; revisions: MapRevision[]; onChanged: () => void;
+}) {
   const [tab, setTab] = React.useState<Tab>('vehicles');
   // What may be saved follows the login, not a value typed into this screen. One place decides it,
   // so a screen cannot offer a save the server will refuse.
@@ -52,6 +57,7 @@ export function ConfigurationScreen({ map, session }: { map: MapData; session: S
           <span className="aux">저장은 Lv4 관리자 권한과 유지보수 상태가 필요합니다</span>
         </div>
         <div className="cb">
+          {tab === 'revisions' && <RevisionTab revisions={revisions} canWrite={canWrite} onChanged={onChanged} />}
           {tab === 'vehicles' && <VehicleTab map={map} canWrite={canWrite} />}
           {tab === 'nodes' && <NodeTab session={session} revisionId={map.revisionId} />}
           {tab === 'segments' && <SegmentTab session={session} revisionId={map.revisionId} />}
@@ -112,6 +118,70 @@ function SaveBar({ issues, canWrite, busy, message, onSave }: {
         {busy ? '저장 중…' : '저장'}
       </button>
       {!canWrite && <span className="hint" style={{ marginLeft: 10 }}>Lv4 관리자로 로그인하면 저장할 수 있습니다.</span>}
+    </div>
+  );
+}
+
+/**
+ * Which map the site runs on.
+ *
+ * <p>Every other tab edits the map in use; this one changes which map that is. It is the one change
+ * that cannot be undone by editing it back -- orders, granted roads and reported positions are all
+ * written against a revision -- so the server refuses it while any of that is open, and says which.
+ */
+function RevisionTab({ revisions, canWrite, onChanged }: {
+  revisions: MapRevision[]; canWrite: boolean; onChanged: () => void;
+}) {
+  const [busy, setBusy] = React.useState(false);
+  const [message, setMessage] = React.useState<{ tone: string; text: string } | null>(null);
+  async function activate(r: MapRevision) {
+    if (!window.confirm(`지도 버전 ${r.revision}을 사용하도록 바꿉니다. 차량 ${r.vehicles}대, 노드 ${r.nodes}개 구성입니다. 진행할까요?`)) return;
+    setBusy(true); setMessage(null);
+    try {
+      await send(cfgApi.activateRevision(r.id), 'POST', undefined, `지도 버전 ${r.revision} 적용`);
+      setMessage({ tone: 'ok', text: `지도 버전 ${r.revision}을 사용합니다. 이전 버전은 끝난 작업이 기록된 그대로 보관됩니다.` });
+      onChanged();
+    } catch (cause) {
+      setMessage({ tone: 'er', text: cause instanceof ApiError ? explainCode(cause.message) : '바꾸지 못했습니다.' });
+    } finally { setBusy(false); }
+  }
+  if (revisions.length === 0) return <Empty title="지도 버전을 읽지 못했습니다" />;
+  return (
+    <div>
+      {message && <p style={{ margin: '0 0 9px', fontSize: 12 }}>
+        <Chip tone={message.tone}>{message.tone === 'er' ? '거부' : '완료'}</Chip> {message.text}
+      </p>}
+      <Grid cols="90px 96px 1fr 1fr 1fr 1fr 120px"
+        head={['버전', '상태', '노드', '구간', '포트', '차량', '']}>
+        {revisions.map(r => (
+          <Row key={r.id}>
+            <span className="mono">{r.revision}</span>
+            <span><Chip tone={r.status === 'ACTIVE' ? 'ok' : r.status === 'DRAFT' ? 'wr' : 'id'}>
+              {r.status === 'ACTIVE' ? '사용 중' : r.status === 'DRAFT' ? '준비' : '보관'}
+            </Chip></span>
+            <span className="mono">{r.nodes}</span>
+            <span className="mono">{r.segments}</span>
+            <span className="mono">{r.ports}</span>
+            <span className="mono">{r.vehicles}</span>
+            <span>
+              {r.status === 'ACTIVE'
+                ? <span className="hint">현재 사용</span>
+                : <button type="button" disabled={!canWrite || busy} onClick={() => activate(r)}
+                  style={{
+                    border: '1px solid var(--acc)', background: canWrite ? 'var(--acc)' : 'var(--srf)',
+                    color: canWrite ? '#fff' : 'var(--mut)', borderRadius: 5, padding: '3px 12px', fontSize: 12,
+                    cursor: canWrite && !busy ? 'pointer' : 'default',
+                  }}>사용</button>}
+            </span>
+          </Row>
+        ))}
+      </Grid>
+      <p className="hint" style={{ marginTop: 9 }}>
+        지도 버전을 바꾸면 그 뒤의 모든 작업·경로·점유가 새 지도 위에서 결정됩니다. 그래서 진행 중인 작업,
+        끝나지 않은 이동, 아직 반납되지 않은 구간 점유가 하나라도 있으면 거절합니다 — 그 기록들이 가리키는
+        노드가 사라지기 때문입니다. 사이트를 유지보수 상태로 두고 바꾸며, 이전 버전은 지우지 않고 보관합니다.
+        차량 코드는 사이트 전체에서 하나씩이므로, 버전마다 차량 이름이 다릅니다.
+      </p>
     </div>
   );
 }

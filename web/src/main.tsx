@@ -3,10 +3,10 @@ import { createRoot } from 'react-dom/client';
 import './style.css';
 import './monitor.css';
 import {
-  alarmApi, api, cfgApi, explainDecision, freshness, get, getAs, hasWriteToken, opsApi, send, ApiError, MODE_LABEL, STATUS_LABEL,
+  alarmApi, api, cfgApi, explainDecision, freshness, get, getAs, hasWriteToken, opsApi, revisionId, send, setRevisionId, ApiError, MODE_LABEL, STATUS_LABEL,
   type AlarmCount,
   type AssignmentView, type Cfg, type Deadlock, type DeadlockPlan, type DeadlockRecovery, type DeviceCommand, type MapData, type NodeHold,
-  type OperationOptions, type Session, type TransportOrder, type Vehicle, type VehicleSnapshot,
+  type MapRevision, type OperationOptions, type Session, type TransportOrder, type Vehicle, type VehicleSnapshot,
   type VehicleHeading, type VehicleMove, type ZoneOccupancy,
 } from './api';
 import { AppShell, mayOpen, type MenuKey, type ServerState } from './shell/AppShell';
@@ -29,7 +29,8 @@ import { OverviewScreen } from './features/overview/OverviewScreen';
 import { HistoryScreen } from './features/history/HistoryScreen';
 import { useLive, type Live, type LiveParts } from './live';
 
-const REVISION_ID = 1;
+// Which map the site is running on comes from the server; it is read before anything that needs it.
+const REVISION_ID = () => revisionId();
 /** Pages reached from the account menu rather than the sidebar, so no sidebar entry is current. */
 type AccountPage = 'system' | 'accounts' | 'signin';
 const ACCOUNT_PAGES = new Set<string>(['system', 'accounts', 'signin']);
@@ -69,6 +70,8 @@ function App() {
   const [reload, setReload] = React.useState(0);
   const [loadedAt, setLoadedAt] = React.useState<Date | null>(null);
   const [alarmCount, setAlarmCount] = React.useState<AlarmCount | null>(null);
+  // Every revision of the map and which one is in use: read with the rest, shown where it is changed.
+  const [revisions, setRevisions] = React.useState<MapRevision[]>([]);
   // Live screens follow the site by themselves; the reading keeps what is on screen until the
   // next answer arrives instead of blanking it.
   const [autoRefresh, setAutoRefresh] = React.useState(true);
@@ -95,7 +98,7 @@ function App() {
     const timer = setInterval(() => {
       if (busy) return;
       busy = true;
-      get<VehicleSnapshot[]>(opsApi.vehicleState(REVISION_ID), controller.signal)
+      get<VehicleSnapshot[]>(opsApi.vehicleState(REVISION_ID()), controller.signal)
         .then(state => setData(d => d ? { ...d, state } : d))
         .catch(() => { /* the two-second reading reports a lost connection */ })
         .finally(() => { busy = false; });
@@ -108,11 +111,25 @@ function App() {
     const signal = controller.signal;
     setError(null);
     softly(getAs<Session>(opsApi.session(), signal), ANONYMOUS).then(setSession);
+    // Which map the site is running on is settled before anything else is read. Everything below
+    // is read against a revision, and a screen that guesses it shows a different site from the one
+    // the vehicles are driving on.
+    void (async () => {
+      const all = await softly(get<MapRevision[]>(api.mapRevisions(), signal), [] as MapRevision[]);
+      const active = all.find(r => r.status === 'ACTIVE');
+      if (active) setRevisionId(active.id);
+      setRevisions(all);
+      await readEverything(signal);
+    })();
+    return () => controller.abort();
+  }, [reload]);
+
+  const readEverything = (signal: AbortSignal) =>
     Promise.all([
-      get<MapData>(api.map(REVISION_ID), signal),
-      get<Vehicle[]>(api.vehicles(REVISION_ID), signal),
+      get<MapData>(api.map(REVISION_ID()), signal),
+      get<Vehicle[]>(api.vehicles(REVISION_ID()), signal),
       softly(get<TransportOrder[]>(api.activeOrders(), signal), [] as TransportOrder[]),
-      softly(get<VehicleSnapshot[]>(opsApi.vehicleState(REVISION_ID), signal), [] as VehicleSnapshot[]),
+      softly(get<VehicleSnapshot[]>(opsApi.vehicleState(REVISION_ID()), signal), [] as VehicleSnapshot[]),
       softly(get<NodeHold[]>(opsApi.reservations(), signal), [] as NodeHold[]),
       softly(get<Deadlock[]>(opsApi.deadlocks(), signal), [] as Deadlock[]),
       softly(get<DeviceCommand[]>(opsApi.inDoubt(), signal), [] as DeviceCommand[]),
@@ -133,8 +150,6 @@ function App() {
         setLoadedAt(new Date());
       })
       .catch(cause => { if ((cause as Error).name !== 'AbortError') setError(cause); });
-    return () => controller.abort();
-  }, [reload]);
 
   // The count rides on the shell rather than on the alarms screen, so a fault that appears while
   // somebody is looking at the map is visible from the map.
@@ -176,8 +191,8 @@ function App() {
           : !data ? <div className="card"><Loading what={page.title} /></div>
             : menu === 'system' ? <SystemOptionsScreen session={session} />
               : menu === 'accounts' ? <AccountsScreen session={session} />
-              : menu === 'resources' ? <ConfigurationScreen map={data.map} session={session} />
-              : menu === 'equipment' ? <EquipmentScreen session={session} revisionId={REVISION_ID} simulated={data.options?.runMode === 'SIMULATION'} />
+              : menu === 'resources' ? <ConfigurationScreen map={data.map} session={session} revisions={revisions} onChanged={() => setReload(v => v + 1)} />
+              : menu === 'equipment' ? <EquipmentScreen session={session} revisionId={REVISION_ID()} simulated={data.options?.runMode === 'SIMULATION'} />
               : menu === 'inventory' ? <InventoryScreen session={session} map={data.map} orders={data.orders} />
               : menu === 'alarms' ? <AlarmsScreen onGo={setMenu} />
               : menu === 'overview' ? <OverviewScreen onGo={setMenu} />
@@ -189,7 +204,7 @@ function App() {
                     ? <TrafficScreen map={data.map} holds={data.holds} deadlocks={data.deadlocks} vehicles={data.state}
                         zones={data.zones} plans={data.plans} recoveries={data.recoveries} onChanged={retry} />
                     : menu === 'diagnostics'
-                      ? <DiagnosticsScreen map={data.map} revisionId={REVISION_ID} vehicles={data.state}
+                      ? <DiagnosticsScreen map={data.map} revisionId={REVISION_ID()} vehicles={data.state}
                           inDoubt={data.inDoubt} onChanged={retry} />
                       : <MonitorScreen data={data} selected={selected} onSelect={setSelected}
                           layer={layer} onLayer={setLayer} loadedAt={loadedAt} onRetry={retry}
@@ -702,6 +717,18 @@ function ManualMove(props: {
             : props.target === vehicle.nodeId ? '이미 그 노드에 있습니다.'
               : !hasWriteToken() ? 'Lv2 운전 이상으로 로그인해야 명령할 수 있습니다.' : null;
 
+  // Charging asks less than a move: no target node, and a charging vehicle may be told to stop
+  // while it is not idle, because charging is exactly the state the stop ends.
+  const charging = vehicle?.status === 'CHARGING';
+  const chargeBlocker = !vehicle ? '차량을 고르세요.'
+    : !vehicle.chargingPolicy || vehicle.chargingPolicy === 'DISABLED' ? '이 차량은 스스로 충전하지 않습니다(레일 급전).'
+      : !hasWriteToken() ? 'Lv2 운전 이상으로 로그인해야 명령할 수 있습니다.'
+        : charging ? null
+          : !vehicle.online ? '오프라인 차량입니다.'
+            : (vehicle.mode ?? (vehicle.remote ? 'REMOTE' : 'MANUAL')) !== 'REMOTE' ? '원격 모드가 아닙니다.'
+              : !(vehicle.status ? vehicle.status === 'IDLE' : vehicle.idle) ? '대기 상태가 아닙니다.'
+                : vehicle.carrierPresent ? '화물을 싣고 있어 충전하러 보내지 않습니다.' : null;
+
   async function toggleService() {
     if (!vehicle) return;
     const back = vehicle.outOfServiceSince != null;
@@ -710,7 +737,7 @@ function ManualMove(props: {
     if (!back && (reason === null || !reason.trim())) return;
     setBusy(true); setNotice(null);
     try {
-      await send(opsApi.vehicleService(REVISION_ID, vehicle.id), 'PUT',
+      await send(opsApi.vehicleService(REVISION_ID(), vehicle.id), 'PUT',
         { inService: back, reason }, back ? '서비스 복귀' : '서비스 제외');
       setNotice({ tone: 'ok', text: back ? '작업을 다시 받습니다.' : '작업을 받지 않습니다. 옮기려면 목표 노드를 골라 이동시키세요.' });
       props.onDone();
@@ -726,6 +753,21 @@ function ManualMove(props: {
       const res = await send<{ decision: string; addedNodeIds: number[] }>(opsApi.moveVehicle(vehicle.id), 'POST',
         { targetNodeId: props.target }, '수동 이동');
       setNotice({ tone: res.decision === 'MOVING_TO_TARGET' ? 'ok' : 'wr', text: explainDecision(res.decision) });
+      props.onDone();
+    } catch (cause) {
+      setNotice({ tone: 'er', text: cause instanceof ApiError ? explainDecision(cause.message) : '명령하지 못했습니다.' });
+    } finally { setBusy(false); }
+  }
+
+  // Charging by hand, for a reason the thresholds do not know about. The target node is not part
+  // of it: where it charges is the charge point the controller picks, not somewhere chosen here.
+  async function charge(start: boolean) {
+    if (!vehicle) return;
+    setBusy(true); setNotice(null);
+    try {
+      const res = await send<{ decision: string }>(opsApi.chargeVehicle(vehicle.id), 'POST',
+        { charge: start }, start ? '수동 충전 시작' : '수동 충전 중지');
+      setNotice({ tone: 'ok', text: explainDecision(res.decision) });
       props.onDone();
     } catch (cause) {
       setNotice({ tone: 'er', text: cause instanceof ApiError ? explainDecision(cause.message) : '명령하지 못했습니다.' });
@@ -752,7 +794,17 @@ function ManualMove(props: {
           borderRadius: 5, padding: '4px 14px', fontSize: 12, cursor: blocker ? 'default' : 'pointer' }}>
           {busy ? '보내는 중…' : '이동'}
         </button>
+        {/* Charging does not need a target node, so it is offered whenever the vehicle itself can
+            take it -- a charge point the vehicle can reach is the server's to find. */}
+        <button type="button" disabled={busy || chargeBlocker !== null} onClick={() => charge(!charging)} style={{
+          border: `1px solid ${chargeBlocker ? 'var(--ln2)' : 'var(--good)'}`, background: 'var(--srf)',
+          color: chargeBlocker ? 'var(--mut)' : 'var(--good)', borderRadius: 5, padding: '4px 14px', fontSize: 12,
+          cursor: chargeBlocker ? 'default' : 'pointer' }}
+          title={chargeBlocker ?? (charging ? '충전을 멈추고 대기로 돌립니다.' : '지금 충전하러 보냅니다. 임계값과 무관하게 사람이 정하는 것입니다.')}>
+          {charging ? '충전 중지' : '충전'}
+        </button>
         {blocker && <span className="hint">{blocker}</span>}
+        {!blocker && chargeBlocker && <span className="hint">{chargeBlocker}</span>}
       </div>
       {open && (
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>

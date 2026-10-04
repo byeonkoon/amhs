@@ -7,6 +7,8 @@ export type Node = {
   stopNode?: boolean; mergePoint?: boolean;
   /** An AGV can charge here. */
   chargePoint?: boolean;
+  /** The kind of vehicle that may stand here with nothing to do; null when none may. */
+  waitFor?: 'AGV' | 'OHT' | null;
 };
 /** curveMm: how far the segment's middle lies off the straight line (see geometry.ts); 0 is straight. */
 export type Edge = { id: number; fromNodeId: number; toNodeId: number; cost: number; enabled: boolean; curveMm?: number };
@@ -63,8 +65,31 @@ export const simulationEquipmentApi = {
   list: () => `/api/v1/sites/${SITE_ID}/simulation/equipment`,
   state: (id: number) => `/api/v1/sites/${SITE_ID}/simulation/equipment/${id}/state`,
 };
+/**
+ * One map revision as the server reports it, with how much it holds.
+ *
+ * <p>Which one is in use is not a screen setting: it is what the site is running on, and a screen
+ * that assumes a number shows a different site from the one the vehicles are driving.
+ */
+export type MapRevision = {
+  id: number; revision: number; status: 'DRAFT' | 'ACTIVE' | 'RETIRED';
+  nodes: number; segments: number; ports: number; vehicles: number;
+};
+/**
+ * The revision the site is running on, as last read from the server.
+ *
+ * <p>Held in one place, like the session token, because every screen needs it and none of them
+ * should be the one that decides it. It starts at the first revision so a failed read shows a map
+ * rather than nothing, and is replaced as soon as the server has answered.
+ */
+let activeRevision = 1;
+export function revisionId(): number { return activeRevision; }
+export function setRevisionId(id: number) { activeRevision = id; }
+
 export const api = {
   map: (revisionId: number) => `/api/v1/sites/${SITE_ID}/maps/${revisionId}`,
+  /** Every revision of this site's map, and which one is in use. A read, open like the rest. */
+  mapRevisions: () => `/api/v1/sites/${SITE_ID}/map-revisions`,
   vehicles: (revisionId?: number) => `/api/v1/sites/${SITE_ID}/vehicles${revisionId === undefined ? '' : `?revisionId=${revisionId}`}`,
   health: () => '/actuator/health',
   transportOrders: (limit = 20) => `/api/v1/sites/${SITE_ID}/transport-orders?limit=${limit}`,
@@ -142,6 +167,9 @@ export const cfgApi = {
   protocols: () => `/api/v1/sites/${SITE_ID}/configuration/protocols`,
   /** Site-wide options: not one machine's parameters, so they sit apart and need ADMIN. */
   system: () => `/api/v1/sites/${SITE_ID}/configuration/system`,
+  /** Puts a map revision into use. ADMIN, and the site has to be in maintenance. */
+  activateRevision: (revisionId: number) =>
+    `/api/v1/sites/${SITE_ID}/configuration/topology/${revisionId}/activate`,
   vdaProfiles: () => `/api/v1/sites/${SITE_ID}/configuration/vda-profiles`,
   /** Who may do what. ADMIN only; a password goes in here and never comes back out. */
   accounts: () => `/api/v1/sites/${SITE_ID}/configuration/accounts`,
@@ -357,6 +385,8 @@ export const opsApi = {
   moveVehicle: (vehicleId: number) => `/api/v1/sites/${SITE_ID}/vehicles/${vehicleId}/move`,
   /** Stops an operator's move: nothing more is granted, and it closes once the vehicle has stopped. */
   stopMove: (vehicleId: number) => `/api/v1/sites/${SITE_ID}/vehicles/${vehicleId}/move/stop`,
+  /** An operator sends a vehicle to charge now, or stops a charge, whatever the thresholds say. */
+  chargeVehicle: (vehicleId: number) => `/api/v1/sites/${SITE_ID}/vehicles/${vehicleId}/charge`,
   /** Open moves without an order: an operator's moves and moves out of a zone. */
   vehicleMoves: () => `/api/v1/sites/${SITE_ID}/vehicle-moves`,
   /** Destination and remaining route of every vehicle with work or a move. */
@@ -371,6 +401,8 @@ export const opsApi = {
 export type NodeSettings = {
   code: string; xMm: number; yMm: number; enabled: boolean; stopNode: boolean; mergePoint: boolean;
   chargePoint?: boolean;
+  /** 'AGV' or 'OHT' when a vehicle of that kind may wait here; null when none may. */
+  waitFor?: 'AGV' | 'OHT' | null;
 };
 /** A segment's editable parameters. Endpoints are what the segment is, so they are read-only here. */
 export type EdgeSettings = { fromNodeId: number; toNodeId: number; cost: number; enabled: boolean; curveMm?: number };
@@ -570,9 +602,17 @@ export function explainDecision(decision: string): string {
     MOVE_STOPPED: '이동을 중지했습니다. 차량이 선 자리에서 이동을 닫았습니다.',
     YIELDING: '다른 차량이 지나가도록 비켜 서는 중입니다.',
     CHARGE_STARTED: '충전을 시작했습니다.',
+    CHARGE_STARTING: '충전 시작 명령을 보냈습니다. 차량이 충전 중이라고 보고하면 끝납니다.',
+    CHARGE_STOPPING: '충전 중지를 요청했습니다. 차량이 충전을 멈췄다고 보고하면 끝납니다.',
+    CHARGE_ENDED: '충전이 끝났습니다.',
+    CHARGE_NOT_STARTED: '충전 시작 명령은 전달됐지만 차량이 충전 중이라고 보고하지 않았습니다.',
     CHARGE_COMPLETE: '충전을 마쳤습니다.',
     CHARGE_STOPPED_FOR_WORK: '대기 중인 작업이 있어 충전을 멈췄습니다.',
     CHARGE_WAITS_FOR_CARRIER: '화물을 싣고 있어 충전하러 가지 않습니다.',
+    CHARGING_DISABLED: '이 차량은 스스로 충전하지 않습니다(레일 급전). 버퍼가 떨어지면 알람으로 알립니다.',
+    ALREADY_CHARGING: '이미 충전 중입니다.',
+    NOT_CHARGING: '충전 중이 아닙니다.',
+    CARRIER_ON_BOARD: '화물을 싣고 있어 충전하러 보내지 않습니다. 하역이 끝난 뒤에 보내세요.',
     NO_FREE_CHARGER: '비어 있는 충전기가 없습니다.',
     GOING_HOME: '작업이 없어 홈으로 가는 중입니다.',
     GOING_TO_CHARGE: '충전하러 가는 중입니다.',
@@ -647,7 +687,8 @@ export function explainDecision(decision: string): string {
     NO_PLACE_OUTSIDE: 'Zone 밖에 비어 있는 갈 곳이 없습니다.',
     NO_PATH: '목적지까지 경로가 없어 이동을 멈췄습니다.',
     VEHICLE_DISABLED: '사용 중지된 차량은 자동으로 옮기지 않습니다.',
-    ASSIGNMENT_DISABLED: '자동 작업에서 제외된 차량은 자동으로 옮기지 않습니다.',
+    ALREADY_MOVING: '이미 이동 중입니다.',
+    CHARGING: '충전 중입니다.',
     VEHICLE_RELOCATING: '차량이 Zone 밖으로 이동 중이라 새 작업을 줄 수 없습니다.',
     NOT_IN_ZONE: '차량이 이미 Zone 밖에 있습니다.',
     NO_AVAILABLE_VEHICLE: '조건에 맞는 차량이 없습니다.',
@@ -668,5 +709,9 @@ export function explainDecision(decision: string): string {
     return `차량이 ${said(decision.slice(5))} 상태라 시뮬레이터가 움직이지 않았습니다. 원격·대기로 되돌리면 이어서 진행합니다.`;
   if (decision.endsWith('_STOPPING'))
     return `${explainDecision(decision.slice(0, -9))} 이미 나간 이동 명령이 있어 차량이 설 때까지 경로를 유지합니다.`;
+  // Why a vehicle asking to charge was not sent: the reason is the vehicle's own state, so it is
+  // explained by the same words used everywhere else rather than a second set of messages.
+  if (decision.startsWith('CHARGE_'))
+    return `충전하러 보내지 못했습니다 — ${explainDecision(decision.slice(7))}`;
   return decision;
 }

@@ -42,6 +42,16 @@ class MovementController {
             throw new TransportRejected("TARGET_NODE_INVALID","targetNodeId is required",false);
         return moves.moveTo(siteId,vehicleId,target.longValue());
     }
+    /**
+     * An operator sends a vehicle to charge now, or stops a charge. {@code charge} is true to
+     * start. The thresholds are the controller's own rule; this is a person deciding instead.
+     */
+    @PostMapping("/vehicles/{vehicleId}/charge")
+    ZoneEvacuation.Step charge(@PathVariable long siteId,@PathVariable long vehicleId,@RequestBody Map<String,Object> body) {
+        if(!(body.get("charge") instanceof Boolean start))
+            throw new TransportRejected("CHARGE_INVALID","charge is required",false);
+        return moves.chargeNow(siteId,vehicleId,start);
+    }
     /** Stops a vehicle's open move: no more road is granted, and it closes once the vehicle has stopped. */
     @PostMapping("/vehicles/{vehicleId}/move/stop")
     ZoneEvacuation.Step stop(@PathVariable long siteId,@PathVariable long vehicleId) {
