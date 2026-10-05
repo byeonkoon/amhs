@@ -30,11 +30,14 @@ class SequenceHaltSqlTest {
  @Autowired ZoneEvacuation moves; @Autowired TransportLedger ledger;
  @Autowired com.amhs.fleet.FleetState fleet;
  @Autowired JdbcTemplate jdbc;
+ @Autowired com.amhs.integration.DeviceGateway gateway;
+ @Autowired com.amhs.integration.CommandOutbox outbox;
  private static final long SITE=1, OHT=1;
 
  @BeforeEach @AfterEach void runningAndQuiet(){
   simulator.clear();
   jdbc.update("UPDATE platform.site_operation SET sequence_running=TRUE WHERE site_id=?",SITE);
+  jdbc.update("UPDATE transport.assignment SET released_at=now() WHERE order_id IN (SELECT id FROM transport.order WHERE site_id=?) AND released_at IS NULL",SITE);
   jdbc.update("UPDATE transport.order SET status='CANCELLED',terminal_at=now() WHERE site_id=? AND status NOT IN ('COMPLETED','CANCELLED','FAILED')",SITE);
   jdbc.update("UPDATE transport.relocation SET finished_at=now(),finish_reason='TEST' WHERE site_id=? AND finished_at IS NULL",SITE);
   jdbc.update("UPDATE traffic.node_reservation SET released_at=now(),release_reason='TEST' WHERE site_id=? AND released_at IS NULL",SITE);
@@ -119,6 +122,53 @@ class SequenceHaltSqlTest {
   // the stop: a site whose moves never close is one whose map can never be changed.
   sweep.run(SITE,"test",null);
   assertThat(ledger.openRelocations(SITE)).isEmpty();
+ }
+
+ @Test void aDeliveredMoveDrainsAndAcknowledgesWithoutHandoverWhileStopped(){
+  simulator.place(SITE,OHT,101L);
+  moves.moveTo(SITE,OHT,102L);
+  assertThat(gateway.publishPending(SITE).delivered()).isPositive();
+  options.setSequenceRunning(SITE,false);
+  sweep.run(SITE,"test",null);
+  assertThat(ledger.openRelocations(SITE)).hasSize(1);
+  simulator.acknowledge(SITE);
+  for(int i=0;i<40;i++) simulator.drive(SITE,1.0);
+  assertThat(outbox.unresolvedForVehicle(SITE,OHT)).isEmpty();
+  assertThat(fleet.find(SITE,1,OHT).orElseThrow().nodeId()).isEqualTo(102L);
+  sweep.run(SITE,"test",null);
+  assertThat(ledger.openRelocations(SITE)).isEmpty();
+ }
+
+ @Test void aStopWithdrawsAMoveThatNeverLeft(){
+  simulator.place(SITE,OHT,101L);
+  moves.moveTo(SITE,OHT,102L);
+  options.setSequenceRunning(SITE,false);
+  sweep.run(SITE,"test",null);
+  assertThat(ledger.openRelocations(SITE)).isEmpty();
+  assertThat(jdbc.queryForObject("SELECT count(*) FROM integration.command_outbox WHERE site_id=?"
+   +" AND vehicle_id=? AND status='PENDING'",Integer.class,SITE,OHT)).isZero();
+ }
+
+ @Test void aStopNeedsAFreshStandingReportAfterItsDecision(){
+  simulator.place(SITE,OHT,101L);
+  moves.moveTo(SITE,OHT,102L);
+  jdbc.update("UPDATE integration.command_outbox SET status='ACCEPTED' WHERE site_id=? AND vehicle_id=? AND status='PENDING'",SITE,OHT);
+  options.setSequenceRunning(SITE,false);
+  sweep.run(SITE,"test",null);
+  assertThat(ledger.openRelocations(SITE)).hasSize(1);
+  // At a node is not proof of standing: arrival reports may still say MOVING.
+  fleet.reportModeAndStatus(SITE,1,OHT,"REMOTE","MOVING");
+  sweep.run(SITE,"test",null);
+  assertThat(ledger.openRelocations(SITE)).hasSize(1);
+  assertThat(jdbc.queryForObject("SELECT count(*) FROM traffic.node_reservation WHERE site_id=? AND vehicle_id=? AND node_id=102 AND released_at IS NULL",Integer.class,SITE,OHT)).isPositive();
+  fleet.reportModeAndStatus(SITE,1,OHT,"REMOTE","IDLE");
+  jdbc.update("UPDATE fleet.vehicle_state SET reported_at=now()-interval '1 hour' WHERE site_id=? AND vehicle_id=?",SITE,OHT);
+  sweep.run(SITE,"test",null);
+  assertThat(ledger.openRelocations(SITE)).hasSize(1);
+  fleet.reportModeAndStatus(SITE,1,OHT,"REMOTE","IDLE");
+  sweep.run(SITE,"test",null);
+  assertThat(ledger.openRelocations(SITE)).isEmpty();
+  assertThat(jdbc.queryForObject("SELECT count(*) FROM traffic.node_reservation WHERE site_id=? AND vehicle_id=? AND node_id=102 AND released_at IS NULL",Integer.class,SITE,OHT)).isZero();
  }
 
  /** Stopping is not a configuration change: the moment it is wanted is while the site is running. */

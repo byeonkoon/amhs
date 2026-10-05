@@ -31,7 +31,9 @@ class TrafficSiteWork implements SiteWork {
    +"  AND s.revision_id=r.revision_id"
    +" LEFT JOIN platform.site_operation o ON o.site_id=r.site_id"
    +" WHERE r.site_id=? AND r.released_at IS NULL"
-   +"  AND (s.node_id IS NULL OR s.x_mm IS NOT NULL"
+   +"  AND (s.node_id IS NULL OR s.x_mm IS NOT NULL OR s.y_mm IS NOT NULL"
+   +"   OR s.online IS NOT TRUE OR s.idle IS NOT TRUE OR COALESCE(s.status,'IDLE')<>'IDLE'"
+   +"   OR s.reported_at IS NULL OR s.source='INITIAL_CONFIGURATION'"
    +"   OR s.reported_at < now()-make_interval(secs => COALESCE(o.position_stale_seconds,30)))",
    Integer.class,siteId);
   return moving!=null&&moving>0?"ROADS_STILL_GRANTED":null;

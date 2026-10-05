@@ -43,6 +43,20 @@ function distanceToSegment(p, a, b) {
   const t = len2 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2)) : 0;
   return Math.hypot(p.x - (a.x + dx * t), p.y - (a.y + dy * t));
 }
+// Endpoint distances alone miss crossings in the middle of long straight segments.
+function intersects(a, b, c, d) {
+  const cross = (p, q, r) => (q.x-p.x)*(r.y-p.y)-(q.y-p.y)*(r.x-p.x);
+  const abC=cross(a,b,c), abD=cross(a,b,d), cdA=cross(c,d,a), cdB=cross(c,d,b);
+  return Math.max(Math.min(a.x,b.x),Math.min(c.x,d.x)) <= Math.min(Math.max(a.x,b.x),Math.max(c.x,d.x))
+    && Math.max(Math.min(a.y,b.y),Math.min(c.y,d.y)) <= Math.min(Math.max(a.y,b.y),Math.max(c.y,d.y))
+    && ((abC<=0 && abD>=0)||(abC>=0 && abD<=0))
+    && ((cdA<=0 && cdB>=0)||(cdA>=0 && cdB<=0));
+}
+function pathsIntersect(one, other) {
+  for(let i=1;i<one.length;i++) for(let j=1;j<other.length;j++)
+    if(intersects(one[i-1],one[i],other[j-1],other[j])) return true;
+  return false;
+}
 function closest(one, other) {
   let best = Infinity;
   for (const p of one) for (let i = 0; i < other.length - 1; i++)
@@ -98,10 +112,11 @@ for (let i = 0; i < drawn.length; i++)
     const a = drawn[i].seg, b = drawn[j].seg;
     // Segments that meet at a node are meant to touch there; the node is what serialises them.
     if (a.from === b.from || a.from === b.to || a.to === b.from || a.to === b.to) continue;
-    const gap = closest(drawn[i].pts, drawn[j].pts);
+    const crossing = pathsIntersect(drawn[i].pts, drawn[j].pts);
+    const gap = crossing ? 0 : closest(drawn[i].pts, drawn[j].pts);
     if (gap >= CLEAR) continue;
     const spot = closestPoint(drawn[i].pts, drawn[j].pts);
-    if (spot.where && nearAJunctionOfBoth(a, b, spot.where)) continue;
+    if (!crossing && spot.where && nearAJunctionOfBoth(a, b, spot.where)) continue;
     crossings.push({ a: `${a.from}→${a.to}`, b: `${b.from}→${b.to}`, gap: Math.round(gap) });
   }
 

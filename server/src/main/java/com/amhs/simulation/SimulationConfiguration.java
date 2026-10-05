@@ -82,6 +82,7 @@ class SimulationConfiguration {
      // is stopped is the plant not being stopped.
      sweep.run(siteId,"simulator",null);
      if(options.sequenceRunning(siteId)) vehicles.settle(siteId);
+     else vehicles.acknowledge(siteId);
     }catch(RuntimeException e){
      // One bad tick must not stop the loop; the next one sees the state as it then is.
      log.warn("simulation tick failed for site {}: {}",siteId,e.getMessage());

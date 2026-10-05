@@ -344,7 +344,13 @@ public class SimulatedVehicles {
   while(true){
    var authority=sim.authority();
    int i=authority.indexOf(at);
-   if(i<0||i>=authority.size()-1) break;
+   if(i<0||i>=authority.size()-1){
+    // Motion ticks continue while sequencing is stopped. Keep reporting the standing state
+    // without running handover logic so the controller can confirm that a move has drained.
+    var standing=fleet.find(siteId,revisionId,vehicleId).orElseThrow();
+    fleet.reportModeAndStatus(siteId,revisionId,vehicleId,standing.mode(),standing.effectiveStatus());
+    break;
+   }
    long next=authority.get(i+1);
    // A new authority that turns elsewhere starts the segment again from the node it stood on.
    double along=Objects.equals(sim.segmentTo(),next)?sim.travelled():0;
@@ -396,6 +402,19 @@ public class SimulatedVehicles {
   * its authority, the next transfer step. Driving itself is left to {@link #drive}.
   */
  public List<Step> settle(long siteId){ return step(siteId,false); }
+
+ /** Receipts remain available while sequencing is stopped; this does not run a handover. */
+ public void acknowledge(long siteId){
+  synchronized(motion){
+   if(!options.get(siteId).settings().simulated()) return;
+   for(var sim:vehicles.values()){
+    if(sim.siteId()!=siteId) continue;
+    for(var command:outbox.unresolvedForVehicle(siteId,sim.vehicleId()))
+     if(command.status()==CommandStatus.SENT) outbox.acknowledge(command.commandId());
+   }
+  }
+ }
+
 
  private List<Step> step(long siteId,boolean jump){
   synchronized(motion){

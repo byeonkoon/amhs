@@ -126,8 +126,16 @@ class MapRevisionSqlTest {
    refused(()->topology.activate(SITE,DRAFT),409,"ROADS_STILL_GRANTED");
    jdbc.update("UPDATE fleet.vehicle_state SET x_mm=NULL,y_mm=NULL WHERE site_id=? AND vehicle_id=?",SITE,standing);
 
+   // Node-only reports can still describe a moving or disconnected vehicle.
+   jdbc.update("UPDATE fleet.vehicle_state SET idle=FALSE,status='MOVING' WHERE site_id=? AND vehicle_id=?",SITE,standing);
+   refused(()->topology.activate(SITE,DRAFT),409,"ROADS_STILL_GRANTED");
+   jdbc.update("UPDATE fleet.vehicle_state SET idle=TRUE,status='IDLE',online=FALSE WHERE site_id=? AND vehicle_id=?",SITE,standing);
+   refused(()->topology.activate(SITE,DRAFT),409,"ROADS_STILL_GRANTED");
+   jdbc.update("UPDATE fleet.vehicle_state SET online=TRUE,source='INITIAL_CONFIGURATION' WHERE site_id=? AND vehicle_id=?",SITE,standing);
+   refused(()->topology.activate(SITE,DRAFT),409,"ROADS_STILL_GRANTED");
+
    // Its last word is old: where it is now is a guess, and a guess is not a vehicle standing still.
-   jdbc.update("UPDATE fleet.vehicle_state SET reported_at=now()-interval '1 hour'"
+   jdbc.update("UPDATE fleet.vehicle_state SET source='SIMULATED',reported_at=now()-interval '1 hour'"
     +" WHERE site_id=? AND vehicle_id=?",SITE,standing);
    refused(()->topology.activate(SITE,DRAFT),409,"ROADS_STILL_GRANTED");
 

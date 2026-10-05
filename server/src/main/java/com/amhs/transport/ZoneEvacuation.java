@@ -364,9 +364,22 @@ public class ZoneEvacuation {
  public List<Step> standDown(long siteId){
   long revisionId=ledger.activeRevision(siteId);
   var out=new ArrayList<Step>();
-  for(var relocation:ledger.openRelocations(siteId)){
+  var candidates=ledger.openRelocations(siteId).stream()
+   .sorted(Comparator.comparingLong(Relocation::vehicleId)).toList();
+  var cutoff=OffsetDateTime.now().minusSeconds(operations.get(siteId).settings().positionStaleSeconds());
+  for(var candidate:candidates){
+   fleet.lockForAssignment(siteId,List.of(candidate.vehicleId()));
+   var relocation=ledger.openRelocations(siteId).stream()
+    .filter(r->r.id()==candidate.id()).findFirst().orElse(null);
+   if(relocation==null) continue;
+   var stopAt=ledger.requestRelocationStop(relocation.id());
+   // Unsent moves cannot drain while publication is stopped. Withdraw them so they cannot be
+   // published on resume; commands already delivered still require a later standing report.
+   var withdrawal=outbox.withdrawForVehicle(siteId,relocation.vehicleId(),"SEQUENCE_STOPPED",relocation.startedAt());
    var vehicle=fleet.find(siteId,revisionId,relocation.vehicleId()).orElse(null);
-   if(vehicle==null||vehicle.nodeId()==null||vehicle.betweenNodes()) continue;
+   if(vehicle==null||vehicle.nodeId()==null||vehicle.betweenNodes()||!vehicle.online()
+    ||!vehicle.idle()||!"IDLE".equals(vehicle.effectiveStatus())||!vehicle.reportedSince(cutoff)) continue;
+   if(withdrawal.delivered()&&!vehicle.reportedAt().isAfter(stopAt)) continue;
    if(!outbox.unresolvedForVehicle(siteId,relocation.vehicleId()).isEmpty()) continue;
    ledger.finishRelocation(relocation.id(),"SEQUENCE_STOPPED");
    traffic.releaseAhead(siteId,relocation.vehicleId(),vehicle.nodeId(),"SEQUENCE_STOPPED");
