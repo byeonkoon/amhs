@@ -77,8 +77,15 @@ function App() {
    * would show a stopped plant as a working one, which is the one thing it must never do.
    */
   const [running, setRunning] = React.useState<boolean | null>(null);
+  /**
+   * Stops the fleet, or starts it again. One press, no question asked.
+   *
+   * <p>A stop is what somebody reaches for when something is wrong on the floor, and a dialog
+   * between the hand and the plant is a dialog in the way. It is also not a change that has to be
+   * got right first time: the same control starts it again, and nothing is lost by stopping -- work
+   * keeps being accepted and waits.
+   */
   const stopOrStart = async (wanted: boolean) => {
-    if (!wanted && !window.confirm('작업 진행을 멈춥니다. 작업 접수는 계속 되지만 배차·새 이동 허가·명령 전송이 멈춥니다. 달리고 있던 차량은 이미 받은 허가 끝에서 섭니다. 진행할까요?')) return;
     try {
       const now = await send<{ running: boolean }>(opsApi.execution(), 'PUT', { running: wanted },
         wanted ? '작업 진행 활성' : '작업 진행 정지');
@@ -202,7 +209,7 @@ function App() {
       onSelect={k => { setMenu(k); setSelected(null); }}
       onAccount={setMenu}
       session={session} runMode={data?.options?.runMode ?? null}
-      running={running} onRunning={session.allows.includes('transport') ? stopOrStart : undefined}
+      running={running}
       alarms={alarmCount ?? undefined}
       crumb={['Home', page.crumb, page.title]} title={page.title} subtitle={page.subtitle} server={server}>
       {menu === 'signin' ? <SignInScreen session={session} onChanged={retry} />
@@ -227,7 +234,9 @@ function App() {
                           inDoubt={data.inDoubt} onChanged={retry} />
                       : <MonitorScreen data={data} selected={selected} onSelect={setSelected}
                           layer={layer} onLayer={setLayer} loadedAt={loadedAt} onRetry={retry}
-                          autoRefresh={autoRefresh} onAutoRefresh={setAutoRefresh} live={live} />}
+                          autoRefresh={autoRefresh} onAutoRefresh={setAutoRefresh} live={live}
+                          running={running}
+                          onRunning={session.allows.includes('operation') ? stopOrStart : undefined} />}
     </AppShell>
   );
 }
@@ -291,6 +300,10 @@ function MonitorScreen(props: {
   loadedAt: Date | null; onRetry: () => void;
   autoRefresh: boolean; onAutoRefresh: (on: boolean) => void;
   live: Live;
+  /** Whether the fleet is running; null until the server has said. */
+  running: boolean | null;
+  /** Stops it or starts it. Absent when this session may not, which is the only gate there is. */
+  onRunning?: (running: boolean) => void;
 }) {
   const { map, vehicles, state, orders, holds, assignments, deadlocks, options } = props.data;
   const [target, setTarget] = React.useState<number | null>(null);
@@ -318,6 +331,31 @@ function MonitorScreen(props: {
   return (
     <>
       <div className="statbar">
+        {/* The stop sits first, where the operator is already looking, and takes one press. A stop
+            is what somebody reaches for when something is wrong on the floor; anything between the
+            hand and the plant is in the way. */}
+        <span className="s">
+          <span className="k">작업 진행</span>
+          {props.onRunning
+            ? <button type="button" onClick={() => props.onRunning?.(!props.running)}
+              disabled={props.running === null}
+              title={props.running
+                ? '누르면 멈춥니다. 작업 접수는 계속 되고, 배차·새 이동 허가·명령 전송이 멈춥니다. 달리던 차량은 받은 허가 끝에서 섭니다.'
+                : '누르면 다시 진행합니다.'}
+              style={{
+                border: `1px solid ${props.running ? 'var(--good)' : 'var(--crit)'}`,
+                background: props.running ? 'var(--good)' : '#FBEAE7',
+                color: props.running ? '#fff' : '#8E2B23',
+                borderRadius: 4, padding: '2px 12px', fontSize: 11, fontWeight: 700,
+                cursor: props.running === null ? 'default' : 'pointer',
+              }}>
+              {props.running === null ? '확인 중' : props.running ? '진행 중 · 누르면 정지' : '정지됨 · 누르면 활성'}
+            </button>
+            : <span className="v" style={props.running === false ? { color: 'var(--crit)' } : undefined}>
+              {props.running === null ? '—' : props.running ? '진행 중' : '정지됨'}
+            </span>}
+          {props.onRunning && <span className="d">Lv2 운전 이상이면 바로 바꿉니다</span>}
+        </span>
         <span className="s"><span className="k">REV</span><span className="v">{map.revisionId}</span>
           <span className="d">노드 {map.nodes.length} · 구간 {map.edges.length} · 포트 {map.ports.length}</span></span>
         <span className="s"><span className="k">OHT</span><span className="v">{state.filter(v => v.vType === 'OHT').length}</span></span>
