@@ -116,7 +116,7 @@ export function explainCode(code: string): string {
     // Changing or removing the ground that open work stands on.
     ORDERS_STILL_OPEN: '진행 중인 반송 작업이 있습니다. 작업이 끝나거나 취소된 뒤에 가능합니다.',
     MOVES_STILL_OPEN: '끝나지 않은 이동이 있습니다. 이동이 끝난 뒤에 가능합니다.',
-    ROADS_STILL_GRANTED: '아직 반납되지 않은 구간 점유가 있습니다. 차량이 서고 점유가 풀린 뒤에 가능합니다.',
+    ROADS_STILL_GRANTED: '아직 달리고 있는 차량이 있습니다 — 받은 구간 끝에 도착하지 않았거나, 두 노드 사이에 있거나, 위치를 보고하지 않은 차량입니다. 서 있는 차량이 자기 자리를 점유하는 것은 막지 않습니다.',
     REVISION_NOT_FOUND: '그런 지도 버전이 없습니다.',
     REVISION_IN_USE: '사용 중인 지도는 지울 수 없습니다. 다른 버전을 먼저 사용하도록 바꾸세요.',
     REVISION_HAS_HISTORY: '이 지도 위에서 수행된 기록(작업·이동·점유·위치 보고)이 있어 지우지 않습니다.',

@@ -77,6 +77,10 @@ class SimulationConfiguration {
    for(long siteId:simulated){
     try{
      vehicles.placeAll(siteId,configuration);
+     // A stopped site progresses nothing. The sweep refuses by itself; the handover tick has to be
+     // asked here, because a vehicle finishing a pickup while the plant is stopped is the plant
+     // not being stopped.
+     if(!options.sequenceRunning(siteId)) continue;
      sweep.run(siteId,"simulator",null);
      vehicles.settle(siteId);
     }catch(RuntimeException e){
@@ -94,7 +98,7 @@ class SimulationConfiguration {
    double seconds=Math.min(1.0,(now-lastMotion)/1e9);
    lastMotion=now;
    for(long siteId:options.simulatedSites()){
-    try{ vehicles.drive(siteId,seconds); }
+    try{ if(options.sequenceRunning(siteId)) vehicles.drive(siteId,seconds); }
     catch(RuntimeException e){ log.warn("simulation motion failed for site {}: {}",siteId,e.getMessage()); }
    }
   }

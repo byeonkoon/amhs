@@ -397,6 +397,11 @@ export const opsApi = {
   moveVehicle: (vehicleId: number) => `/api/v1/sites/${SITE_ID}/vehicles/${vehicleId}/move`,
   /** Stops an operator's move: nothing more is granted, and it closes once the vehicle has stopped. */
   stopMove: (vehicleId: number) => `/api/v1/sites/${SITE_ID}/vehicles/${vehicleId}/move/stop`,
+  /**
+   * Whether the fleet is running, and the switch for it. Not a configuration path: it is what
+   * somebody reaches for when something is wrong on the floor, so it takes Lv2 운전.
+   */
+  execution: () => `/api/v1/sites/${SITE_ID}/execution`,
   /** An operator sends a vehicle to charge now, or stops a charge, whatever the thresholds say. */
   chargeVehicle: (vehicleId: number) => `/api/v1/sites/${SITE_ID}/vehicles/${vehicleId}/charge`,
   /** Open moves without an order: an operator's moves and moves out of a zone. */

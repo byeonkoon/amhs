@@ -69,6 +69,14 @@ export function AppShell(props: {
   alarms?: { critical: number; warning: number; unseen: number };
   /** The site's run mode as stored, so the frame never claims simulation for a site on real devices. */
   runMode?: 'SIMULATION' | 'OPERATION' | null;
+  /**
+   * Whether the fleet is running. Null until the server has said. It rides on the frame because a
+   * stopped plant must be visible from whatever screen somebody happens to be looking at -- a
+   * person who cannot see that the site is stopped reads every other number on the screen wrong.
+   */
+  running?: boolean | null;
+  /** Stops the fleet, or starts it again. Absent when this session may not. */
+  onRunning?: (running: boolean) => void;
   onAccount: (item: 'system' | 'accounts' | 'signin') => void;
   children: React.ReactNode;
 }) {
@@ -148,7 +156,29 @@ export function AppShell(props: {
             <h1>{props.title}</h1>
             <div className="sub">{props.subtitle}</div>
           </div>
-          <div className="simbadge">{props.runMode === 'SIMULATION' ? '시뮬레이션 운전 중' : props.runMode === 'OPERATION' ? '실제 장비 운전' : '운전 모드 확인 중'}</div>
+          {/* Stopped is said where it cannot be missed, and in the same place every time. */}
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginLeft: 'auto' }}>
+            {props.running === false && (
+              <span style={{
+                border: '1px solid var(--crit)', background: '#FBEAE7', color: '#8E2B23',
+                borderRadius: 5, padding: '4px 11px', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap',
+              }}>정지 — 작업이 진행되지 않습니다</span>
+            )}
+            {props.onRunning && props.running !== null && props.running !== undefined && (
+              <button type="button" onClick={() => props.onRunning?.(!props.running)}
+                title={props.running
+                  ? '작업 진행을 멈춥니다. 작업 접수는 계속 되고, 배차·이동·명령 전송과 시뮬레이션 주행이 멈춥니다.'
+                  : '작업 진행을 다시 시작합니다.'}
+                style={{
+                  border: `1px solid ${props.running ? 'var(--crit)' : 'var(--good)'}`,
+                  background: props.running ? 'var(--srf)' : 'var(--good)',
+                  color: props.running ? 'var(--crit)' : '#fff',
+                  borderRadius: 5, padding: '4px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                }}>{props.running ? '정지' : '활성'}</button>
+            )}
+            <div className="simbadge">{props.runMode === 'SIMULATION' ? '시뮬레이션 운전 중' : props.runMode === 'OPERATION' ? '실제 장비 운전' : '운전 모드 확인 중'}</div>
+          </div>
         </div>
 
         <div className="body">{props.children}</div>

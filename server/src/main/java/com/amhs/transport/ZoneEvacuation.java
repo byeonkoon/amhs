@@ -184,6 +184,7 @@ public class ZoneEvacuation {
   */
  @Transactional
  public Step moveTo(long siteId,long vehicleId,long targetNodeId){
+  requireRunning(siteId);
   long revisionId=ledger.activeRevision(siteId);
   fleet.lockForAssignment(siteId,List.of(vehicleId));
   var vehicle=fleet.find(siteId,revisionId,vehicleId)
@@ -227,6 +228,7 @@ public class ZoneEvacuation {
   */
  @Transactional
  public Step chargeNow(long siteId,long vehicleId,boolean start){
+  requireRunning(siteId);
   long revisionId=ledger.activeRevision(siteId);
   fleet.lockForAssignment(siteId,List.of(vehicleId));
   var vehicle=fleet.find(siteId,revisionId,vehicleId)
@@ -568,6 +570,17 @@ public class ZoneEvacuation {
   try{
    outbox.enqueueForVehicle(siteId,v.id(),"charge-"+v.id()+"-"+type+"-"+java.util.UUID.randomUUID(),type,json.writeValueAsString(body));
   }catch(JsonProcessingException e){ throw new IllegalStateException("command payload could not be written",e); }
+ }
+
+ /**
+  * A stopped site sends nothing, including what a person asks for by hand.
+  *
+  * <p>The alternative is worse than refusing: the command would be written, sit in the outbox
+  * because nothing is being published, and look to the person like a vehicle that is about to move.
+  */
+ private void requireRunning(long siteId){
+  if(!operations.sequenceRunning(siteId))
+   throw new TransportRejected("SEQUENCE_STOPPED","the site is stopped",true);
  }
 
  /** Null when the vehicle may be sent somewhere on the controller's own initiative; otherwise why not. */

@@ -72,6 +72,22 @@ function App() {
   const [alarmCount, setAlarmCount] = React.useState<AlarmCount | null>(null);
   // Every revision of the map and which one is in use: read with the rest, shown where it is changed.
   const [revisions, setRevisions] = React.useState<MapRevision[]>([]);
+  /**
+   * Whether the fleet is running. Null until the server has said -- a screen that assumed "running"
+   * would show a stopped plant as a working one, which is the one thing it must never do.
+   */
+  const [running, setRunning] = React.useState<boolean | null>(null);
+  const stopOrStart = async (wanted: boolean) => {
+    if (!wanted && !window.confirm('작업 진행을 멈춥니다. 작업 접수는 계속 되지만 배차·이동·명령 전송과 시뮬레이션 주행이 멈춥니다. 진행할까요?')) return;
+    try {
+      const now = await send<{ running: boolean }>(opsApi.execution(), 'PUT', { running: wanted },
+        wanted ? '작업 진행 활성' : '작업 진행 정지');
+      setRunning(now.running);
+      setReload(v => v + 1);
+    } catch (cause) {
+      setError(cause);
+    }
+  };
   // Live screens follow the site by themselves; the reading keeps what is on screen until the
   // next answer arrives instead of blanking it.
   const [autoRefresh, setAutoRefresh] = React.useState(true);
@@ -115,6 +131,8 @@ function App() {
     // is read against a revision, and a screen that guesses it shows a different site from the one
     // the vehicles are driving on.
     void (async () => {
+      void softly(get<{ running: boolean }>(opsApi.execution(), signal), null)
+        .then(r => { if (r) setRunning(r.running); });
       const all = await softly(get<MapRevision[]>(api.mapRevisions(), signal), [] as MapRevision[]);
       const active = all.find(r => r.status === 'ACTIVE');
       if (active) setRevisionId(active.id);
@@ -184,6 +202,7 @@ function App() {
       onSelect={k => { setMenu(k); setSelected(null); }}
       onAccount={setMenu}
       session={session} runMode={data?.options?.runMode ?? null}
+      running={running} onRunning={session.allows.includes('transport') ? stopOrStart : undefined}
       alarms={alarmCount ?? undefined}
       crumb={['Home', page.crumb, page.title]} title={page.title} subtitle={page.subtitle} server={server}>
       {menu === 'signin' ? <SignInScreen session={session} onChanged={retry} />

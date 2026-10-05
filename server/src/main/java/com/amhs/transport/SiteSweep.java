@@ -33,18 +33,41 @@ public class SiteSweep {
   this.gateway=gateway; this.options=options; this.evacuation=evacuation; this.recoveries=recoveries;
  }
 
- /** What one pass did. {@code skipped} explains each order the pass could not take on. */
+ /**
+  * What one pass did. {@code skipped} explains each order the pass could not take on, and
+  * {@code running} is false when the site is stopped and the pass therefore did nothing at all.
+  */
  public record Sweep(boolean autoDispatch,List<Long> assigned,List<Skipped> skipped,
                      List<ContinuousMovement.Extension> resumed,List<ContinuousMovement.Extension> extended,
-                     List<ZoneEvacuation.Step> evacuated,DeviceGateway.Publication published){
+                     List<ZoneEvacuation.Step> evacuated,DeviceGateway.Publication published,
+                     boolean running){
   public Sweep {
    assigned=List.copyOf(assigned); skipped=List.copyOf(skipped);
    resumed=List.copyOf(resumed); extended=List.copyOf(extended); evacuated=List.copyOf(evacuated);
   }
+  public Sweep(boolean autoDispatch,List<Long> assigned,List<Skipped> skipped,
+               List<ContinuousMovement.Extension> resumed,List<ContinuousMovement.Extension> extended,
+               List<ZoneEvacuation.Step> evacuated,DeviceGateway.Publication published){
+   this(autoDispatch,assigned,skipped,resumed,extended,evacuated,published,true);
+  }
+  /** A pass that did nothing because the site is stopped. */
+  static Sweep stopped(){
+   return new Sweep(false,List.of(),List.of(),List.of(),List.of(),List.of(),
+    DeviceGateway.Publication.nothing(),false);
+  }
  }
  public record Skipped(long orderId,String reason){}
 
+ /**
+  * One pass, unless the site is stopped.
+  *
+  * <p>A stopped site progresses nothing: the pass is where assignment, resuming, extending, the
+  * controller's own moves and the sending all happen, so the stop is one answer here rather than
+  * six checks spread through them. Work may still be accepted while stopped; it waits in the queue,
+  * which is what a queue is for.
+  */
  public Sweep run(long siteId,String actorCode,String traceId){
+  if(!options.sequenceRunning(siteId)) return Sweep.stopped();
   boolean autoDispatch=options.get(siteId).settings().autoDispatch();
   var assigned=new ArrayList<Long>(); var skipped=new ArrayList<Skipped>();
   if(autoDispatch){

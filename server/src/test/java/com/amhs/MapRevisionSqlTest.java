@@ -92,13 +92,52 @@ class MapRevisionSqlTest {
   assertThat(topology.activate(SITE,DRAFT).active()).isTrue();
  }
 
- @Test void aGrantedRoadStopsTheMapChanging(){
+ /**
+  * A vehicle still driving stops the map changing. A vehicle standing still does not.
+  *
+  * <p>A standing vehicle holds the node it stands on, permanently -- that hold is what stops anyone
+  * else being sent into it. Counting it as traffic in progress made the map impossible to change on
+  * a site where nothing was happening at all, which is the opposite of careful.
+  */
+ @Test void aVehicleStillDrivingStopsTheMapChangingAndAStandingOneDoesNot(){
+  long standing=999004;   // a vehicle of this test's own, so no other test's state is touched
+  try{
+   // Standing on the node it holds, with a position reported: the ordinary quiet site.
+   jdbc.update("INSERT INTO fleet.vehicle_state(site_id,vehicle_id,revision_id,node_id,online,remote,idle,"
+    +"carrier_present,source,reported_at) VALUES(?,?,?,?,TRUE,TRUE,TRUE,FALSE,'SIMULATED',now())",
+    SITE,standing,ACTIVE,101);
+   jdbc.update("INSERT INTO traffic.node_reservation(site_id,revision_id,node_id,vehicle_id,sequence)"
+    +" VALUES(?,?,?,?,?)",SITE,ACTIVE,101,standing,1);
+   assertThat(topology.activate(SITE,DRAFT).active()).as("nothing is moving").isTrue();
+   settleEverything();
+
+   // Road granted ahead of where it stands: it may be driving onto it.
+   jdbc.update("INSERT INTO traffic.node_reservation(site_id,revision_id,node_id,vehicle_id,sequence)"
+    +" VALUES(?,?,?,?,?)",SITE,ACTIVE,102,standing,2);
+   refused(()->topology.activate(SITE,DRAFT),409,"ROADS_STILL_GRANTED");
+   jdbc.update("UPDATE traffic.node_reservation SET released_at=now(),release_reason='TEST'"
+    +" WHERE site_id=? AND released_at IS NULL",SITE);
+
+   // Between two nodes, holding the one it left: still on the road.
+   jdbc.update("UPDATE fleet.vehicle_state SET x_mm=1,y_mm=1 WHERE site_id=? AND vehicle_id=?",SITE,standing);
+   jdbc.update("INSERT INTO traffic.node_reservation(site_id,revision_id,node_id,vehicle_id,sequence)"
+    +" VALUES(?,?,?,?,?)",SITE,ACTIVE,101,standing,3);
+   refused(()->topology.activate(SITE,DRAFT),409,"ROADS_STILL_GRANTED");
+
+   // A hold whose vehicle has not said where it is: not known to be anywhere, so not known to be still.
+   jdbc.update("DELETE FROM fleet.vehicle_state WHERE site_id=? AND vehicle_id=?",SITE,standing);
+   refused(()->topology.activate(SITE,DRAFT),409,"ROADS_STILL_GRANTED");
+  }finally{
+   jdbc.update("DELETE FROM traffic.node_reservation WHERE site_id=? AND vehicle_id=?",SITE,standing);
+   jdbc.update("DELETE FROM fleet.vehicle_state WHERE site_id=? AND vehicle_id=?",SITE,standing);
+  }
+ }
+
+ /** A hold on a map the site has stopped running is not permission to be anywhere. */
+ @Test void holdsLeftOnARetiredMapDoNotStopTheNextChange(){
   jdbc.update("INSERT INTO traffic.node_reservation(site_id,revision_id,node_id,vehicle_id,sequence)"
-   +" VALUES(?,?,?,?,?)",SITE,ACTIVE,101,1,1);
-  refused(()->topology.activate(SITE,DRAFT),409,"ROADS_STILL_GRANTED");
-  jdbc.update("UPDATE traffic.node_reservation SET released_at=now(),release_reason='TEST'"
-   +" WHERE site_id=? AND released_at IS NULL",SITE);
-  assertThat(topology.activate(SITE,DRAFT).active()).isTrue();
+   +" VALUES(?,?,?,?,?)",SITE,DRAFT,1101,999003,9993);
+  assertThat(topology.activate(SITE,DRAFT).active()).as("the hold is not on the map in use").isTrue();
  }
 
  /** A map with no track, or no vehicle, is a site that can do nothing. One click is enough. */

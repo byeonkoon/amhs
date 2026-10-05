@@ -1,0 +1,12 @@
+-- A stop for the whole fleet, apart from everything else that can be switched off.
+--
+-- The settings next to it answer different questions. The run mode says whether vehicles are
+-- simulated or real; the operating mode says whether configuration may be written; "not for
+-- dispatch" says how one vehicle is normally used. None of them answers the one a person reaches
+-- for when something is wrong on the floor: stop the plant, and let me look.
+--
+-- Stopped means nothing progresses. Work may still be accepted -- the orders a shift has to do
+-- exist whether or not the controller is running them, and refusing to write them down would only
+-- move the queue onto paper. What stops is the progressing: no assignment, no new road granted, no
+-- controller-initiated move, nothing sent to a vehicle, and no simulated vehicle driving.
+ALTER TABLE platform.site_operation ADD COLUMN IF NOT EXISTS sequence_running BOOLEAN NOT NULL DEFAULT TRUE;

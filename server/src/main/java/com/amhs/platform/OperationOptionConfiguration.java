@@ -37,6 +37,37 @@ public class OperationOptionConfiguration {
  }
 
  /**
+  * Whether the site's execution loop is running.
+  *
+  * <p>Stopped means nothing progresses: no assignment, no new road granted, no move the controller
+  * starts itself, nothing sent to a vehicle, no simulated vehicle driving. Work may still be
+  * accepted, because the orders a shift has to do exist whether or not the controller is running
+  * them -- refusing to write them down would only move the queue onto paper.
+  */
+ @Transactional(readOnly=true)
+ public boolean sequenceRunning(long site){
+  var rows=jdbc.query("SELECT sequence_running FROM platform.site_operation WHERE site_id=?",
+   (r,n)->r.getBoolean(1),site);
+  if(rows.isEmpty())throw new ConfigurationException(404,"SITE_NOT_CONFIGURED");
+  return rows.getFirst();
+ }
+
+ /**
+  * Stops the site, or starts it again.
+  *
+  * <p>Not a configuration change: the moment it is most wanted is while the site is running, and a
+  * stop that asked for a shutdown first would be no stop at all. It is an operator's act, recorded
+  * like the rest of them.
+  */
+ @Transactional
+ public boolean setSequenceRunning(long site,boolean running){
+  guard.requireSite(site);
+  int changed=jdbc.update("UPDATE platform.site_operation SET sequence_running=? WHERE site_id=?",running,site);
+  if(changed==0) throw new ConfigurationException(404,"SITE_NOT_CONFIGURED");
+  return running;
+ }
+
+ /**
   * Puts the site into maintenance, or back to running.
   *
   * <p>Configuration is refused while the site is running, so this is the switch that makes every

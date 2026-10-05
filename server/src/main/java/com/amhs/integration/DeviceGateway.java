@@ -20,7 +20,10 @@ public class DeviceGateway {
                          @Value("${amhs.device.batch-size:32}") int batchSize) {
         this.outbox=outbox; this.channel=channel; this.options=options; this.batchSize=batchSize;
     }
-    public record Publication(int claimed, int delivered, int notDelivered, int inDoubt) {}
+    public record Publication(int claimed, int delivered, int notDelivered, int inDoubt) {
+        /** Nothing was sent, because nothing was asked of the wire. */
+        public static Publication nothing() { return new Publication(0,0,0,0); }
+    }
     public Publication publishPending(long siteId) {
         // How hard to retry is an operating decision, so it is read from the site's options each
         // sweep rather than fixed at start-up: changing it must not require a restart.
