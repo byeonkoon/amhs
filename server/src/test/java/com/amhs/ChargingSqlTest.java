@@ -243,6 +243,52 @@ class ChargingSqlTest {
    .isInstanceOfSatisfying(TransportRejected.class,e->assertThat(e.code()).isEqualTo("CHARGING_DISABLED"));
  }
 
+ /**
+  * A charged vehicle gets off the charger.
+  *
+  * <p>With as many chargers as vehicles it costs nothing to leave one sitting there. With fewer --
+  * the ordinary case -- a full vehicle on a charge point is a charger out of service, and every
+  * vehicle that needs it waits on a machine doing nothing. Finding that out when the next one is
+  * already flat is finding out too late.
+  */
+ @Test void aChargedVehicleLeavesTheChargerForTheNextOne(){
+  simulate();
+  jdbc.update("UPDATE fleet.vehicle_profile SET assignment_enabled=FALSE WHERE site_id=? AND id=?",SITE,AGV2);
+  jdbc.update("UPDATE topology.node SET wait_for='AGV' WHERE site_id=? AND revision_id=? AND id=?",SITE,REVISION,211);
+  simulator.place(SITE,AGV1,212L);          // standing on a charge point
+  simulator.setBattery(SITE,AGV1,35);
+
+  boolean charged=false;
+  for(int i=0;i<120&&!charged;i++){
+   tick();
+   charged="IDLE".equals(now(AGV1).status())&&level(AGV1)==0&&now(AGV1).batteryPct()>80;
+  }
+  assertThat(charged).as("it charged and the request ended").isTrue();
+
+  // It leaves at once; getting there takes a while, because the loop is one way and the waiting
+  // place is most of a lap round.
+  for(int i=0;i<40&&now(AGV1).nodeId()==212L;i++) tick();
+  assertThat(now(AGV1).nodeId()).as("off the charger").isNotEqualTo(212L);
+  for(int i=0;i<400&&now(AGV1).nodeId()!=211L;i++) tick();
+  assertThat(now(AGV1).nodeId()).as("and standing where vehicles wait").isEqualTo(211L);
+ }
+
+ /** With nowhere to wait it stays put and says so: parking it somewhere nobody chose is worse. */
+ @Test void withNoWaitingPlaceItStaysOnTheChargerAndSaysWhy(){
+  simulate();
+  jdbc.update("UPDATE fleet.vehicle_profile SET assignment_enabled=FALSE,home_node_id=NULL WHERE site_id=? AND id=?",SITE,AGV2);
+  jdbc.update("UPDATE fleet.vehicle_profile SET home_node_id=NULL WHERE site_id=? AND id=?",SITE,AGV1);
+  simulator.place(SITE,AGV1,212L);
+  simulator.setBattery(SITE,AGV1,95);       // already above the release level: nothing to charge
+
+  var steps=tx.execute(s->moves.chargeAll(SITE,java.util.Map.of()));
+  assertThat(steps).anySatisfy(st->{
+   assertThat(st.vehicleId()).isEqualTo(AGV1);
+   assertThat(st.decision()).isEqualTo("NO_WAITING_PLACE");
+  });
+  assertThat(now(AGV1).nodeId()).isEqualTo(212L);
+ }
+
  @Test void aVehicleStartingToChargeIsNeitherSentHomeNorMovedAside(){
   simulate();
   jdbc.update("UPDATE fleet.vehicle_profile SET assignment_enabled=FALSE WHERE site_id=? AND id=?",SITE,AGV2);

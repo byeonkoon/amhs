@@ -552,7 +552,15 @@ public class ZoneEvacuation {
     }
     continue;
    }
-   if(next==0) continue;
+   if(next==0){
+    // Charged, and standing on the charger. A charge point is a place to charge, not a place to
+    // stand: while a full vehicle sits on one, every other vehicle that needs it is waiting on a
+    // machine that is doing nothing. With as many chargers as vehicles that costs nothing; with
+    // fewer, which is the ordinary case, it is the whole of the problem.
+    var step=leaveTheCharger(siteId,revisionId,v,cutoff);
+    if(step!=null) out.add(step);
+    continue;
+   }
    if(v.carrierPresent()){ out.add(none(v.id(),"CHARGE_WAITS_FOR_CARRIER")); continue; }
    // Why a vehicle that is asking to charge is not being sent. Silence here is the state nobody
    // can explain: a battery falling on the screen with no reason given anywhere.
@@ -571,6 +579,39 @@ public class ZoneEvacuation {
    out.add(step(siteId,revisionId,v.id(),zoneOf(siteId,revisionId),fleet.snapshot(siteId,revisionId),cutoff));
   }
   return out;
+ }
+
+ /**
+  * Moves a vehicle off the charge point it is standing on, now that it is not charging.
+  *
+  * <p>Where it goes is where it would wait anyway: its own waiting node, or one of the site's for
+  * its kind. If there is nowhere free it stays and says so -- a vehicle parked somewhere nobody
+  * chose is worse than one parked on a charger, and the answer to that is a waiting place, which
+  * is a thing somebody has to lay out.
+  *
+  * <p>Nothing is said here about whether another vehicle wants the charger. A charger with a full
+  * vehicle on it is out of service whether or not anybody is queuing for it yet, and finding out
+  * later is finding out when it is already too late to charge.
+  */
+ private Step leaveTheCharger(long siteId,long revisionId,VehicleSnapshot vehicle,OffsetDateTime cutoff){
+  if(vehicle.nodeId()==null) return null;
+  var map=topology.getMap(siteId,revisionId);
+  var standingOn=map.nodes().stream().filter(n->n.id()==vehicle.nodeId()).findFirst().orElse(null);
+  if(standingOn==null||!standingOn.chargePoint()) return null;
+  if(whyNotFree(siteId,vehicle,cutoff)!=null) return null;
+  if(vehicle.carrierPresent()) return none(vehicle.id(),"CHARGER_HELD_BY_CARRIER");
+
+  var places=waitingPlaces(map,vehicle);
+  RouteResult best=null; Long target=null;
+  for(long place:places){
+   if(place==vehicle.nodeId()||placeTaken(siteId,revisionId,place,vehicle.id())) continue;
+   var route=planner.find(map,vehicle.nodeId(),place);
+   if(route.status()!=RouteResult.Status.FOUND) continue;
+   if(best==null||route.costSeconds()<best.costSeconds()){ best=route; target=place; }
+  }
+  if(best==null) return none(vehicle.id(),places.isEmpty()?"NO_WAITING_PLACE":"WAITING_PLACE_TAKEN");
+  ledger.startRelocation(siteId,revisionId,vehicle.id(),null,best.nodeIds(),target,Relocation.HOME);
+  return step(siteId,revisionId,vehicle.id(),zoneOf(siteId,revisionId),fleet.snapshot(siteId,revisionId),cutoff);
  }
 
  /**
