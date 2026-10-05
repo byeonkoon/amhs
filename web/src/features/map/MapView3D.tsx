@@ -158,6 +158,13 @@ class World {
   private motion = new MotionBuffer();
   private places = new THREE.Group();
   private placesKey = '';
+  /** The vehicle the camera is riding with, and how far behind it the camera sits. */
+  private following: number | null = null;
+  private followDistance = 12;
+  /** Set when a ride begins, so the first frame places the camera instead of flying it there. */
+  private followSnap = false;
+  /** Where a zoom step is heading, so it slides there instead of jumping. */
+  private zoomGoal: number | null = null;
   private overlays = new THREE.Group();
   private overlaysKey = '';
   private pickable: THREE.Object3D[] = [];
@@ -196,6 +203,18 @@ class World {
     this.controls.enableDamping = true;
     this.controls.maxPolarAngle = Math.PI * 0.49;
     this.controls.minDistance = 2;
+    // The wheel zooms towards what the pointer is over, not towards the middle of the screen. On a
+    // site this size the middle is usually empty floor, and zooming at it walks away from the thing
+    // being looked at.
+    this.controls.zoomToCursor = true;
+    this.controls.zoomSpeed = 1.1;
+
+    // While following a vehicle the camera is driven, so the wheel sets how far behind it sits.
+    this.renderer.domElement.addEventListener('wheel', event => {
+      if (this.following == null) return;
+      event.preventDefault();
+      this.followDistance = this.clampDistance(this.followDistance * (event.deltaY > 0 ? 1.12 : 1 / 1.12));
+    }, { passive: false });
 
     this.resize = new ResizeObserver(() => this.fit());
     this.resize.observe(host);
@@ -375,10 +394,25 @@ class World {
     this.camera.position.set(0, this.span * 1.3, 0.01);
     this.controls.update();
   }
+  /**
+   * How far the camera may sit from what it is looking at: enough to hold the whole site, and
+   * close enough to read one vehicle's label. Both ends follow the site's own size, because a
+   * limit in metres means something different on a bay than on a plant.
+   */
+  private clampDistance(distance: number) {
+    return Math.max(4, Math.min(this.span * 2.2, distance));
+  }
+  /**
+   * A zoom step, as a distance to reach rather than a jump to it: the view slides there over a few
+   * frames, so it stays obvious which way the site moved. Holding the button keeps it going.
+   */
   zoom(factor: number) {
-    const offset = this.camera.position.clone().sub(this.controls.target).multiplyScalar(factor);
-    this.camera.position.copy(this.controls.target).add(offset);
-    this.controls.update();
+    if (this.following != null) {
+      this.followDistance = this.clampDistance(this.followDistance * factor);
+      return;
+    }
+    const now = this.zoomGoal ?? this.camera.position.distanceTo(this.controls.target);
+    this.zoomGoal = this.clampDistance(now * factor);
   }
 
   private build(type: 'OHT' | 'AGV'): VehicleObject {
@@ -661,9 +695,75 @@ class World {
       obj.yaw += d * Math.min(1, k * 2);
       obj.group.children[0].rotation.y = obj.yaw;
     }
+
+    if (this.following !== null) {
+      const obj = this.vehicles.get(this.following);
+      if (!obj) this.follow(null);          // it left the map; give the view back rather than hang
+      else {
+        // Behind and a little above it, looking the way it is going. The camera is led to that
+        // place rather than snapped to it, so a vehicle turning does not whip the whole site round.
+        // An OHT rides on the rail and an AGV on the floor, so the camera rides at its height --
+        // aiming at the floor beneath a rail vehicle looks past the thing being followed.
+        const high = obj.type === 'OHT' ? RAIL - 0.5 : 0.6;
+        const ride = obj.group.position.clone().setY(high);
+        const back = new THREE.Vector3(-Math.cos(obj.yaw), 0, Math.sin(obj.yaw))
+          .multiplyScalar(this.followDistance);
+        const wanted = ride.clone().add(back);
+        wanted.y = high + Math.max(1.2, this.followDistance * 0.3);
+        if (this.followSnap) {
+          // The ride starts at the vehicle. Flying there from wherever the view happened to be is
+          // a long swoop over everything in between, which shows nobody anything and costs the
+          // seconds in which the vehicle was worth watching.
+          this.camera.position.copy(wanted);
+          this.controls.target.copy(ride);
+          this.followSnap = false;
+        } else {
+          this.camera.position.lerp(wanted, 1 - Math.exp(-dt * 3.2));
+          this.controls.target.lerp(ride, 1 - Math.exp(-dt * 5));
+        }
+        this.camera.lookAt(this.controls.target);
+        // The orbit is not updated while riding: it would recompute the camera from its own idea
+        // of where it should be and undo everything above.
+        this.renderer.render(this.scene, this.camera);
+        return;
+      }
+    } else if (this.zoomGoal !== null) {
+      const dir = this.camera.position.clone().sub(this.controls.target);
+      const at = dir.length() || 1;
+      const next = at + (this.zoomGoal - at) * (1 - Math.exp(-dt * 9));
+      this.camera.position.copy(this.controls.target).add(dir.multiplyScalar(next / at));
+      if (Math.abs(next - this.zoomGoal) < this.zoomGoal * 0.004) this.zoomGoal = null;
+    }
+
     this.controls.update();
     this.renderer.render(this.scene, this.camera);
   }
+
+  /**
+   * Rides with one vehicle, or stops riding.
+   *
+   * <p>While riding, the view is the vehicle's: the site turns as it turns, which is the only way
+   * to see what a vehicle meets -- what it is about to reach, and what is behind it. The orbit is
+   * handed back the moment it stops, and the wheel becomes how far behind the camera sits.
+   */
+  follow(vehicleId: number | null) {
+    this.following = vehicleId;
+    this.zoomGoal = null;
+    if (vehicleId === null) {
+      // Hand the orbit back where the ride left off: it takes its bearings from where the camera
+      // and the target actually are, so the view does not jump when the ride ends.
+      this.controls.enabled = true;
+      this.controls.update();
+      return;
+    }
+    // A few vehicle lengths behind, whatever the camera was doing before. One world unit is a
+    // metre here, so this is a camera walking behind the vehicle rather than watching the site.
+    this.followDistance = this.clampDistance(7);
+    this.followSnap = true;
+    this.controls.enabled = false;
+  }
+  /** Which vehicle the camera is riding with, so a screen can say so. */
+  riding() { return this.following; }
 
   dispose() {
     cancelAnimationFrame(this.frame);
@@ -753,6 +853,16 @@ export default function MapView3D(props: Props) {
     world.current?.setTarget(props.targetNodeId ?? null);
   }, [props.targetNodeId]);
 
+  // Riding with a vehicle. Choosing a different one moves the ride to it, which is what somebody
+  // who clicks another vehicle while following plainly means; choosing none ends the ride.
+  const [riding, setRiding] = React.useState(false);
+  React.useEffect(() => {
+    const w = world.current;
+    if (!w) return;
+    if (props.selectedId === null) { if (w.riding() !== null) w.follow(null); setRiding(false); return; }
+    if (w.riding() !== null && w.riding() !== props.selectedId) w.follow(props.selectedId);
+  }, [props.selectedId]);
+
   const button = (label: string, title: string, run: () => void) => (
     <button type="button" title={title} aria-label={title} onClick={run}
       style={{ minWidth: 28, height: 26, padding: '0 6px', border: '1px solid var(--ln2)', background: 'var(--srf)',
@@ -761,10 +871,30 @@ export default function MapView3D(props: Props) {
   return (
     <div className="mapwrap map3d" style={{ position: 'relative' }}>
       <div style={{ position: 'absolute', right: 10, top: 10, display: 'flex', gap: 4, zIndex: 2 }}>
+        {/* Riding with a vehicle: only offered once one is chosen, because there is nothing to
+            ride with until then. */}
+        <button type="button"
+          title={props.selectedId === null ? '차량을 먼저 고르면 그 차량 시점으로 따라갑니다.'
+            : riding ? '따라가기를 멈추고 시점을 되돌려 줍니다.' : '고른 차량 뒤에서 그 차량이 보는 쪽으로 따라갑니다.'}
+          disabled={props.selectedId === null}
+          onClick={() => {
+            const w = world.current;
+            if (!w || props.selectedId === null) return;
+            const next = riding ? null : props.selectedId;
+            w.follow(next);
+            setRiding(next !== null);
+          }}
+          style={{
+            height: 26, padding: '0 9px', borderRadius: 5, fontSize: 12, lineHeight: 1,
+            border: `1px solid ${riding ? 'var(--acc)' : 'var(--ln2)'}`,
+            background: riding ? 'var(--acc)' : 'var(--srf)',
+            color: riding ? '#fff' : props.selectedId === null ? 'var(--mut)' : 'var(--ink2)',
+            cursor: props.selectedId === null ? 'default' : 'pointer',
+          }}>{riding ? '따라가는 중' : '따라가기'}</button>
         {button('+', '확대', () => world.current?.zoom(0.75))}
         {button('−', '축소', () => world.current?.zoom(1 / 0.75))}
-        {button('위', '위에서 보기', () => world.current?.top())}
-        {button('⤢', '처음 시점', () => world.current?.home())}
+        {button('위', '위에서 보기', () => { world.current?.follow(null); setRiding(false); world.current?.top(); })}
+        {button('⤢', '처음 시점', () => { world.current?.follow(null); setRiding(false); world.current?.home(); })}
       </div>
       <div ref={host} role="img" aria-label="OHT 천장 레일과 AGV 바닥 주행로의 3D 설비 지도. 끌어서 회전, 휠로 확대·축소"
         style={{ width: '100%', height: 'min(62vh, 640px)', minHeight: 380, touchAction: 'none' }} />
