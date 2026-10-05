@@ -349,6 +349,33 @@ public class ZoneEvacuation {
  public List<Relocation> openMoves(long siteId){ return ledger.openRelocations(siteId); }
 
  /**
+  * Winds down the moves the controller started, for a site that has been stopped.
+  *
+  * <p>Charging, giving way, going home and leaving a zone are all the controller's own initiative,
+  * and it has been told to stop. Left open they would stay open for ever -- nothing advances them
+  * while the site is stopped -- and a site whose moves never close is one whose map can never be
+  * changed and whose vehicles are never free. A vehicle still rolling is left alone; it is finishing
+  * the road it was already given, and the move ends when it stands.
+  *
+  * <p>Nothing is decided here about where the vehicle should be. When the site starts again the
+  * controller works that out from what it then sees, which is how these moves are decided anyway.
+  */
+ @Transactional
+ public List<Step> standDown(long siteId){
+  long revisionId=ledger.activeRevision(siteId);
+  var out=new ArrayList<Step>();
+  for(var relocation:ledger.openRelocations(siteId)){
+   var vehicle=fleet.find(siteId,revisionId,relocation.vehicleId()).orElse(null);
+   if(vehicle==null||vehicle.nodeId()==null||vehicle.betweenNodes()) continue;
+   if(!outbox.unresolvedForVehicle(siteId,relocation.vehicleId()).isEmpty()) continue;
+   ledger.finishRelocation(relocation.id(),"SEQUENCE_STOPPED");
+   traffic.releaseAhead(siteId,relocation.vehicleId(),vehicle.nodeId(),"SEQUENCE_STOPPED");
+   out.add(none(relocation.vehicleId(),"MOVE_ENDED_BY_STOP"));
+  }
+  return out;
+ }
+
+ /**
   * A vehicle with nothing to do that stands where another one has been waiting to go for longer
   * than the site allows is moved out of the way: to its home node when that lies off the waiting
   * vehicle's road, otherwise to the nearest clear place off that road (the same rules as leaving a

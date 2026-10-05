@@ -78,7 +78,7 @@ function App() {
    */
   const [running, setRunning] = React.useState<boolean | null>(null);
   const stopOrStart = async (wanted: boolean) => {
-    if (!wanted && !window.confirm('작업 진행을 멈춥니다. 작업 접수는 계속 되지만 배차·이동·명령 전송과 시뮬레이션 주행이 멈춥니다. 진행할까요?')) return;
+    if (!wanted && !window.confirm('작업 진행을 멈춥니다. 작업 접수는 계속 되지만 배차·새 이동 허가·명령 전송이 멈춥니다. 달리고 있던 차량은 이미 받은 허가 끝에서 섭니다. 진행할까요?')) return;
     try {
       const now = await send<{ running: boolean }>(opsApi.execution(), 'PUT', { running: wanted },
         wanted ? '작업 진행 활성' : '작업 진행 정지');

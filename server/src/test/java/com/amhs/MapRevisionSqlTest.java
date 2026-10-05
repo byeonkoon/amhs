@@ -111,17 +111,24 @@ class MapRevisionSqlTest {
    assertThat(topology.activate(SITE,DRAFT).active()).as("nothing is moving").isTrue();
    settleEverything();
 
-   // Road granted ahead of where it stands: it may be driving onto it.
+   // Road still granted ahead of a vehicle that has stopped: it is standing, and standing still is
+   // not something a map change disturbs. The run it had is over; nothing will drive it until
+   // somebody starts the site again.
    jdbc.update("INSERT INTO traffic.node_reservation(site_id,revision_id,node_id,vehicle_id,sequence)"
     +" VALUES(?,?,?,?,?)",SITE,ACTIVE,102,standing,2);
-   refused(()->topology.activate(SITE,DRAFT),409,"ROADS_STILL_GRANTED");
-   jdbc.update("UPDATE traffic.node_reservation SET released_at=now(),release_reason='TEST'"
-    +" WHERE site_id=? AND released_at IS NULL",SITE);
+   assertThat(topology.activate(SITE,DRAFT).active()).as("it has stopped, wherever its road ended").isTrue();
+   settleEverything();
 
-   // Between two nodes, holding the one it left: still on the road.
+   // Between two nodes: moving, and a map changed under it leaves it on track that is gone.
    jdbc.update("UPDATE fleet.vehicle_state SET x_mm=1,y_mm=1 WHERE site_id=? AND vehicle_id=?",SITE,standing);
    jdbc.update("INSERT INTO traffic.node_reservation(site_id,revision_id,node_id,vehicle_id,sequence)"
     +" VALUES(?,?,?,?,?)",SITE,ACTIVE,101,standing,3);
+   refused(()->topology.activate(SITE,DRAFT),409,"ROADS_STILL_GRANTED");
+   jdbc.update("UPDATE fleet.vehicle_state SET x_mm=NULL,y_mm=NULL WHERE site_id=? AND vehicle_id=?",SITE,standing);
+
+   // Its last word is old: where it is now is a guess, and a guess is not a vehicle standing still.
+   jdbc.update("UPDATE fleet.vehicle_state SET reported_at=now()-interval '1 hour'"
+    +" WHERE site_id=? AND vehicle_id=?",SITE,standing);
    refused(()->topology.activate(SITE,DRAFT),409,"ROADS_STILL_GRANTED");
 
    // A hold whose vehicle has not said where it is: not known to be anywhere, so not known to be still.

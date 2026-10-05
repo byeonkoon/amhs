@@ -67,7 +67,13 @@ public class SiteSweep {
   * which is what a queue is for.
   */
  public Sweep run(long siteId,String actorCode,String traceId){
-  if(!options.sequenceRunning(siteId)) return Sweep.stopped();
+  if(!options.sequenceRunning(siteId)){
+   // A stopped site still tidies up after itself: the moves the controller started are ended once
+   // their vehicle has stood still, or they would stay open for as long as the stop lasts.
+   var ended=evacuation.standDown(siteId);
+   return new Sweep(false,List.of(),List.of(),List.of(),List.of(),ended,
+    DeviceGateway.Publication.nothing(),false);
+  }
   boolean autoDispatch=options.get(siteId).settings().autoDispatch();
   var assigned=new ArrayList<Long>(); var skipped=new ArrayList<Skipped>();
   if(autoDispatch){

@@ -167,7 +167,7 @@ export function AppShell(props: {
             {props.onRunning && props.running !== null && props.running !== undefined && (
               <button type="button" onClick={() => props.onRunning?.(!props.running)}
                 title={props.running
-                  ? '작업 진행을 멈춥니다. 작업 접수는 계속 되고, 배차·이동·명령 전송과 시뮬레이션 주행이 멈춥니다.'
+                  ? '작업 진행을 멈춥니다. 작업 접수는 계속 되고, 배차·새 이동 허가·명령 전송이 멈춥니다. 달리던 차량은 받은 허가 끝에서 섭니다.'
                   : '작업 진행을 다시 시작합니다.'}
                 style={{
                   border: `1px solid ${props.running ? 'var(--crit)' : 'var(--good)'}`,

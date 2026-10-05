@@ -77,12 +77,11 @@ class SimulationConfiguration {
    for(long siteId:simulated){
     try{
      vehicles.placeAll(siteId,configuration);
-     // A stopped site progresses nothing. The sweep refuses by itself; the handover tick has to be
-     // asked here, because a vehicle finishing a pickup while the plant is stopped is the plant
-     // not being stopped.
-     if(!options.sequenceRunning(siteId)) continue;
+     // The pass knows what a stopped site does -- nothing, except end the moves it had started.
+     // The handover tick is asked separately, because a vehicle finishing a pickup while the plant
+     // is stopped is the plant not being stopped.
      sweep.run(siteId,"simulator",null);
-     vehicles.settle(siteId);
+     if(options.sequenceRunning(siteId)) vehicles.settle(siteId);
     }catch(RuntimeException e){
      // One bad tick must not stop the loop; the next one sees the state as it then is.
      log.warn("simulation tick failed for site {}: {}",siteId,e.getMessage());
@@ -97,8 +96,12 @@ class SimulationConfiguration {
    long now=System.nanoTime();
    double seconds=Math.min(1.0,(now-lastMotion)/1e9);
    lastMotion=now;
+   // A stopped site keeps driving what is already rolling. Nothing new is granted while it is
+   // stopped, so each vehicle runs out the authority it was holding and comes to a stand on a node
+   // -- which is what stopping a plant means. Freezing them between two nodes instead would leave
+   // the site in a state it can never leave: still holding road, with nothing able to release it.
    for(long siteId:options.simulatedSites()){
-    try{ if(options.sequenceRunning(siteId)) vehicles.drive(siteId,seconds); }
+    try{ vehicles.drive(siteId,seconds); }
     catch(RuntimeException e){ log.warn("simulation motion failed for site {}: {}",siteId,e.getMessage()); }
    }
   }

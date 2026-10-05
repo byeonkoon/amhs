@@ -28,6 +28,7 @@ class SequenceHaltSqlTest {
  @Autowired OperationOptionConfiguration options; @Autowired SiteSweep sweep;
  @Autowired TransportOrders orders; @Autowired SimulatedVehicles simulator;
  @Autowired ZoneEvacuation moves; @Autowired TransportLedger ledger;
+ @Autowired com.amhs.fleet.FleetState fleet;
  @Autowired JdbcTemplate jdbc;
  private static final long SITE=1, OHT=1;
 
@@ -90,6 +91,34 @@ class SequenceHaltSqlTest {
    .isInstanceOfSatisfying(TransportRejected.class,e->assertThat(e.code()).isEqualTo("SEQUENCE_STOPPED"));
   assertThatThrownBy(()->moves.chargeNow(SITE,OHT,true))
    .isInstanceOfSatisfying(TransportRejected.class,e->assertThat(e.code()).isEqualTo("SEQUENCE_STOPPED"));
+ }
+
+ /**
+  * A stopped site comes to rest on nodes, not between them.
+  *
+  * <p>A vehicle frozen between two nodes still holds the road it was given, and nothing can release
+  * it while the site is stopped -- the map could then never be changed, and the site would be in a
+  * state it could not leave. So what stops is the granting; what is already rolling runs out and
+  * stands at the end of it, which is what stopping a plant means.
+  */
+ @Test void aStoppedSiteComesToRestOnNodes(){
+  simulator.place(SITE,OHT,101L);
+  long id=accept();
+  for(int i=0;i<12;i++){ sweep.run(SITE,"test",null); simulator.settle(SITE); simulator.drive(SITE,0.4); }
+  options.setSequenceRunning(SITE,false);
+  // Only the motion keeps running while stopped, as the loop does.
+  for(int i=0;i<40;i++) simulator.drive(SITE,1.0);
+
+  var vehicle=fleet.find(SITE,1,OHT).orElseThrow();
+  assertThat(vehicle.betweenNodes()).as("standing on a node, not between two").isFalse();
+  assertThat(vehicle.nodeId()).isNotNull();
+  assertThat(orders.find(SITE,id).orElseThrow().status().isTerminal())
+   .as("and no further work was taken on").isFalse();
+
+  // And the moves the controller had started are closed, instead of staying open for the length of
+  // the stop: a site whose moves never close is one whose map can never be changed.
+  sweep.run(SITE,"test",null);
+  assertThat(ledger.openRelocations(SITE)).isEmpty();
  }
 
  /** Stopping is not a configuration change: the moment it is wanted is while the site is running. */

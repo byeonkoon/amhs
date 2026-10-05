@@ -626,6 +626,8 @@ export function explainDecision(decision: string): string {
     CHARGE_COMPLETE: '충전을 마쳤습니다.',
     CHARGE_STOPPED_FOR_WORK: '대기 중인 작업이 있어 충전을 멈췄습니다.',
     CHARGE_WAITS_FOR_CARRIER: '화물을 싣고 있어 충전하러 가지 않습니다.',
+    MOVE_ENDED_BY_STOP: '사이트를 정지해 제어기가 시작했던 이동을 닫았습니다. 다시 활성하면 그때 상황을 보고 새로 정합니다.',
+    SEQUENCE_STOPPED: '사이트가 정지 상태입니다. 활성으로 바꾼 뒤에 가능합니다.',
     CHARGING_DISABLED: '이 차량은 스스로 충전하지 않습니다(레일 급전). 버퍼가 떨어지면 알람으로 알립니다.',
     ALREADY_CHARGING: '이미 충전 중입니다.',
     NOT_CHARGING: '충전 중이 아닙니다.',

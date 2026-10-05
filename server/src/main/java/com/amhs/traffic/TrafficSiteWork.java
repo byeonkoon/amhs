@@ -3,18 +3,18 @@ import com.amhs.platform.SiteWork;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 /**
- * Traffic's answer to "may this site's map change now": not while a vehicle is still on a road it
- * was granted.
+ * Traffic's answer to "may this site's map change now": not while a vehicle is moving on it.
  *
  * <p>A hold is permission to be somewhere on this map, and a vehicle standing still holds the node
- * it stands on -- permanently, because that is what stops anyone else being sent into it. So holds
- * on their own say nothing: on a quiet site every vehicle has one. Counting those made the map
- * impossible to change at all, which is the opposite of careful.
+ * it stands on -- permanently, because that is what stops anyone else being sent into it. It often
+ * holds a little road ahead too, from the run it has just finished. Neither says anything is
+ * happening: on a quiet site every vehicle has holds. Counting them made the map impossible to
+ * change at all, which is the opposite of careful.
  *
- * <p>What matters is a hold the vehicle has not arrived at, or has not finished leaving: road
- * granted ahead of where it stands, a vehicle between two nodes, or a hold whose vehicle has not
- * said where it is. Each of those is a vehicle still moving on this map, and a map swapped under it
- * leaves it driving on track the new map does not have.
+ * <p>What a map change cannot survive is a vehicle in motion: one between two nodes, one that has
+ * not said where it is, or one whose last word is old enough that where it is now is a guess.
+ * Swapping the ground under any of those leaves a vehicle driving on track the new map does not
+ * have. A vehicle standing still, by contrast, does not move because the map under it changed.
  *
  * <p>Holds belonging to a revision that is not in use are not counted either: permission to stand
  * on a map the site has stopped running is not permission to be anywhere.
@@ -29,8 +29,11 @@ class TrafficSiteWork implements SiteWork {
    +" JOIN topology.map_revision m ON m.site_id=r.site_id AND m.id=r.revision_id AND m.status='ACTIVE'"
    +" LEFT JOIN fleet.vehicle_state s ON s.site_id=r.site_id AND s.vehicle_id=r.vehicle_id"
    +"  AND s.revision_id=r.revision_id"
+   +" LEFT JOIN platform.site_operation o ON o.site_id=r.site_id"
    +" WHERE r.site_id=? AND r.released_at IS NULL"
-   +"  AND (s.node_id IS NULL OR s.node_id<>r.node_id OR s.x_mm IS NOT NULL)",Integer.class,siteId);
+   +"  AND (s.node_id IS NULL OR s.x_mm IS NOT NULL"
+   +"   OR s.reported_at < now()-make_interval(secs => COALESCE(o.position_stale_seconds,30)))",
+   Integer.class,siteId);
   return moving!=null&&moving>0?"ROADS_STILL_GRANTED":null;
  }
 }
