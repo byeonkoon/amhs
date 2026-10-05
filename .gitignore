@@ -21,9 +21,12 @@ web/*.tsbuildinfo
 .idea/
 *.iml
 
-# 기존 현장 시스템 원본 분석 자료는 저장소에 포함하지 않는다
+# 비공개 작업 자료와 로컬 개발 지침
 docs/*source-evidence*
 docs/handoff-*
 docs/*-private-*
 scripts/restore-*
 _private/
+
+/AGENTS.md
+/docs/pc-handoff.md
