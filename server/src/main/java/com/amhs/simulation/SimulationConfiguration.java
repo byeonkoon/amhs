@@ -81,7 +81,7 @@ class SimulationConfiguration {
      // The handover tick is asked separately, because a vehicle finishing a pickup while the plant
      // is stopped is the plant not being stopped.
      sweep.run(siteId,"simulator",null);
-     if(options.sequenceRunning(siteId)) vehicles.settle(siteId);
+     if(sweep.progressing(siteId)) vehicles.settle(siteId);
      else vehicles.acknowledge(siteId);
     }catch(RuntimeException e){
      // One bad tick must not stop the loop; the next one sees the state as it then is.

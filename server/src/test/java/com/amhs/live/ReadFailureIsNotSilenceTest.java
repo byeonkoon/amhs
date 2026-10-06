@@ -38,7 +38,7 @@ class ReadFailureIsNotSilenceTest {
   return new LiveSite(Mockito.mock(FleetState.class),Mockito.mock(TrafficControl.class),
    Mockito.mock(TransportOrders.class),Mockito.mock(TransportAssignment.class),
    Mockito.mock(TransportLedger.class),Mockito.mock(ZoneEvacuation.class),
-   Mockito.mock(CommandOutbox.class),UNREACHABLE);
+   Mockito.mock(CommandOutbox.class),UNREACHABLE,Mockito.mock(com.amhs.transport.RestartCheck.class));
  }
 
  @Test void aReadThatCouldNotRunNamesEveryPartItCouldNotRead(){

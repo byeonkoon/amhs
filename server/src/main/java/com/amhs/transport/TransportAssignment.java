@@ -30,13 +30,14 @@ public class TransportAssignment {
  private final FleetState fleet; private final DispatchEvaluator evaluator;
  private final CommandOutbox outbox; private final ObjectMapper json; private final TrafficControl traffic;
  private final ZoneDetour detour; private final OperationOptionConfiguration operations;
- private final com.amhs.equipment.SimulatedEquipment equipment;
+ private final com.amhs.equipment.SimulatedEquipment equipment; private final RestartCheck restartCheck;
  public TransportAssignment(TransportLedger ledger,TopologyQuery topology,FleetState fleet,
                             CommandOutbox outbox,ObjectMapper json,TrafficControl traffic,ZoneDetour detour,
-                            OperationOptionConfiguration operations,com.amhs.equipment.SimulatedEquipment equipment){
+                            OperationOptionConfiguration operations,com.amhs.equipment.SimulatedEquipment equipment,
+                            RestartCheck restartCheck){
   this.ledger=ledger; this.topology=topology; this.fleet=fleet;
   this.evaluator=new DispatchEvaluator(); this.outbox=outbox; this.json=json; this.traffic=traffic;
-  this.detour=detour; this.operations=operations; this.equipment=equipment;
+  this.detour=detour; this.operations=operations; this.equipment=equipment; this.restartCheck=restartCheck;
  }
 
  public record Assigned(TransportOrder order,AssignmentView assignment,String commandId,boolean created){}
@@ -46,6 +47,9 @@ public class TransportAssignment {
 
  @Transactional
  public Assigned assign(long siteId,long orderId,String actorCode,String traceId){
+  // Nothing is dispatched on a state nobody has compared with the vehicles since the server started.
+  if(restartCheck.pending(siteId))
+   throw new TransportRejected("RESTART_CHECK_PENDING","the site waits for its restart check",true);
   var order=ledger.lock(siteId,orderId)
    .orElseThrow(()->new TransportRejected("ORDER_NOT_FOUND","unknown order",false));
   // A repeated request for an order that already holds a vehicle returns what it holds instead

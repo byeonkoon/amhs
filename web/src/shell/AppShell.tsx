@@ -78,6 +78,8 @@ export function AppShell(props: {
    * what it stops, where the hand already is.
    */
   running?: boolean | null;
+  /** The site waits for the comparison that follows a server start; said on every screen, like a stop. */
+  restartCheckPending?: boolean;
   onAccount: (item: 'system' | 'accounts' | 'signin') => void;
   children: React.ReactNode;
 }) {
@@ -159,6 +161,12 @@ export function AppShell(props: {
           </div>
           {/* Stopped is said where it cannot be missed, and in the same place every time. */}
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginLeft: 'auto' }}>
+            {props.restartCheckPending && (
+              <span style={{
+                border: '1px solid var(--warn, #C77700)', background: '#FFF4DE', color: '#7A4A00',
+                borderRadius: 5, padding: '4px 11px', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap',
+              }}>재시작 대조 대기 — 확인 전까지 작업이 진행되지 않습니다</span>
+            )}
             {props.running === false && (
               <span style={{
                 border: '1px solid var(--crit)', background: '#FBEAE7', color: '#8E2B23',

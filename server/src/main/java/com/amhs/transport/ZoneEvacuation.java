@@ -44,10 +44,12 @@ public class ZoneEvacuation {
  private final OperationOptionConfiguration operations; private final ObjectMapper json;
  private final RoutePlanner planner=new RoutePlanner();
  public ZoneEvacuation(TransportLedger ledger,FleetState fleet,TrafficControl traffic,CommandOutbox outbox,
-                       TopologyQuery topology,OperationOptionConfiguration operations,ObjectMapper json){
+                       TopologyQuery topology,OperationOptionConfiguration operations,ObjectMapper json,
+                       RestartCheck restartCheck){
   this.ledger=ledger; this.fleet=fleet; this.traffic=traffic; this.outbox=outbox;
-  this.topology=topology; this.operations=operations; this.json=json;
+  this.topology=topology; this.operations=operations; this.json=json; this.restartCheck=restartCheck;
  }
+ private final RestartCheck restartCheck;
 
  /** What one vehicle's turn decided; {@code commandId} is set only when a movement was written. */
  public record Step(long vehicleId,String decision,List<Long> addedNodeIds,String commandId){
@@ -662,6 +664,8 @@ public class ZoneEvacuation {
  private void requireRunning(long siteId){
   if(!operations.sequenceRunning(siteId))
    throw new TransportRejected("SEQUENCE_STOPPED","the site is stopped",true);
+  if(restartCheck.pending(siteId))
+   throw new TransportRejected("RESTART_CHECK_PENDING","the site waits for its restart check",true);
  }
 
  /** Null when the vehicle may be sent somewhere on the controller's own initiative; otherwise why not. */

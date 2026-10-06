@@ -25,12 +25,12 @@ public class SiteSweep {
  private final TransportOrders orders; private final TransportAssignment assignment;
  private final ContinuousMovement movement; private final DeviceGateway gateway;
  private final OperationOptionConfiguration options; private final ZoneEvacuation evacuation;
- private final DeadlockRecoveries recoveries;
+ private final DeadlockRecoveries recoveries; private final RestartCheck restartCheck;
  public SiteSweep(TransportOrders orders,TransportAssignment assignment,ContinuousMovement movement,
                   DeviceGateway gateway,OperationOptionConfiguration options,ZoneEvacuation evacuation,
-                  DeadlockRecoveries recoveries){
+                  DeadlockRecoveries recoveries,RestartCheck restartCheck){
   this.orders=orders; this.assignment=assignment; this.movement=movement;
-  this.gateway=gateway; this.options=options; this.evacuation=evacuation; this.recoveries=recoveries;
+  this.gateway=gateway; this.options=options; this.evacuation=evacuation; this.recoveries=recoveries; this.restartCheck=restartCheck;
  }
 
  /**
@@ -66,9 +66,17 @@ public class SiteSweep {
   * six checks spread through them. Work may still be accepted while stopped; it waits in the queue,
   * which is what a queue is for.
   */
+ /**
+  * Whether the site may progress: it is not stopped, and it is not waiting for the comparison that
+  * follows a server start.
+  */
+ public boolean progressing(long siteId){
+  return options.sequenceRunning(siteId)&&!restartCheck.pending(siteId);
+ }
+
  public Sweep run(long siteId,String actorCode,String traceId){
-  if(!options.sequenceRunning(siteId)){
-   // A stopped site still tidies up after itself: the moves the controller started are ended once
+  if(!progressing(siteId)){
+   // A stopped site, or one waiting for its restart check, still tidies up after itself: the moves the controller started are ended once
    // their vehicle has stood still, or they would stay open for as long as the stop lasts.
    var ended=evacuation.standDown(siteId);
    return new Sweep(false,List.of(),List.of(),List.of(),List.of(),ended,

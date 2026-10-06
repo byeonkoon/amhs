@@ -114,6 +114,13 @@ class JdbcCommandOutbox implements CommandOutbox {
  }
 
  @Transactional(propagation=Propagation.MANDATORY)
+ public boolean closeInDoubtAfterRestart(String commandId,String reason){
+  return jdbc.update("UPDATE integration.command_outbox SET status='ACCEPTED',settled_at=now(),last_outcome='CLOSED_AFTER_RESTART',"
+   +"last_error=? WHERE command_id=? AND status IN ('DISPATCHING','SENT')",
+   reason==null?null:reason.length()<=256?reason:reason.substring(0,256),commandId)>0;
+ }
+
+ @Transactional(propagation=Propagation.MANDATORY)
  public void withdrawIfUnsent(String commandId,String reason){
   jdbc.update("UPDATE integration.command_outbox SET status='WITHDRAWN',settled_at=now(),last_outcome='WITHDRAWN',last_error=?"
    +" WHERE command_id=? AND status IN ('PENDING','FAILED')",

@@ -1,6 +1,6 @@
 import React from 'react';
 import {
-  SITE_ID, type AssignmentView, type Deadlock, type DeadlockPlan, type DeadlockRecovery, type DeviceCommand, type NodeHold, type TransportOrder,
+  SITE_ID, type AssignmentView, type Deadlock, type DeadlockPlan, type DeadlockRecovery, type DeviceCommand, type RestartCheckState, type NodeHold, type TransportOrder,
   type VehicleHeading, type VehicleMove, type VehicleSnapshot, type ZoneOccupancy,
 } from './api';
 
@@ -9,6 +9,7 @@ export type LiveParts = Partial<{
   revisionId: number; vehicles: VehicleSnapshot[]; holds: NodeHold[]; headings: VehicleHeading[];
   moves: VehicleMove[]; assignments: AssignmentView[]; orders: TransportOrder[]; deadlocks: Deadlock[];
   zones: ZoneOccupancy[]; inDoubt: DeviceCommand[]; deadlockPlans: DeadlockPlan[]; recoveries: DeadlockRecovery[];
+  restartCheck: RestartCheckState;
 }>;
 /**
  * Every message names the parts the server could not read and has not read since. Freshness travels

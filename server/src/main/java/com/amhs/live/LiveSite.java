@@ -24,13 +24,14 @@ class LiveSite {
  /** Read on every pass: what moves. */
  static final java.util.List<String> FAST=java.util.List.of("revisionId","vehicles","holds","headings","moves","assignments");
  /** Read every few passes: what changes with work rather than with motion. */
- static final java.util.List<String> SLOW=java.util.List.of("orders","deadlocks","zones","inDoubt","deadlockPlans","recoveries");
+ static final java.util.List<String> SLOW=java.util.List.of("orders","deadlocks","zones","inDoubt","deadlockPlans","recoveries","restartCheck");
 
  private final Map<String,LongFunction<Object>> reads=new LinkedHashMap<>();
  private final TransactionTemplate tx;
 
  LiveSite(FleetState fleet,TrafficControl traffic,TransportOrders orders,TransportAssignment assignment,
-          TransportLedger ledger,ZoneEvacuation moves,CommandOutbox outbox,PlatformTransactionManager transactions){
+          TransportLedger ledger,ZoneEvacuation moves,CommandOutbox outbox,PlatformTransactionManager transactions,
+          com.amhs.transport.RestartCheck restartCheck){
   tx=new TransactionTemplate(transactions);
   tx.setReadOnly(true);
   tx.setIsolationLevel(TransactionDefinition.ISOLATION_REPEATABLE_READ);
@@ -46,6 +47,7 @@ class LiveSite {
   reads.put("inDoubt",site->outbox.inDoubt(site,50));
   reads.put("deadlockPlans",traffic::deadlockPlans);
   reads.put("recoveries",site->traffic.recoveries(site,20));
+  reads.put("restartCheck",restartCheck::state);
  }
 
  /**

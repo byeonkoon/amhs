@@ -61,6 +61,13 @@ public interface CommandOutbox {
     /** Withdraws one command if it has not left yet (pending, or failed and waiting to be tried again). */
     void withdrawIfUnsent(String commandId, String reason);
     /**
+     * An operator closes a command whose outcome was lost in a restart (claimed or sent, never
+     * answered), on the evidence of the vehicle standing still since. It is recorded as possibly
+     * received -- ACCEPTED with the outcome {@code CLOSED_AFTER_RESTART} and the operator's reason --
+     * never as "did not arrive", which nobody can know. False when it was not in doubt any more.
+     */
+    boolean closeInDoubtAfterRestart(String commandId, String reason);
+    /**
      * Records what the channel reported for a claimed command. A result never moves a command back:
      * after an acknowledgement it is only recorded, and a command whose withdrawal was asked for
      * during the send is withdrawn if the send failed.

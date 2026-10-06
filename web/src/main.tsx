@@ -7,7 +7,7 @@ import {
   type AlarmCount,
   type AssignmentView, type Cfg, type Deadlock, type DeadlockPlan, type DeadlockRecovery, type DeviceCommand, type MapData, type NodeHold,
   type MapRevision, type OperationOptions, type Session, type TransportOrder, type Vehicle, type VehicleSnapshot,
-  type VehicleHeading, type VehicleMove, type ZoneOccupancy,
+  type VehicleHeading, type VehicleMove, type ZoneOccupancy, type RestartCheckState,
 } from './api';
 import { AppShell, mayOpen, type MenuKey, type ServerState } from './shell/AppShell';
 import { Chip, Empty, Failed, Loading } from './shell/States';
@@ -19,6 +19,7 @@ import { ConfigurationScreen } from './features/configuration/ConfigurationScree
 import { TransportScreen } from './features/transport/TransportScreen';
 import { TrafficScreen } from './features/traffic/TrafficScreen';
 import { DiagnosticsScreen } from './features/operations/DiagnosticsScreen';
+import { RestartCheckPanel } from './features/operations/RestartCheckPanel';
 import { SystemOptionsScreen } from './features/system/SystemOptionsScreen';
 import { SignInScreen } from './features/system/SignInScreen';
 import { AccountsScreen } from './features/system/AccountsScreen';
@@ -44,6 +45,7 @@ type Loaded = {
   moves: VehicleMove[];
   headings: VehicleHeading[];
   plans: DeadlockPlan[]; recoveries: DeadlockRecovery[];
+  restartCheck: RestartCheckState | null;
 };
 
 /** The live parts laid over what was read, under the names the screens use. */
@@ -54,6 +56,7 @@ function withLive(d: Loaded, p: LiveParts): Loaded {
     moves: p.moves ?? d.moves, assignments: p.assignments ?? d.assignments, orders: p.orders ?? d.orders,
     deadlocks: p.deadlocks ?? d.deadlocks, zones: p.zones ?? d.zones, inDoubt: p.inDoubt ?? d.inDoubt,
     plans: p.deadlockPlans ?? d.plans, recoveries: p.recoveries ?? d.recoveries,
+    restartCheck: p.restartCheck ?? d.restartCheck,
   };
 }
 
@@ -165,10 +168,13 @@ function App() {
       softly(get<VehicleHeading[]>(opsApi.vehicleHeadings(), signal), [] as VehicleHeading[]),
       softly(get<DeadlockPlan[]>(opsApi.deadlockPlans(), signal), [] as DeadlockPlan[]),
       softly(get<DeadlockRecovery[]>(opsApi.deadlockRecoveries(), signal), [] as DeadlockRecovery[]),
+      softly(get<RestartCheckState>(opsApi.restartCheck(), signal), null),
     ])
-      .then(([map, vehicles, orders, state, holds, deadlocks, inDoubt, assignments, options, zones, moves, headings, plans, recoveries]) => {
+      .then(([map, vehicles, orders, state, holds, deadlocks, inDoubt, assignments, options, zones, moves, headings, plans, recoveries,
+        restartCheck]) => {
         const read: Loaded = {
           map, vehicles, orders, state, holds, deadlocks, inDoubt, assignments, options, zones, moves, headings, plans, recoveries,
+          restartCheck,
         };
         const now = liveRef.current;
         setData(now.status === 'live' ? withLive(read, now.parts) : read);
@@ -210,6 +216,7 @@ function App() {
       onAccount={setMenu}
       session={session} runMode={data?.options?.runMode ?? null}
       running={running}
+      restartCheckPending={data?.restartCheck?.pending ?? false}
       alarms={alarmCount ?? undefined}
       crumb={['Home', page.crumb, page.title]} title={page.title} subtitle={page.subtitle} server={server}>
       {menu === 'signin' ? <SignInScreen session={session} onChanged={retry} />
@@ -236,7 +243,8 @@ function App() {
                           layer={layer} onLayer={setLayer} loadedAt={loadedAt} onRetry={retry}
                           autoRefresh={autoRefresh} onAutoRefresh={setAutoRefresh} live={live}
                           running={running}
-                          onRunning={session.allows.includes('operation') ? stopOrStart : undefined} />}
+                          onRunning={session.allows.includes('operation') ? stopOrStart : undefined}
+                          canOperate={session.allows.includes('operation')} />}
     </AppShell>
   );
 }
@@ -304,6 +312,7 @@ function MonitorScreen(props: {
   running: boolean | null;
   /** Stops it or starts it. Absent when this session may not, which is the only gate there is. */
   onRunning?: (running: boolean) => void;
+  canOperate?: boolean;
 }) {
   const { map, vehicles, state, orders, holds, assignments, deadlocks, options } = props.data;
   const [target, setTarget] = React.useState<number | null>(null);
@@ -330,6 +339,10 @@ function MonitorScreen(props: {
 
   return (
     <>
+      {props.data.restartCheck?.pending && (
+        <RestartCheckPanel check={props.data.restartCheck} vehicleCode={codeOf} nodeCode={nodeCode}
+          canOperate={props.canOperate ?? false} onChanged={props.onRetry} />
+      )}
       <div className="statbar">
         {/* The stop sits first, where the operator is already looking, and takes one press. A stop
             is what somebody reaches for when something is wrong on the floor; anything between the

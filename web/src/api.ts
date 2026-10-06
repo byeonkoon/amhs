@@ -352,7 +352,30 @@ export type Assigned = { order: TransportOrder; assignment: AssignmentView; comm
 /** decision says why nothing was extended when addedNodeIds is empty. */
 export type Extension = { orderId: number; vehicleId: number; decision: string; addedNodeIds: number[]; commandId: string | null };
 
+/**
+ * One thing the comparison after a server start found. blocking: confirmation is refused while it is
+ * there. The vehicle, order, command and node it is about are given where they apply.
+ */
+export type RestartCheckItem = {
+  kind: 'VEHICLE_SILENT' | 'POSITION_UNKNOWN' | 'VEHICLE_OFF_ROAD' | 'COMMAND_IN_DOUBT' | 'VEHICLE_CONFIRMED'
+    | 'VEHICLE_MOVING' | 'VEHICLE_ISOLATED' | 'COMMAND_UNSENT' | 'ORDER_WAITS_FOR_OPERATOR';
+  blocking: boolean; vehicleId: number | null; orderId: number | null; commandId: string | null;
+  nodeId: number | null; detail: string | null;
+};
+export type RestartCheckState = {
+  pending: boolean; checkId: number | null; since: string | null; items: RestartCheckItem[]; confirmable: boolean;
+  last: {
+    id: number; startedAt: string; finishedAt: string; outcome: 'NOTHING_IN_PROGRESS' | 'CONFIRMED';
+    finishedBy: string | null; reason: string | null; releasedNodes: number | null; withdrawnCommands: number | null;
+    settledCommands: number;
+  } | null;
+};
+
 export const opsApi = {
+  /** The comparison a site waits for after the server starts, its confirmation, and closing a command lost in the restart. */
+  restartCheck: () => `/api/v1/sites/${SITE_ID}/restart-check`,
+  restartCheckConfirm: () => `/api/v1/sites/${SITE_ID}/restart-check/confirm`,
+  restartCheckClose: (commandId: string) => `/api/v1/sites/${SITE_ID}/restart-check/commands/${encodeURIComponent(commandId)}/close`,
   vehicleState: (revisionId: number) => `/api/v1/sites/${SITE_ID}/maps/${revisionId}/vehicle-state`,
   /** Takes a vehicle out of service, or puts it back. It does not move it; that is a separate act. */
   vehicleService: (revisionId: number, vehicleId: number) =>
