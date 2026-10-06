@@ -157,7 +157,11 @@ function spur(path, atIndex, span, depth, label, extras = {}, laneNodes = 1, rad
       let ox = -uy / len2 * STALL, oy = ux / len2 * STALL;
       if (Math.hypot(mx + ox - entry.xMm, my + oy - entry.yMm)
         < Math.hypot(mx - ox - entry.xMm, my - oy - entry.yMm)) { ox = -ox; oy = -oy; }
-      const stall = node(`${label}-${i + 1}`, mx + ox, my + oy, extras);
+      // A bay may name and mark each stall for itself, so the chargers and the places to stand
+      // afterwards can be one area rather than two at opposite ends of the loop.
+      const spec = typeof extras === 'function' ? extras(i) : extras;
+      const { code, ...marks } = spec;
+      const stall = node(code ?? `${label}-${i + 1}`, mx + ox, my + oy, marks);
       link(spine[i], stall);
       link(stall, spine[i + 1]);
       laneCodes.push(stall);
@@ -237,15 +241,19 @@ if (inspection.length)
 /* ================= AGV: its own loop, bays, chargers and a waiting spur ======================== */
 const agvRing = mainLine('AGV-M', 20000, 180000, 170000, 84000, 4500);
 let agvPath = agvRing.path;
-// Ten AGVs, four chargers and eight waiting stalls. Fewer chargers than vehicles is ordinary and
-// the controller queues for them, but there must be somewhere for a charged vehicle to stand: with
-// a stall for every vehicle and one over, a vehicle that has finished charging always has a place
-// to go, so the charger it is standing on comes free for the one that needs it next.
+// Ten AGVs: four chargers and eight places to stand, in one bay. Fewer chargers than vehicles is
+// ordinary and the controller queues for them, but a vehicle that has finished charging must have
+// somewhere to go or the charger it stands on never comes free -- hence a stall for every vehicle
+// and two over. They are in the same bay because stepping aside should cost a few metres: parking
+// on the far side of the loop would spend more charge getting there than the charge was worth.
+const stalls = i => i < 4
+  ? { code: `AGV-CHG-${i + 1}`, chargePoint: true }
+  : { code: `AGV-WAIT-${i - 3}`, waitFor: 'AGV' };
 const agvSides = [
   { bays: 2, span: 4, depth: 22000 },
-  { bays: 1, span: 5, depth: 26000, label: 'AGV-CHG', extras: { chargePoint: true }, laneNodes: 4 },
-  { bays: 2, span: 4, depth: 22000 },
-  { bays: 1, span: 6, depth: 24000, label: 'AGV-WAIT', extras: { waitFor: 'AGV' }, laneNodes: 8 },
+  { bays: 1, span: 4, depth: 22000 },
+  { bays: 1, span: 8, depth: 26000, label: 'AGV-PARK', extras: stalls, laneNodes: 12 },
+  { bays: 1, span: 4, depth: 22000 },
 ];
 const agvPlan = planBays(agvRing.runs, agvSides, 'AGV-B');
 const agvLanes = new Map();

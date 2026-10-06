@@ -76,7 +76,14 @@ public class SimulatedVehicles {
   * the new place.
   */
  private final Map<Long,java.time.OffsetDateTime> placedAt=new ConcurrentHashMap<>();
- private static final double DRAIN_DRIVING=0.25, DRAIN_STANDING=0.01, CHARGE_RATE=1.5;
+ /**
+  * How a traction battery goes, in percent per second. Fast enough that a charge can be watched
+  * happening, slow enough that a vehicle can cross the site several times on one -- at 0.05 a full
+  * battery is about half an hour of driving, which on the sample layout is several laps. A rate
+  * that spends more than a charge on the trip to the charger makes a fleet that only ever drives
+  * to charge, which is not a duty cycle anybody would recognise.
+  */
+ private static final double DRAIN_DRIVING=0.05, DRAIN_STANDING=0.01, CHARGE_RATE=1.5;
  /** How fast the rail refills a buffer that is being fed, and how fast one that is not runs down. */
  private static final double BUFFER_REFILL=5.0, BUFFER_DRAIN=0.35;
  /**
