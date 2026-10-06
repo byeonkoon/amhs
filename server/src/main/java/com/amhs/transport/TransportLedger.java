@@ -3,6 +3,12 @@ import java.util.*;
 /** Persistence port for the transport work ledger. */
 public interface TransportLedger {
  long activeRevision(long siteId);
+ /**
+  * The map in use, or empty where the site has none yet. Asking is not requiring: a caller that
+  * must carry on without a map cannot do it by catching the refusal, because the refusal has
+  * already marked the transaction it was asked in for rollback.
+  */
+ OptionalLong activeRevisionIfAny(long siteId);
  Optional<PortAccess> findPort(long siteId,long revisionId,String portCode);
  Optional<TransportOrder> findByIdempotency(long siteId,String requestSource,String idempotencyKey);
  String fingerprintOf(long orderId);

@@ -20,10 +20,18 @@ class RestartCheckOnStart implements SmartInitializingSingleton {
 
  @Override public void afterSingletonsInstantiated(){
   for(long siteId:options.sites()){
-   var state=check.begin(siteId);
-   if(state.pending()) log.warn("site {}: work was in progress when the server stopped; it waits for the restart check ({} item(s))",
-    siteId,state.items().size());
-   else log.info("site {}: nothing was in progress; no restart check needed",siteId);
+   try{
+    var state=check.begin(siteId);
+    if(state.pending()) log.warn("site {}: work was in progress when the server stopped; it waits for the restart check ({} item(s))",
+     siteId,state.items().size());
+    else log.info("site {}: nothing was in progress; no restart check needed",siteId);
+   }catch(RuntimeException e){
+    // One site that cannot be judged must neither keep the server down nor carry on uncompared: it
+    // is held, and the others are still checked.
+    log.error("site {}: the restart check could not be made; the site is held until somebody confirms it",siteId,e);
+    try{ check.hold(siteId); }
+    catch(RuntimeException held){ log.error("site {}: it could not even be held; do not run it until it has been checked",siteId,held); }
+   }
   }
  }
 }

@@ -15,9 +15,13 @@ class JdbcTransportLedger implements TransportLedger {
 
  @Transactional(readOnly=true)
  public long activeRevision(long siteId){
+  return activeRevisionIfAny(siteId)
+   .orElseThrow(()->new TransportRejected("NO_ACTIVE_MAP","site has no active map revision",false));
+ }
+ @Transactional(readOnly=true)
+ public java.util.OptionalLong activeRevisionIfAny(long siteId){
   var ids=jdbc.query("SELECT id FROM topology.map_revision WHERE site_id=? AND status='ACTIVE'",(r,n)->r.getLong(1),siteId);
-  if(ids.isEmpty())throw new TransportRejected("NO_ACTIVE_MAP","site has no active map revision",false);
-  return ids.get(0);
+  return ids.isEmpty()?java.util.OptionalLong.empty():java.util.OptionalLong.of(ids.get(0));
  }
  @Transactional(readOnly=true)
  public Optional<PortAccess> findPort(long siteId,long revisionId,String portCode){

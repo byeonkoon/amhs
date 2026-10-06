@@ -136,6 +136,45 @@ class RestartCheckSqlTest {
   assertThat(held(AGV1)).containsExactly(203L,204L);
  }
 
+ @Test void aStopKeptThroughTheCheckKeepsTheRoadWithIt(){
+  place(AGV1,203L);
+  hold(AGV1,List.of(203L,204L,207L));
+  String stop=command("restart-test-stop-"+System.nanoTime(),"STOP");
+  var st=begin();
+  assertThat(st.pending()).isTrue();
+  place(AGV1,203L);
+  st=check.state(SITE);
+  // The road is not promised back while a command that confirmation keeps is still outstanding.
+  assertThat(st.items()).anySatisfy(i->{
+   assertThat(i.kind()).isEqualTo("VEHICLE_CONFIRMED"); assertThat(i.detail()).isEqualTo("ROAD_AHEAD_KEPT_FOR_COMMAND");
+  });
+  st=tx.execute(s->check.confirm(SITE,"stop still to go out","tester"));
+  assertThat(st.pending()).isFalse();
+  assertThat(st.last().releasedNodes()).isZero();
+  assertThat(st.last().withdrawnCommands()).isZero();
+  assertThat(status(stop)).isEqualTo("PENDING");
+  assertThat(held(AGV1)).containsExactly(203L,204L,207L);
+ }
+
+ @Test void aSiteWithNoMapInUseHasNothingToCompare(){
+  long other=9_001L;
+  jdbc.update("INSERT INTO platform.site(id,code,name) VALUES(?,?,?)",other,"RESTART-TEST","재시작 대조 시험");
+  jdbc.update("INSERT INTO platform.site_operation(site_id,mode) VALUES(?,'MAINTENANCE')",other);
+  try{
+   // No map in use: there is no track to stand on, so nothing could have been under way. It must
+   // not throw -- the whole server comes up through this call.
+   var st=tx.execute(s->check.begin(other));
+   assertThat(st.pending()).isFalse();
+   assertThat(st.last().outcome()).isEqualTo("NOTHING_IN_PROGRESS");
+   assertThat(jdbc.queryForObject("SELECT restart_check_since FROM platform.site_operation WHERE site_id=?",
+    java.time.OffsetDateTime.class,other)).isNull();
+  }finally{
+   jdbc.update("DELETE FROM transport.restart_check WHERE site_id=?",other);
+   jdbc.update("DELETE FROM platform.site_operation WHERE site_id=?",other);
+   jdbc.update("DELETE FROM platform.site WHERE id=?",other);
+  }
+ }
+
  @Test void aStartDuringAnOpenCheckCountsOnlyReportsFromTheNewStart() throws Exception {
   place(AGV1,203L);
   hold(AGV1,List.of(203L,204L));

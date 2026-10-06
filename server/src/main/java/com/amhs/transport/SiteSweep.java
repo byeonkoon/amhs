@@ -59,14 +59,6 @@ public class SiteSweep {
  public record Skipped(long orderId,String reason){}
 
  /**
-  * One pass, unless the site is stopped.
-  *
-  * <p>A stopped site progresses nothing: the pass is where assignment, resuming, extending, the
-  * controller's own moves and the sending all happen, so the stop is one answer here rather than
-  * six checks spread through them. Work may still be accepted while stopped; it waits in the queue,
-  * which is what a queue is for.
-  */
- /**
   * Whether the site may progress: it is not stopped, and it is not waiting for the comparison that
   * follows a server start.
   */
@@ -74,10 +66,19 @@ public class SiteSweep {
   return options.progressing(siteId);
  }
 
+ /**
+  * One pass, unless the site is held.
+  *
+  * <p>A site that is not progressing progresses nothing: the pass is where assignment, resuming,
+  * extending, the controller's own moves and the sending all happen, so being stopped -- or waiting
+  * for the restart check -- is one answer here rather than six checks spread through them. Work may
+  * still be accepted meanwhile; it waits in the queue, which is what a queue is for.
+  */
  public Sweep run(long siteId,String actorCode,String traceId){
   if(!progressing(siteId)){
-   // A stopped site, or one waiting for its restart check, still tidies up after itself: the moves the controller started are ended once
-   // their vehicle has stood still, or they would stay open for as long as the stop lasts.
+   // A site that is stopped, or waiting for its restart check, still tidies up after itself: the
+   // moves the controller started are ended once their vehicle has stood still, or they would stay
+   // open for as long as the hold lasts.
    var ended=evacuation.standDown(siteId);
    return new Sweep(false,List.of(),List.of(),List.of(),List.of(),ended,
     DeviceGateway.Publication.nothing(),false);

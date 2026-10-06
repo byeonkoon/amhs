@@ -77,18 +77,28 @@ public class RestartCheck {
   */
  @Transactional
  public State begin(long siteId){
-  int moved=jdbc.update("UPDATE transport.restart_check SET started_at=clock_timestamp(),settled_commands=0"
-   +" WHERE site_id=? AND finished_at IS NULL",siteId);
-  if(moved==0) jdbc.update("INSERT INTO transport.restart_check(site_id) VALUES(?)",siteId);
-  var since=jdbc.queryForObject("SELECT started_at FROM transport.restart_check WHERE site_id=? AND finished_at IS NULL",
-   OffsetDateTime.class,siteId);
-  operations.markRestartCheck(siteId,since);
+  hold(siteId);
   if(!inProgress(siteId)){
    jdbc.update("UPDATE transport.restart_check SET finished_at=clock_timestamp(),outcome='NOTHING_IN_PROGRESS',"
     +"finished_by='system' WHERE site_id=? AND finished_at IS NULL",siteId);
    operations.markRestartCheck(siteId,null);
   }
   return state(siteId);
+ }
+
+ /**
+  * Opens the check -- or starts an open one over from now -- and holds the site, without judging
+  * whether anything was in progress. It is what {@link #begin} does first, and what is left when
+  * the judgement itself cannot be made: a site nobody could compare is not a site that may carry on.
+  */
+ @Transactional
+ public void hold(long siteId){
+  int moved=jdbc.update("UPDATE transport.restart_check SET started_at=clock_timestamp(),settled_commands=0"
+   +" WHERE site_id=? AND finished_at IS NULL",siteId);
+  if(moved==0) jdbc.update("INSERT INTO transport.restart_check(site_id) VALUES(?)",siteId);
+  var since=jdbc.queryForObject("SELECT started_at FROM transport.restart_check WHERE site_id=? AND finished_at IS NULL",
+   OffsetDateTime.class,siteId);
+  operations.markRestartCheck(siteId,since);
  }
 
  @Transactional(readOnly=true)
@@ -111,7 +121,7 @@ public class RestartCheck {
  public State closeInDoubt(long siteId,String commandId,String reason){
   requireReason(reason);
   var since=lockOpen(siteId);
-  var command=commands(siteId).stream().filter(c->c.commandId().equals(commandId)).findFirst()
+  var command=commands(siteId,ledger.activeRevision(siteId)).stream().filter(c->c.commandId().equals(commandId)).findFirst()
    .orElseThrow(()->new TransportRejected("COMMAND_NOT_FOUND","no unsettled command with that id",false));
   if(!command.status().inDoubt()||!command.createdAt().isBefore(since))
    throw new TransportRejected("COMMAND_NOT_LOST_IN_RESTART","only a command claimed or sent before the start can be closed here",false);
@@ -147,7 +157,7 @@ public class RestartCheck {
   // Decided before the start, on a state nobody has confirmed since; its work will be given road
   // again from where the vehicle actually is. A stop is kept.
   int withdrawn=0;
-  for(var c:commands(siteId)){
+  for(var c:commands(siteId,revisionId)){
    if(c.createdAt().isBefore(since)&&c.status().retryable()&&!"STOP".equals(c.commandType())){
     outbox.withdrawIfUnsent(c.commandId(),"RESTART_CHECK");
     withdrawn++;
@@ -187,19 +197,24 @@ public class RestartCheck {
    &&reportedSince(v,since)&&v.reportedSince(cutoff);
  }
 
- private List<DeviceCommand> commands(long siteId){
+ private List<DeviceCommand> commands(long siteId,long revisionId){
   var out=new ArrayList<DeviceCommand>();
-  for(var v:fleet.snapshot(siteId,ledger.activeRevision(siteId))) out.addAll(outbox.unresolvedForVehicle(siteId,v.id()));
+  for(var v:fleet.snapshot(siteId,revisionId)) out.addAll(outbox.unresolvedForVehicle(siteId,v.id()));
   return out;
  }
 
  /** Anything the ledger says was under way: work, moves, charges, unsettled commands, road beyond where a vehicle stands. */
  private boolean inProgress(long siteId){
+  // A site with no map in use was never commissioned: there is no track to stand on and nothing
+  // could have been under way. Nothing to compare -- and the server still comes up.
+  var active=ledger.activeRevisionIfAny(siteId);
+  if(active.isEmpty()) return false;
+  long revisionId=active.getAsLong();
   if(!ledger.activeAssignments(siteId).isEmpty()||!ledger.openRelocations(siteId).isEmpty()
-   ||!ledger.chargingVehicleIds(siteId).isEmpty()||!commands(siteId).isEmpty()
+   ||!ledger.chargingVehicleIds(siteId).isEmpty()||!commands(siteId,revisionId).isEmpty()
    ||!traffic.recoveries(siteId,0).isEmpty()) return true;
   var where=new HashMap<Long,Long>();
-  for(var v:fleet.snapshot(siteId,ledger.activeRevision(siteId))) if(v.nodeId()!=null) where.put(v.id(),v.nodeId());
+  for(var v:fleet.snapshot(siteId,revisionId)) if(v.nodeId()!=null) where.put(v.id(),v.nodeId());
   for(NodeHold h:traffic.held(siteId)) if(!Long.valueOf(h.nodeId()).equals(where.get(h.vehicleId()))) return true;
   return false;
  }
@@ -215,7 +230,7 @@ public class RestartCheck {
   for(var a:ledger.activeAssignments(siteId)){ involved.add(a.vehicleId()); workOf.put(a.vehicleId(),a.orderId()); }
   for(var r:ledger.openRelocations(siteId)) involved.add(r.vehicleId());
   involved.addAll(ledger.chargingVehicleIds(siteId));
-  var commands=commands(siteId);
+  var commands=commands(siteId,revisionId);
   for(var c:commands) if(c.vehicleId()!=null) involved.add(c.vehicleId());
 
   var out=new ArrayList<Item>();
@@ -236,7 +251,11 @@ public class RestartCheck {
    }else{
     heard=true;
     if(!standingNow(v,since,cutoff)) out.add(new Item("VEHICLE_MOVING",false,v.id(),null,null,v.nodeId(),v.effectiveStatus()));
-    else out.add(new Item("VEHICLE_CONFIRMED",false,v.id(),null,null,v.nodeId(),held.size()>1?"ROAD_AHEAD_GIVEN_BACK_ON_CONFIRM":null));
+    // Said only when confirming will really do it. A command that survives the confirmation -- a
+    // stop, which is kept -- keeps the road with it, and a screen that promised otherwise would be
+    // read as a fault when the road stayed.
+    else out.add(new Item("VEHICLE_CONFIRMED",false,v.id(),null,null,v.nodeId(),
+     held.size()<=1?null:keepsRoad(commands,v.id(),since)?"ROAD_AHEAD_KEPT_FOR_COMMAND":"ROAD_AHEAD_GIVEN_BACK_ON_CONFIRM"));
    }
    // What the vehicle now says it carries, against what its work says it should.
    Long orderId=workOf.get(v.id());
@@ -251,10 +270,22 @@ public class RestartCheck {
    else if(c.status()==CommandStatus.PENDING||c.status()==CommandStatus.FAILED)
     out.add(new Item("COMMAND_UNSENT",false,c.vehicleId(),c.orderId(),c.commandId(),null,c.commandType()));
   }
-  for(var o:ledger.listActive(siteId,500))
-   if(o.status()==OrderStatus.RECOVERY_REQUIRED||o.status()==OrderStatus.CANCEL_REQUESTED)
+  // Every one of them, not a page of the newest: the one that has waited longest for a person is
+  // the one a page leaves out.
+  for(var status:List.of(OrderStatus.RECOVERY_REQUIRED,OrderStatus.CANCEL_REQUESTED))
+   for(var o:ledger.inStatus(siteId,status))
     out.add(new Item("ORDER_WAITS_FOR_OPERATOR",false,null,o.id(),null,null,o.status().name()));
   return out;
+ }
+
+ /**
+  * Whether this vehicle will still have a command outstanding after the confirmation, which is what
+  * makes the confirmation leave its road alone. The mirror of what {@link #confirm} withdraws: what
+  * was written before the start and may be repeated goes, except a stop, which is kept.
+  */
+ private static boolean keepsRoad(List<DeviceCommand> commands,long vehicleId,OffsetDateTime since){
+  return commands.stream().filter(c->Long.valueOf(vehicleId).equals(c.vehicleId()))
+   .anyMatch(c->!c.createdAt().isBefore(since)||!c.status().retryable()||"STOP".equals(c.commandType()));
  }
 
  /**

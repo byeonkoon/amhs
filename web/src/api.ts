@@ -360,8 +360,9 @@ export type Extension = { orderId: number; vehicleId: number; decision: string; 
  * there. The vehicle, order, command and node it is about are given where they apply.
  */
 export type RestartCheckItem = {
-  kind: 'VEHICLE_SILENT' | 'POSITION_UNKNOWN' | 'VEHICLE_OFF_ROAD' | 'COMMAND_IN_DOUBT' | 'VEHICLE_CONFIRMED'
-    | 'VEHICLE_MOVING' | 'VEHICLE_ISOLATED' | 'COMMAND_UNSENT' | 'ORDER_WAITS_FOR_OPERATOR';
+  kind: 'VEHICLE_SILENT' | 'VEHICLE_REPORT_STALE' | 'POSITION_UNKNOWN' | 'VEHICLE_OFF_ROAD' | 'COMMAND_IN_DOUBT'
+    | 'CARRIER_UNEXPECTED' | 'VEHICLE_CONFIRMED' | 'VEHICLE_MOVING' | 'VEHICLE_ISOLATED' | 'COMMAND_UNSENT'
+    | 'CARRIER_MISMATCH' | 'HANDOVER_INTERRUPTED' | 'ORDER_WAITS_FOR_OPERATOR';
   blocking: boolean; vehicleId: number | null; orderId: number | null; commandId: string | null;
   nodeId: number | null; detail: string | null;
 };
