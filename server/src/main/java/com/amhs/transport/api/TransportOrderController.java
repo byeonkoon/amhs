@@ -93,8 +93,17 @@ class TransportOrderController {
   CarrierLocation location;
   try{ location=evidence.get("carrierLocation")==null?null:CarrierLocation.valueOf(String.valueOf(evidence.get("carrierLocation"))); }
   catch(IllegalArgumentException e){ throw new TransportRejected("UNKNOWN_CARRIER_LOCATION",String.valueOf(evidence.get("carrierLocation")),false); }
-  return orders.advance(siteId,orderId,target,str(body.get("reason")),actor(),traceId(),
-   new TransitionEvidence(kind,str(evidence.get("commandId")),location));
+  var proof=new TransitionEvidence(kind,str(evidence.get("commandId")),location);
+  // What a vehicle or a piece of equipment reports is a transfer report, judged the same way however
+  // late it comes; a person's decision is a transition and must be allowed now.
+  if(kind==TransitionEvidence.Kind.SENSOR_TRANSITION||kind==TransitionEvidence.Kind.ACTION_FEEDBACK
+   ||kind==TransitionEvidence.Kind.DONE_WITH_VEHICLE_ERROR){
+   TransferAction action;
+   try{ action=evidence.get("action")==null?null:TransferAction.valueOf(String.valueOf(evidence.get("action"))); }
+   catch(IllegalArgumentException e){ throw new TransportRejected("UNKNOWN_TRANSFER_ACTION",String.valueOf(evidence.get("action")),false); }
+   return orders.reportTransfer(siteId,orderId,target,proof,action,actor(),traceId());
+  }
+  return orders.advance(siteId,orderId,target,str(body.get("reason")),actor(),traceId(),proof);
  }
 
  /**

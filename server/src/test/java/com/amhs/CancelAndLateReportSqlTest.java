@@ -164,4 +164,75 @@ class CancelAndLateReportSqlTest {
   orders.resolveLateEvidence(SITE,lateId,"carrier found on OHT-01, moved back to the stocker","tester");
   assertThat(orders.openLateEvidence(SITE)).noneSatisfy(l->assertThat(l.id()).isEqualTo(lateId));
  }
+
+ // Re-review M1-M3 of 30ba791, as the behaviour wanted.
+
+ private static TransitionEvidence feedback(String command,CarrierLocation location){
+  return new TransitionEvidence(TransitionEvidence.Kind.ACTION_FEEDBACK,command,location);
+ }
+
+ @Test void m1_reportsThatContradictEachOtherLeaveTheCarrierUnknownAndKeepTheVehicle(){
+  long id=loading();
+  orders.cancel(SITE,id,"cancel","tester",null);
+  orders.reportTransfer(SITE,id,OrderStatus.TO_DESTINATION,feedback("pickup-2",CarrierLocation.VEHICLE),"device",null);
+  // An earlier failure arrives last. Which came first cannot be told, so neither is believed.
+  var after=orders.reportTransfer(SITE,id,OrderStatus.TO_SOURCE,feedback("pickup-1",CarrierLocation.SOURCE),"device",null);
+  assertThat(after.carrierLocation()).isEqualTo(CarrierLocation.UNKNOWN);
+  assertThat(orders.openLateEvidence(SITE)).anySatisfy(l->{ assertThat(l.orderId()).isEqualTo(id); assertThat(l.kind()).isEqualTo("CONFLICT"); });
+  assertThat(orders.advance(SITE,id,OrderStatus.CANCELLED,"stopped","device",null).status()).isEqualTo(OrderStatus.RECOVERY_REQUIRED);
+  assertThat(assignment.active(SITE)).anyMatch(a->a.orderId()==id);
+ }
+
+ @Test void m2_theSamePickupHeardAgainWhileUnloadingIsNotAFailedDrop(){
+  long id=loading();
+  var evidence=feedback("pickup-1",CarrierLocation.VEHICLE);
+  orders.reportTransfer(SITE,id,OrderStatus.TO_DESTINATION,evidence,"device",null);
+  orders.advance(SITE,id,OrderStatus.UNLOADING,"arrived","device",null);
+  int events=orders.events(SITE,id).size();
+  var replay=orders.reportTransfer(SITE,id,OrderStatus.TO_DESTINATION,evidence,"device",null);
+  assertThat(replay.status()).isEqualTo(OrderStatus.UNLOADING);
+  assertThat(jdbc.queryForObject("SELECT transfer_attempt FROM transport.order WHERE id=?",Integer.class,id)).isZero();
+  assertThat(orders.events(SITE,id)).hasSize(events);
+  // The same command saying something else is still about the pickup, not this drop.
+  var other=orders.reportTransfer(SITE,id,OrderStatus.TO_DESTINATION,feedback("pickup-1",CarrierLocation.VEHICLE),
+   TransferAction.DROP,"device",null);
+  assertThat(other.status()).isEqualTo(OrderStatus.UNLOADING);
+  // A drop report says it is about the drop: that one is a retry.
+  var drop=orders.reportTransfer(SITE,id,OrderStatus.TO_DESTINATION,feedback("drop-1",CarrierLocation.VEHICLE),
+   TransferAction.DROP,"device",null);
+  assertThat(drop.status()).isEqualTo(OrderStatus.TO_DESTINATION);
+ }
+
+ @Test void m2_theSameLateReportRaisesOneAlarmAndNotAgainOnceClosed(){
+  long id=assigned();
+  orders.cancel(SITE,id,"cancel","tester",null);
+  var evidence=feedback("pickup-1",CarrierLocation.VEHICLE);
+  orders.reportTransfer(SITE,id,OrderStatus.TO_DESTINATION,evidence,"device",null);
+  orders.reportTransfer(SITE,id,OrderStatus.TO_DESTINATION,evidence,"device",null);
+  var open=orders.openLateEvidence(SITE).stream().filter(e->e.orderId()==id).toList();
+  assertThat(open).hasSize(1);
+  orders.resolveLateEvidence(SITE,open.getFirst().id(),"physically checked","tester");
+  orders.reportTransfer(SITE,id,OrderStatus.TO_DESTINATION,evidence,"device",null);
+  orders.reportTransfer(SITE,id,OrderStatus.TO_DESTINATION,new TransitionEvidence(TransitionEvidence.Kind.SENSOR_TRANSITION,null,
+   CarrierLocation.VEHICLE),"device",null);
+  assertThat(orders.openLateEvidence(SITE).stream().filter(e->e.orderId()==id)).hasSizeLessThanOrEqualTo(1);
+  orders.reportTransfer(SITE,id,OrderStatus.TO_DESTINATION,new TransitionEvidence(TransitionEvidence.Kind.SENSOR_TRANSITION,null,
+   CarrierLocation.VEHICLE),"device",null);
+  assertThat(orders.openLateEvidence(SITE).stream().filter(e->e.orderId()==id)).hasSizeLessThanOrEqualTo(1);
+ }
+
+ @Test void m3_theDeviceTransitionEndpointJudgesALatePickupLikeAnyReport() throws Exception {
+  long id=loading();
+  orders.cancel(SITE,id,"cancel","tester",null);
+  var constructor=Class.forName("com.amhs.transport.api.TransportOrderController").getDeclaredConstructors()[0];
+  constructor.setAccessible(true);
+  var mvc=org.springframework.test.web.servlet.setup.MockMvcBuilders.standaloneSetup(constructor.newInstance(orders,assignment)).build();
+  mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/v1/sites/1/transport-orders/"+id+"/transitions")
+   .contentType("application/json")
+   .content("{\"status\":\"TO_DESTINATION\",\"evidence\":{\"kind\":\"SENSOR_TRANSITION\",\"carrierLocation\":\"VEHICLE\",\"action\":\"PICKUP\"}}"))
+   .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk());
+  assertThat(orders.events(SITE,id)).anyMatch(e->e.reason()!=null&&e.reason().startsWith("LATE_REPORT"));
+  assertThat(orders.find(SITE,id).orElseThrow().carrierLocation()).isEqualTo(CarrierLocation.VEHICLE);
+  assertThat(statusOf(id)).isEqualTo(OrderStatus.CANCEL_REQUESTED);
+ }
 }

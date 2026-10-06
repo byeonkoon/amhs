@@ -562,8 +562,9 @@ public class SimulatedVehicles {
  }
 
  private void move(long siteId,TransportOrder order,OrderStatus to,TransitionEvidence evidence){
-  // The way a device reports: as a transfer report, so a late or repeated one is judged like any other.
-  orders.reportTransfer(siteId,order.id(),to,evidence,ACTOR,null);
+  // The way a device reports: as a transfer report, so a late or repeated one is judged like any other,
+  // saying which transfer it is about when it is about one.
+  orders.reportTransfer(siteId,order.id(),to,evidence,TransferAction.of(order.status()),ACTOR,null);
  }
  /** Reports the way a vehicle does: remote mode, a status on its own axis, and whether it carries. */
  private VehicleSnapshot report(long siteId,long vehicleId,long nodeId,String status,boolean carrier){

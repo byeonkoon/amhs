@@ -206,26 +206,73 @@ class JdbcTransportLedger implements TransportLedger {
   var order=one("SELECT "+COLS+" FROM transport.order WHERE site_id=? AND id=? FOR UPDATE",siteId,orderId)
    .orElseThrow(()->new TransportRejected("ORDER_NOT_FOUND","unknown order",false));
   var established=evidence.kind().establishes()?evidence.carrierLocation():null;
-  if(established!=null&&!order.status().isTerminal())
-   jdbc.update("UPDATE transport.order SET carrier_location=?,version=version+1 WHERE id=?",established.name(),orderId);
+  String note="LATE_REPORT: "+reported.name();
+  if(established!=null&&!order.status().isTerminal()){
+   // What earlier evidence already said about this carrier. A late report that disagrees with it
+   // cannot be ordered against it -- devices do not number their attempts -- so neither is
+   // believed: the carrier's place becomes unknown, which keeps the vehicle and its road and sends
+   // a cancel confirmation into recovery, and the disagreement waits for a person.
+   var earlier=jdbc.query("SELECT carrier_location FROM transport.order_event WHERE order_id=? AND carrier_location IS NOT NULL"
+    +" ORDER BY seq DESC LIMIT 1",(r,n)->CarrierLocation.valueOf(r.getString(1)),orderId).stream().findFirst().orElse(null);
+   boolean disputed=Boolean.TRUE.equals(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM transport.late_evidence"
+    +" WHERE order_id=? AND kind='CONFLICT')",Boolean.class,orderId));
+   if(disputed){
+    // Already not known after a disagreement: one more report does not settle it; a person does.
+   }else if(earlier!=null&&earlier!=established){
+    note="CONFLICTING_REPORT: "+reported.name();
+    jdbc.update("UPDATE transport.order SET carrier_location='UNKNOWN',version=version+1 WHERE id=?",orderId);
+    lateEvidence(siteId,order,"CONFLICT",reported,earlier,established,evidence);
+   }else{
+    jdbc.update("UPDATE transport.order SET carrier_location=?,version=version+1 WHERE id=?",established.name(),orderId);
+   }
+  }
   if(established!=null&&order.status().isTerminal()&&established!=order.carrierLocation())
-   jdbc.update("INSERT INTO transport.late_evidence(site_id,order_id,order_status,reported_status,recorded_location,"
-    +"reported_location,evidence_kind,command_id) VALUES(?,?,?,?,?,?,?,?)",siteId,orderId,order.status().name(),reported.name(),
-    order.carrierLocation()==null?null:order.carrierLocation().name(),established.name(),evidence.kind().name(),evidence.commandId());
+   lateEvidence(siteId,order,"AFTER_END",reported,order.carrierLocation(),established,evidence);
   Integer seq=jdbc.queryForObject("SELECT COALESCE(MAX(seq),0)+1 FROM transport.order_event WHERE order_id=?",Integer.class,orderId);
   jdbc.update("INSERT INTO transport.order_event(order_id,seq,old_status,new_status,reason,actor_code,trace_id,"
    +"evidence_kind,command_id,carrier_location) VALUES(?,?,?,?,?,?,?,?,?,?)",
-   orderId,seq,order.status().name(),order.status().name(),"LATE_REPORT: "+reported.name(),actorCode,traceId,
+   orderId,seq,order.status().name(),order.status().name(),note,actorCode,traceId,
    evidence.kind().name(),evidence.commandId(),established==null?null:established.name());
   return find(siteId,orderId).orElseThrow();
  }
+ /**
+  * Keeps evidence for a person -- once. The same disagreement already kept, open or already dealt
+  * with, is not raised again: a person who closed it has seen it.
+  */
+ private void lateEvidence(long siteId,TransportOrder order,String kind,OrderStatus reported,CarrierLocation recorded,
+                           CarrierLocation reportedLocation,TransitionEvidence evidence){
+  boolean known=Boolean.TRUE.equals(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM transport.late_evidence WHERE order_id=?"
+   +" AND kind=? AND reported_location=? AND reported_status=? AND command_id IS NOT DISTINCT FROM ?)",Boolean.class,
+   order.id(),kind,reportedLocation.name(),reported.name(),evidence.commandId()));
+  if(known) return;
+  jdbc.update("INSERT INTO transport.late_evidence(site_id,order_id,kind,order_status,reported_status,recorded_location,"
+   +"reported_location,evidence_kind,command_id) VALUES(?,?,?,?,?,?,?,?,?)",siteId,order.id(),kind,order.status().name(),
+   reported.name(),recorded==null?null:recorded.name(),reportedLocation.name(),evidence.kind().name(),evidence.commandId());
+ }
+ @Transactional(readOnly=true)
+ public boolean transferReportSeen(long orderId,String reportKey){
+  return Boolean.TRUE.equals(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM transport.transfer_report WHERE order_id=? AND report_key=?)",
+   Boolean.class,orderId,reportKey));
+ }
+ @Transactional(readOnly=true)
+ public TransferAction actionOfCommand(long orderId,String commandId){
+  return jdbc.query("SELECT action FROM transport.transfer_report WHERE order_id=? AND command_id=? AND action IS NOT NULL"
+   +" ORDER BY id LIMIT 1",(r,n)->TransferAction.valueOf(r.getString(1)),orderId,commandId).stream().findFirst().orElse(null);
+ }
+ @Transactional
+ public void recordTransferReport(long orderId,String commandId,TransferAction action,OrderStatus reported,
+                                  CarrierLocation location,String outcome,String reportKey){
+  jdbc.update("INSERT INTO transport.transfer_report(order_id,command_id,action,reported_status,carrier_location,outcome,report_key)"
+   +" VALUES(?,?,?,?,?,?,?) ON CONFLICT DO NOTHING",orderId,commandId,action==null?null:action.name(),reported.name(),
+   location==null?null:location.name(),outcome,reportKey);
+ }
  @Transactional(readOnly=true)
  public List<LateEvidence> openLateEvidence(long siteId){
-  return jdbc.query("SELECT id,order_id,order_status,reported_status,recorded_location,reported_location,evidence_kind,command_id,"
+  return jdbc.query("SELECT id,order_id,kind,order_status,reported_status,recorded_location,reported_location,evidence_kind,command_id,"
    +"received_at,resolved_at,resolved_by,resolution FROM transport.late_evidence WHERE site_id=? AND resolved_at IS NULL"
    +" ORDER BY received_at,id",(r,n)->new LateEvidence(r.getLong(1),r.getLong(2),r.getString(3),r.getString(4),r.getString(5),
-   r.getString(6),r.getString(7),r.getString(8),r.getObject(9,java.time.OffsetDateTime.class),
-   r.getObject(10,java.time.OffsetDateTime.class),r.getString(11),r.getString(12)),siteId);
+   r.getString(6),r.getString(7),r.getString(8),r.getString(9),r.getObject(10,java.time.OffsetDateTime.class),
+   r.getObject(11,java.time.OffsetDateTime.class),r.getString(12),r.getString(13)),siteId);
  }
  @Transactional
  public boolean resolveLateEvidence(long siteId,long id,String resolution,String actorCode){

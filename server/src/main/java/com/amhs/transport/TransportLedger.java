@@ -143,9 +143,20 @@ public interface TransportLedger {
   */
  TransportOrder recordLateReport(long siteId,long orderId,OrderStatus reported,TransitionEvidence evidence,
                                  String actorCode,String traceId);
- record LateEvidence(long id,long orderId,String orderStatus,String reportedStatus,String recordedLocation,
+ /**
+  * {@code kind}: AFTER_END, a report about an order already finished; CONFLICT, reports about an
+  * unfinished order that contradict each other where nobody can tell which came first.
+  */
+ record LateEvidence(long id,long orderId,String kind,String orderStatus,String reportedStatus,String recordedLocation,
                      String reportedLocation,String evidenceKind,String commandId,java.time.OffsetDateTime receivedAt,
                      java.time.OffsetDateTime resolvedAt,String resolvedBy,String resolution){}
+ /** Whether a report with this key was already handled for the order. */
+ boolean transferReportSeen(long orderId,String reportKey);
+ /** The action a device command was first reported for on this order, or null when it was never seen. */
+ TransferAction actionOfCommand(long orderId,String commandId);
+ /** Keeps a transfer report as it was judged. */
+ void recordTransferReport(long orderId,String commandId,TransferAction action,OrderStatus reported,
+                           CarrierLocation location,String outcome,String reportKey);
  /** Late evidence nobody has dealt with yet, oldest first. */
  List<LateEvidence> openLateEvidence(long siteId);
  /** A person has dealt with it and says how. False when it was not open. */

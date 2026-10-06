@@ -124,11 +124,41 @@ public class TransportOrders {
  @Transactional
  public TransportOrder reportTransfer(long siteId,long orderId,OrderStatus reported,TransitionEvidence evidence,
                                       String actorCode,String traceId){
+  return reportTransfer(siteId,orderId,reported,evidence,null,actorCode,traceId);
+ }
+
+ /**
+  * The same, saying which action the report is about. A report naming its command is handled once;
+  * the command keeps the action it was first reported for; and a step that tries a transfer again
+  * is taken only on a report about that transfer. Anything else is a late report.
+  */
+ @Transactional
+ public TransportOrder reportTransfer(long siteId,long orderId,OrderStatus reported,TransitionEvidence evidence,
+                                      TransferAction action,String actorCode,String traceId){
+  if(evidence==null) evidence=TransitionEvidence.system();
   var order=ledger.lock(siteId,orderId).orElseThrow(()->reject("ORDER_NOT_FOUND","unknown order"));
-  if(order.status()==reported) return order;
-  if(order.status().canTransitionTo(reported))
-   return advance(siteId,orderId,reported,"transfer report",actorCode,traceId,evidence);
-  return ledger.recordLateReport(siteId,orderId,reported,evidence,actorCode,traceId);
+  var location=evidence.kind().establishes()?evidence.carrierLocation():null;
+  String command=evidence.commandId();
+  String key=command==null?null:command+"|"+reported+"|"+(location==null?"-":location);
+  // The same report again: handled already, whatever has happened to the order since.
+  if(key!=null&&ledger.transferReportSeen(orderId,key)) return order;
+  // A command is about one action for good: the first report of it says which.
+  TransferAction known=command==null?null:ledger.actionOfCommand(orderId,command);
+  if(known!=null) action=known;
+  TransferAction stage=TransferAction.of(order.status());
+  boolean aboutThisStage=stage==null||action==null||action==stage;
+  TransportOrder after; String outcome;
+  if(order.status()==reported){ after=order; outcome="REPEATED"; }
+  else if(aboutThisStage&&order.status().canTransitionTo(reported)){
+   after=advance(siteId,orderId,reported,"transfer report",actorCode,traceId,evidence);
+   outcome="APPLIED";
+   if(action==null) action=stage;
+  }else{
+   after=ledger.recordLateReport(siteId,orderId,reported,evidence,actorCode,traceId);
+   outcome="LATE";
+  }
+  ledger.recordTransferReport(orderId,command,action,reported,location,outcome,key);
+  return after;
  }
 
  /** Late evidence about finished orders that a person still has to deal with. */

@@ -185,16 +185,17 @@ function LateReports() {
   return (
     <section className="card" style={{ borderColor: 'var(--crit)' }}>
       <div className="ch">
-        <h2>종료된 작업의 늦은 화물 보고</h2>
-        <span className="aux">작업은 다시 열리지 않습니다. 화물 위치를 확인해 재고 기록을 맞춘 뒤 확인 내용을 남기면 알람이 닫힙니다</span>
+        <h2>화물 위치 보고 확인 필요</h2>
+        <span className="aux">종료된 작업에 온 보고는 작업을 다시 열지 않습니다. 서로 어긋난 보고는 화물 위치를 '불명'으로 둡니다. 위치를 확인해 기록을 맞춘 뒤 확인 내용을 남기면 알람이 닫힙니다</span>
       </div>
       <div className="cb" style={{ display: 'grid', gap: 8 }}>
         <div className="tbl-scroll">
           <table className="t">
-            <thead><tr><th>작업</th><th>작업 상태</th><th>보고</th><th>기록 위치</th><th>보고 위치</th><th>보고 시각</th><th></th></tr></thead>
+            <thead><tr><th>구분</th><th>작업</th><th>작업 상태</th><th>보고</th><th>기록 위치</th><th>보고 위치</th><th>보고 시각</th><th></th></tr></thead>
             <tbody>
               {rows.map(r => (
                 <tr key={r.id}>
+                  <td>{r.kind === 'CONFLICT' ? '보고 불일치' : '종료 후 보고'}</td>
                   <td className="mono">#{r.orderId}</td>
                   <td>{r.orderStatus}</td>
                   <td>{r.reportedStatus}</td>

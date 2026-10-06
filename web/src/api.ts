@@ -376,7 +376,8 @@ export type RestartCheckState = {
 
 /** A carrier reported somewhere after its order ended, not yet dealt with by a person. */
 export type LateEvidence = {
-  id: number; orderId: number; orderStatus: string; reportedStatus: string; recordedLocation: string | null;
+  /** AFTER_END: about an order already finished. CONFLICT: reports on an open order that contradict each other. */
+  id: number; orderId: number; kind: 'AFTER_END' | 'CONFLICT'; orderStatus: string; reportedStatus: string; recordedLocation: string | null;
   reportedLocation: string; evidenceKind: string; commandId: string | null; receivedAt: string;
 };
 
