@@ -120,7 +120,9 @@ export function useLive(enabled: boolean): Live {
         // Whether the screen is current follows what the server says it cannot read, not whether
         // this message happened to carry data. A delta about vehicles does not make unreadable
         // work current, and a quiet site that becomes readable again sends nothing but a heartbeat.
-        const next: LiveStatus = state.unread.length > 0 ? 'stale' : 'live';
+        // Waiting for the snapshot asked for is not being in step, whatever arrives meanwhile: a
+        // heartbeat does not make a screen that missed a delta current.
+        const next: LiveStatus = !state.synced ? 'resyncing' : state.unread.length > 0 ? 'stale' : 'live';
         if (step.changed || next !== shown) publish(next);
       };
       ws.onclose = () => {

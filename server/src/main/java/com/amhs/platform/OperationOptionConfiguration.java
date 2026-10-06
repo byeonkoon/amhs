@@ -53,6 +53,27 @@ public class OperationOptionConfiguration {
  }
 
  /**
+  * Whether the site may progress, answered once for every path that grants road, assigns work or
+  * sends a command: null when it may; otherwise why not -- {@code SEQUENCE_STOPPED} (somebody
+  * stopped it) or {@code RESTART_CHECK_PENDING} (the server started and the ledger has not been
+  * compared with the vehicles yet).
+  */
+ @Transactional(readOnly=true)
+ public String whyNotProgressing(long site){
+  var rows=jdbc.query("SELECT sequence_running,restart_check_since IS NOT NULL FROM platform.site_operation WHERE site_id=?",
+   (r,n)->!r.getBoolean(1)?"SEQUENCE_STOPPED":r.getBoolean(2)?"RESTART_CHECK_PENDING":"",site);
+  if(rows.isEmpty())throw new ConfigurationException(404,"SITE_NOT_CONFIGURED");
+  return rows.getFirst().isEmpty()?null:rows.getFirst();
+ }
+ public boolean progressing(long site){ return whyNotProgressing(site)==null; }
+
+ /** Mirrors the open restart check (its start), or clears it with null. Written with the check itself. */
+ @Transactional
+ public void markRestartCheck(long site,java.time.OffsetDateTime since){
+  jdbc.update("UPDATE platform.site_operation SET restart_check_since=? WHERE site_id=?",since,site);
+ }
+
+ /**
   * Stops the site, or starts it again.
   *
   * <p>Not a configuration change: the moment it is most wanted is while the site is running, and a

@@ -25,12 +25,12 @@ public class SiteSweep {
  private final TransportOrders orders; private final TransportAssignment assignment;
  private final ContinuousMovement movement; private final DeviceGateway gateway;
  private final OperationOptionConfiguration options; private final ZoneEvacuation evacuation;
- private final DeadlockRecoveries recoveries; private final RestartCheck restartCheck;
+ private final DeadlockRecoveries recoveries;
  public SiteSweep(TransportOrders orders,TransportAssignment assignment,ContinuousMovement movement,
                   DeviceGateway gateway,OperationOptionConfiguration options,ZoneEvacuation evacuation,
-                  DeadlockRecoveries recoveries,RestartCheck restartCheck){
+                  DeadlockRecoveries recoveries){
   this.orders=orders; this.assignment=assignment; this.movement=movement;
-  this.gateway=gateway; this.options=options; this.evacuation=evacuation; this.recoveries=recoveries; this.restartCheck=restartCheck;
+  this.gateway=gateway; this.options=options; this.evacuation=evacuation; this.recoveries=recoveries;
  }
 
  /**
@@ -71,7 +71,7 @@ public class SiteSweep {
   * follows a server start.
   */
  public boolean progressing(long siteId){
-  return options.sequenceRunning(siteId)&&!restartCheck.pending(siteId);
+  return options.progressing(siteId);
  }
 
  public Sweep run(long siteId,String actorCode,String traceId){

@@ -101,9 +101,9 @@ class SiteAlarmsSqlTest {
   // holds them -- a reported position, so there is a row to carry a charge, and a threshold.
   var agv=jdbc.queryForObject(
    "SELECT id,charge_node_id,charging_policy FROM fleet.vehicle_profile"
-   +" WHERE site_id=? AND v_type='AGV' AND charging_policy<>'DISABLED' AND enabled=TRUE"
+   +" WHERE site_id=? AND revision_id=? AND v_type='AGV' AND charging_policy<>'DISABLED' AND enabled=TRUE"
    +" ORDER BY id LIMIT 1",
-   (r,n)->new Object[]{r.getLong(1),r.getLong(2),r.getString(3)},SITE);
+   (r,n)->new Object[]{r.getLong(1),r.getLong(2),r.getString(3)},SITE,REVISION);
   long vehicleId=(Long)agv[0]; long chargeNode=(Long)agv[1]; String policy=(String)agv[2];
   Integer threshold=jdbc.queryForObject(
    "SELECT charge_critical_pct FROM platform.site_operation WHERE site_id=?",Integer.class,SITE);

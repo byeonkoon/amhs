@@ -39,6 +39,25 @@ class JdbcTransportLedger implements TransportLedger {
   return one("SELECT "+COLS+" FROM transport.order WHERE site_id=? AND id=?",siteId,orderId);
  }
  @Transactional(readOnly=true)
+ public WorkCounts workCounts(long siteId){
+  return jdbc.queryForObject("SELECT count(*) FILTER (WHERE status='QUEUED'),"
+   +"count(*) FILTER (WHERE status NOT IN ('QUEUED','RECOVERY_REQUIRED')),"
+   +"count(*) FILTER (WHERE status='RECOVERY_REQUIRED'),min(created_at) FILTER (WHERE status='QUEUED')"
+   +" FROM transport.order WHERE site_id=? AND status NOT IN ('COMPLETED','CANCELLED','FAILED')",
+   (r,n)->new WorkCounts(r.getInt(1),r.getInt(2),r.getInt(3),r.getObject(4,java.time.OffsetDateTime.class)),siteId);
+ }
+ @Transactional(readOnly=true)
+ public int carriersInTransport(long siteId){
+  Integer n=jdbc.queryForObject("SELECT count(DISTINCT carrier_code) FROM transport.order WHERE site_id=?"
+   +" AND status NOT IN ('COMPLETED','CANCELLED','FAILED') AND carrier_code IS NOT NULL AND carrier_code<>''",Integer.class,siteId);
+  return n==null?0:n;
+ }
+ @Transactional(readOnly=true)
+ public List<TransportOrder> inStatus(long siteId,OrderStatus status){
+  return jdbc.query("SELECT "+COLS+" FROM transport.order WHERE site_id=? AND status=? ORDER BY created_at,id",
+   MAPPER,siteId,status.name());
+ }
+ @Transactional(readOnly=true)
  public List<TransportOrder> listActive(long siteId,int limit){
   return jdbc.query("SELECT "+COLS+" FROM transport.order WHERE site_id=? AND status NOT IN ('COMPLETED','CANCELLED','FAILED')"
    +" ORDER BY id DESC LIMIT ?",MAPPER,siteId,limit);

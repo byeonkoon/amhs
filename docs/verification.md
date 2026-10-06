@@ -1,5 +1,21 @@
 # 검증 기록
 
+## 2026-10-06 · 대기 39개 커밋 리뷰 L1~L8 반영
+
+- 서버 시험 **388개 통과, 실패·오류·skip 0**. migration V48.
+- `RestartGateSqlTest` 6개(L1~L4):
+  - 대조가 열려 있으면 발행 API는 아무것도 보내지 않는다(claimed 0, 명령은 PENDING 유지). 직접 MORE·재개는 `RESTART_CHECK_PENDING`이며 103을 허가하지 않는다.
+  - 한 시간 전 정지 보고는 `VEHICLE_REPORT_STALE`로 확인을 막고, 예약은 유지된다.
+  - 배송 중 화물 없음 보고는 확인 시 RECOVERY_REQUIRED가 되고 재개되지 않는다. 적재 전 화물 있음은 확인을 막는다.
+  - 확인 뒤 다시 허가하면 이전과 다른 ID의 새 MOVE가 PENDING으로 기록된다.
+- `OverviewTotalsSqlTest`(L7): 3시간 전 복구 대기 1건과 그 뒤 QUEUED 1,001건 → 대기 1,001, 사람 필요 1, 최장 대기 1,000초 이상.
+- `MixedNetworkSqlTest`(L8): OHT–AGV 포트–OHT로 이어진 지도는 활성화가 거부되고 사용 중으로 바뀌지 않는다. 기존 지도 revision 1~3은 통과한다.
+- L5·L6: 리뷰어의 Node 하네스를 현재 코드로 다시 실행했다.
+  - L5: 누락 뒤 heartbeat가 와도 "재동기화 중"을 유지하고, snapshot 뒤 live seq 3이 된다.
+  - L6: 배치 변경 뒤 목적지 표시가 0.5에서 1.5로 다시 그려진다.
+  - 실제 브라우저와 WebGL 렌더링은 아님.
+- 시험 정리: 새 시험이 시험 DB 샘플 AGV의 충전 정책을 바꾸지 않도록 했다. 알람 시험의 차량 조회에 revision 조건을 넣었다.
+
 ## 2026-10-06 · 재시작 대조 (A14)
 
 - 서버 시험 **379개 통과, 실패·오류·skip 0**(SQL 통합 시험 포함). migration V47.

@@ -98,16 +98,11 @@ public class SiteOverview {
  }
 
  private Work workOf(long siteId,OffsetDateTime now){
-  int queued=0,running=0,needingAPerson=0; Long oldest=null;
-  for(TransportOrder o:ledger.listActive(siteId,1000)){
-   if(o.status()==OrderStatus.RECOVERY_REQUIRED){ needingAPerson++; continue; }
-   if(o.status()==OrderStatus.QUEUED){
-    queued++;
-    long waited=Duration.between(o.createdAt(),now).toSeconds();
-    if(oldest==null||waited>oldest) oldest=waited;
-   }else running++;
-  }
-  return new Work(queued,running,needingAPerson,oldest);
+  // Counted over every unfinished order; a page of the newest would hide the oldest, which is
+  // exactly the one that has waited longest or needs a person.
+  var counts=ledger.workCounts(siteId);
+  Long oldest=counts.oldestQueuedAt()==null?null:Duration.between(counts.oldestQueuedAt(),now).toSeconds();
+  return new Work(counts.queued(),counts.running(),counts.recoveryRequired(),oldest);
  }
 
  private Throughput throughputOf(long siteId,int windowMinutes,OffsetDateTime now){

@@ -207,8 +207,8 @@ public class SiteAlarms {
  }
 
  private void orders(long siteId,List<Alarm> out){
-  for(var order:ledger.listActive(siteId,500)){
-   if(order.status()==OrderStatus.RECOVERY_REQUIRED)
+  // Every one of them: each is a carrier somebody has to find, however old.
+  for(var order:ledger.inStatus(siteId,OrderStatus.RECOVERY_REQUIRED)){
     out.add(new Alarm("ORDER_RECOVERY:"+order.id(),Severity.CRITICAL,"작업 복구 대기",
      "작업 #"+order.id()+(order.carrierCode()==null?"":" · "+order.carrierCode()),
      "화물이 어디 있는지 확인되어야 더 진행할 수 있습니다.",
@@ -218,7 +218,14 @@ public class SiteAlarms {
  }
 
  private void commands(long siteId,List<Alarm> out){
-  for(var command:outbox.inDoubt(siteId,50))
+  var listed=outbox.inDoubt(siteId,200);
+  int total=outbox.inDoubtCount(siteId);
+  // More than are listed is said as one line with the rest counted, never dropped silently.
+  if(total>listed.size())
+   out.add(new Alarm("COMMAND_IN_DOUBT:MORE",Severity.WARNING,"명령 결과 미확인 (추가)",
+    "외 %d건".formatted(total-listed.size()),"목록에 다 싣지 못한 결과 미확인 명령이 더 있습니다.",
+    "진단 화면에서 차례로 정리해야 합니다.",listed.getLast().createdAt(),"가장 늦게 표시된 생성 시각","diagnostics"));
+  for(var command:listed)
    out.add(new Alarm("COMMAND_IN_DOUBT:"+command.commandId(),Severity.WARNING,"명령 결과 미확인",
     (command.vehicleId()==null?"":"차량 "+command.vehicleId()+" · ")+command.commandType(),
     "보낸 결과를 확인하지 못했습니다(시도 %d회%s).".formatted(

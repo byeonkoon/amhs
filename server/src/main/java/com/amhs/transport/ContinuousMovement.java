@@ -55,6 +55,9 @@ public class ContinuousMovement {
 
  @Transactional
  public Extension extend(long siteId,long orderId){
+  // No new road while the site is stopped or waits for its restart check, whichever path asks.
+  String halted=operations.whyNotProgressing(siteId);
+  if(halted!=null) return none(orderId,0,halted);
   var order=ledger.lock(siteId,orderId)
    .orElseThrow(()->new TransportRejected("ORDER_NOT_FOUND","unknown order",false));
   if(order.status().isTerminal()) return none(orderId,0,"ORDER_FINISHED");
@@ -133,6 +136,8 @@ public class ContinuousMovement {
   */
  @Transactional
  public Extension resume(long siteId,long orderId){
+  String halted=operations.whyNotProgressing(siteId);
+  if(halted!=null) return none(orderId,0,halted);
   var order=ledger.lock(siteId,orderId)
    .orElseThrow(()->new TransportRejected("ORDER_NOT_FOUND","unknown order",false));
   if(order.status().isTerminal()) return none(orderId,0,"ORDER_FINISHED");

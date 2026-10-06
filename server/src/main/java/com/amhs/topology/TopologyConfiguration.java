@@ -70,6 +70,9 @@ public class TopologyConfiguration {
   if(target.active()) return target;
   ConfigurationException.require(target.nodes()>0,"REVISION_HAS_NO_TRACK");
   ConfigurationException.require(target.vehicles()>0,"REVISION_HAS_NO_VEHICLE");
+  // OHT and AGV run on track that does not join: a port, a vehicle or a waiting place of one kind
+  // on track joined to the other kind's lets a route be planned from one onto the other.
+  if(mixedNetwork(site,revisionId)!=null) throw new ConfigurationException(422,"MIXED_VEHICLE_NETWORK");
   for(var work:openWork){
    String why=work.whyBusy(site);
    if(why!=null) throw new ConfigurationException(409,why);
@@ -77,6 +80,44 @@ public class TopologyConfiguration {
   jdbc.update("UPDATE topology.map_revision SET status='RETIRED' WHERE site_id=? AND status='ACTIVE'",site);
   jdbc.update("UPDATE topology.map_revision SET status='ACTIVE' WHERE site_id=? AND id=?",site,revisionId);
   return revisions(site).stream().filter(r->r.id()==revisionId).findFirst().orElseThrow();
+ }
+
+ /**
+  * The first node of a joined piece of track that claims more than one kind of vehicle, by what
+  * stands on it: ports by the kind that reaches them, vehicles by their start, home and charge
+  * nodes, waiting places by the kind they are for. Null when every piece serves one kind. Track is
+  * joined by any segment, in use or not: a segment switched off can be switched on again.
+  */
+ @Transactional(readOnly=true)
+ public String mixedNetwork(long site,long revision){
+  var parent=new java.util.HashMap<Long,Long>();
+  java.util.function.Function<Long,Long>[] find=new java.util.function.Function[1];
+  find[0]=x->{ Long p=parent.getOrDefault(x,x); if(p.equals(x)) return x; Long r=find[0].apply(p); parent.put(x,r); return r; };
+  var codes=new java.util.HashMap<Long,String>();
+  jdbc.query("SELECT id,code FROM topology.node WHERE site_id=? AND revision_id=?",
+   (org.springframework.jdbc.core.RowCallbackHandler)r->{ parent.put(r.getLong(1),r.getLong(1)); codes.put(r.getLong(1),r.getString(2)); },
+   site,revision);
+  jdbc.query("SELECT from_node_id,to_node_id FROM topology.edge WHERE site_id=? AND revision_id=?",
+   (org.springframework.jdbc.core.RowCallbackHandler)r->{
+    Long a=find[0].apply(r.getLong(1)), b=find[0].apply(r.getLong(2));
+    if(!a.equals(b)) parent.put(a,b);
+   },site,revision);
+  var kinds=new java.util.HashMap<Long,java.util.Set<String>>();
+  var first=new java.util.HashMap<Long,Long>();
+  org.springframework.jdbc.core.RowCallbackHandler claim=r->{
+   long node=r.getLong(1); String kind=r.getString(2);
+   if(kind==null||!parent.containsKey(node)) return;
+   Long root=find[0].apply(node);
+   kinds.computeIfAbsent(root,k->new java.util.HashSet<>()).add(kind);
+   first.putIfAbsent(root,node);
+  };
+  jdbc.query("SELECT linked_node_id,access_vehicle_type FROM topology.port WHERE site_id=? AND revision_id=?",claim,site,revision);
+  jdbc.query("SELECT n.node_id,v.v_type FROM fleet.vehicle_profile v CROSS JOIN LATERAL"
+   +" (VALUES (v.initial_node_id),(v.home_node_id),(v.charge_node_id)) n(node_id)"
+   +" WHERE v.site_id=? AND v.revision_id=? AND n.node_id IS NOT NULL",claim,site,revision);
+  jdbc.query("SELECT id,wait_for FROM topology.node WHERE site_id=? AND revision_id=? AND wait_for IS NOT NULL",claim,site,revision);
+  for(var e:kinds.entrySet()) if(e.getValue().size()>1) return codes.get(first.get(e.getKey()));
+  return null;
  }
 
  @Transactional(readOnly=true)

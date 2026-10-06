@@ -229,6 +229,12 @@ class JdbcCommandOutbox implements CommandOutbox {
    +" WHERE o.site_id=? AND c.order_id=? ORDER BY c.id",MAPPER,siteId,orderId);
  }
  @Transactional(readOnly=true)
+ public int inDoubtCount(long siteId){
+  Integer n=jdbc.queryForObject("SELECT count(*) FROM integration.command_outbox WHERE site_id=? AND status IN ('DISPATCHING','SENT')",
+   Integer.class,siteId);
+  return n==null?0:n;
+ }
+
  public List<DeviceCommand> inDoubt(long siteId,int limit){
   return jdbc.query("SELECT "+COLS+" FROM integration.command_outbox"
    +" WHERE site_id=? AND status IN ('DISPATCHING','SENT') ORDER BY created_at,id LIMIT ?",

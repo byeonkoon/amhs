@@ -25,6 +25,9 @@ public class DeviceGateway {
         public static Publication nothing() { return new Publication(0,0,0,0); }
     }
     public Publication publishPending(long siteId) {
+        // Nothing leaves while the site is stopped or waits for its restart check, whoever asks:
+        // a command sent then is a vehicle moving on a decision nobody may act on yet.
+        if (!options.progressing(siteId)) return Publication.nothing();
         // How hard to retry is an operating decision, so it is read from the site's options each
         // sweep rather than fixed at start-up: changing it must not require a restart.
         var option=options.get(siteId).settings();

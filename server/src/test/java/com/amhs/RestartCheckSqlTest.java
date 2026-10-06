@@ -39,7 +39,7 @@ class RestartCheckSqlTest {
   jdbc.update("UPDATE integration.command_outbox SET status='WITHDRAWN' WHERE status IN ('PENDING','DISPATCHING','FAILED')");
   jdbc.update("UPDATE integration.command_outbox SET status='ACCEPTED' WHERE status='SENT'");
   jdbc.update("DELETE FROM fleet.vehicle_state WHERE site_id=?",SITE);
-  jdbc.update("UPDATE platform.site_operation SET node_count=20,sequence_running=TRUE WHERE site_id=?",SITE);
+  jdbc.update("UPDATE platform.site_operation SET node_count=20,sequence_running=TRUE,restart_check_since=NULL WHERE site_id=?",SITE);
  }
 
  private void place(long vehicle,long node){

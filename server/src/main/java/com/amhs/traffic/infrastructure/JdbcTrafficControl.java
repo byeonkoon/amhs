@@ -462,8 +462,10 @@ class JdbcTrafficControl implements TrafficControl {
   return rows.isEmpty()?null:rows.getFirst();
  }
  private int nextSequence(long siteId,long vehicleId){
+  // Released grants count too: numbers never go back, so a road granted again after road was given
+  // back never reuses the number -- and the command id built from it -- of an earlier grant.
   Integer max=jdbc.queryForObject("SELECT COALESCE(MAX(sequence),0) FROM traffic.node_reservation"
-   +" WHERE site_id=? AND vehicle_id=? AND released_at IS NULL",Integer.class,siteId,vehicleId);
+   +" WHERE site_id=? AND vehicle_id=?",Integer.class,siteId,vehicleId);
   return (max==null?0:max)+1;
  }
  private static String truncate(String reason){

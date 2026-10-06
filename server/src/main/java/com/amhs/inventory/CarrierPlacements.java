@@ -138,8 +138,7 @@ public class CarrierPlacements {
   guard.requireSite(site);
   var all=placements(site);
   int inCells=(int)all.stream().filter(Placement::inACell).count();
-  int carriersInTransport=(int)transport.listActive(site,500).stream()
-   .map(o->o.carrierCode()).filter(c->c!=null&&!c.isBlank()).distinct().count();
+  int carriersInTransport=transport.carriersInTransport(site);
   int blocked=jdbc.queryForObject(
    "SELECT count(*) FROM equipment.slot s JOIN equipment.rack r ON r.id=s.rack_id"
    +" JOIN equipment.unit u ON u.id=r.unit_id WHERE u.site_id=? AND s.usable=FALSE",Integer.class,site);

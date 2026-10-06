@@ -82,4 +82,6 @@ public interface CommandOutbox {
     List<DeviceCommand> unresolvedForVehicle(long siteId, long vehicleId);
     /** Commands nobody can settle automatically, oldest first. */
     List<DeviceCommand> inDoubt(long siteId, int limit);
+    /** How many commands are in doubt at the site, all of them, whatever a list shows. */
+    int inDoubtCount(long siteId);
 }

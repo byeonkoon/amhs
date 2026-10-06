@@ -4,6 +4,7 @@ import com.amhs.fleet.VehicleSnapshot;
 import com.amhs.integration.CommandOutbox;
 import com.amhs.integration.CommandStatus;
 import com.amhs.integration.DeviceCommand;
+import com.amhs.platform.OperationOptionConfiguration;
 import com.amhs.traffic.NodeHold;
 import com.amhs.traffic.TrafficControl;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -17,35 +18,45 @@ import java.util.*;
  *
  * <p>The ledger says what was in progress when the server went down; nothing says what the vehicles
  * did while nobody was listening. Until the two have been compared the site does not progress -- no
- * assignment, no new road, no move of the controller's own, nothing sent -- while vehicle reports,
- * receipts and an operator's own recovery work go on. A site with nothing in progress has nothing to
- * compare and carries on at once.
+ * assignment, no new road, no move, nothing sent, by whichever path it is asked for -- while vehicle
+ * reports, receipts and an operator's own recovery work go on. A site with nothing in progress has
+ * nothing to compare and carries on at once.
  *
  * <p>What has to be settled before an operator may confirm: every vehicle the work involves has
- * reported since the start (silence proves nothing); where it reports is on the road it holds; and no
- * command is left whose outcome the restart lost. An operator may close such a command only once its
- * vehicle has been seen standing still since the start, and it is recorded as possibly received.
- * Vehicles taken out of service count as isolated. Orders already waiting for a person (a carrier
- * question, a cancel the vehicle has not confirmed) are listed and stay as they are.
+ * reported since the start and recently enough to count as now (silence proves nothing, and an hour-old
+ * report is not a present standstill); where it reports is on the road it holds; no command is left
+ * whose outcome the restart lost; and no vehicle carries a carrier its work says it should not have.
+ * An operator may close a lost command only once its vehicle is seen standing still, now; it is
+ * recorded as possibly received. Vehicles taken out of service count as isolated. Orders already
+ * waiting for a person stay as they are.
  *
- * <p>On confirmation, commands written before the start and never sent are withdrawn (a stop is kept:
- * stopping is always safe), and a vehicle seen standing still since the start gives back the road it
- * holds ahead of where it stands, so its work is given road again from where it actually is. A
- * vehicle still moving keeps its road. Nothing is released on a timer or on silence.
+ * <p>Work whose carrier the vehicle's report contradicts -- a delivery with nothing aboard -- or that
+ * was part-way through a handover when the server stopped is not resumed: confirming puts it into
+ * recovery, where a person establishes where the carrier is.
+ *
+ * <p>On confirmation, under the vehicles' own locks so no report slips in between: commands written
+ * before the start and never sent are withdrawn (a stop is kept), and a vehicle seen standing still now
+ * gives back the road it holds ahead of where it stands, so its work is given road again from there.
+ * A vehicle still moving keeps its road. Nothing is released on a timer or on silence.
  */
 @Service
 public class RestartCheck {
  private final JdbcTemplate jdbc; private final FleetState fleet; private final TrafficControl traffic;
- private final CommandOutbox outbox; private final TransportLedger ledger;
+ private final CommandOutbox outbox; private final TransportLedger ledger; private final TransportOrders orders;
+ private final OperationOptionConfiguration operations;
 
- public RestartCheck(JdbcTemplate jdbc,FleetState fleet,TrafficControl traffic,CommandOutbox outbox,TransportLedger ledger){
+ public RestartCheck(JdbcTemplate jdbc,FleetState fleet,TrafficControl traffic,CommandOutbox outbox,TransportLedger ledger,
+                     TransportOrders orders,OperationOptionConfiguration operations){
   this.jdbc=jdbc; this.fleet=fleet; this.traffic=traffic; this.outbox=outbox; this.ledger=ledger;
+  this.orders=orders; this.operations=operations;
  }
 
  /**
   * One thing found. {@code blocking}: confirmation is refused while it is there.
-  * Kinds: VEHICLE_SILENT, POSITION_UNKNOWN, VEHICLE_OFF_ROAD, COMMAND_IN_DOUBT (blocking);
-  * VEHICLE_CONFIRMED, VEHICLE_MOVING, VEHICLE_ISOLATED, COMMAND_UNSENT, ORDER_WAITS_FOR_OPERATOR.
+  * Blocking kinds: VEHICLE_SILENT, VEHICLE_REPORT_STALE, POSITION_UNKNOWN, VEHICLE_OFF_ROAD,
+  * COMMAND_IN_DOUBT, CARRIER_UNEXPECTED. Others: VEHICLE_CONFIRMED, VEHICLE_MOVING, VEHICLE_ISOLATED,
+  * COMMAND_UNSENT, CARRIER_MISMATCH and HANDOVER_INTERRUPTED (the order goes into recovery on
+  * confirmation), ORDER_WAITS_FOR_OPERATOR.
   */
  public record Item(String kind,boolean blocking,Long vehicleId,Long orderId,String commandId,Long nodeId,String detail){}
  public record Finished(long id,OffsetDateTime startedAt,OffsetDateTime finishedAt,String outcome,String finishedBy,
@@ -69,9 +80,14 @@ public class RestartCheck {
   int moved=jdbc.update("UPDATE transport.restart_check SET started_at=clock_timestamp(),settled_commands=0"
    +" WHERE site_id=? AND finished_at IS NULL",siteId);
   if(moved==0) jdbc.update("INSERT INTO transport.restart_check(site_id) VALUES(?)",siteId);
-  if(!inProgress(siteId))
+  var since=jdbc.queryForObject("SELECT started_at FROM transport.restart_check WHERE site_id=? AND finished_at IS NULL",
+   OffsetDateTime.class,siteId);
+  operations.markRestartCheck(siteId,since);
+  if(!inProgress(siteId)){
    jdbc.update("UPDATE transport.restart_check SET finished_at=clock_timestamp(),outcome='NOTHING_IN_PROGRESS',"
     +"finished_by='system' WHERE site_id=? AND finished_at IS NULL",siteId);
+   operations.markRestartCheck(siteId,null);
+  }
   return state(siteId);
  }
 
@@ -90,7 +106,7 @@ public class RestartCheck {
   return new State(true,id,since,items,items.stream().noneMatch(Item::blocking),last);
  }
 
- /** The operator closes one command the restart left in doubt, on the evidence of its vehicle standing still since. */
+ /** The operator closes one command the restart left in doubt, on the evidence of its vehicle standing still now. */
  @Transactional
  public State closeInDoubt(long siteId,String commandId,String reason){
   requireReason(reason);
@@ -99,9 +115,13 @@ public class RestartCheck {
    .orElseThrow(()->new TransportRejected("COMMAND_NOT_FOUND","no unsettled command with that id",false));
   if(!command.status().inDoubt()||!command.createdAt().isBefore(since))
    throw new TransportRejected("COMMAND_NOT_LOST_IN_RESTART","only a command claimed or sent before the start can be closed here",false);
-  var vehicle=command.vehicleId()==null?null:fleet.find(siteId,ledger.activeRevision(siteId),command.vehicleId()).orElse(null);
-  if(vehicle==null||!standingSince(vehicle,since))
-   throw new TransportRejected("VEHICLE_NOT_SEEN_STANDING","the vehicle has not been seen standing still since the start",true);
+  if(command.vehicleId()==null)
+   throw new TransportRejected("VEHICLE_NOT_SEEN_STANDING","the command names no vehicle",true);
+  // Under the vehicle's lock, so a report cannot change what is judged between reading and closing.
+  fleet.lockForAssignment(siteId,List.of(command.vehicleId()));
+  var vehicle=fleet.find(siteId,ledger.activeRevision(siteId),command.vehicleId()).orElse(null);
+  if(vehicle==null||!standingNow(vehicle,since,cutoff(siteId)))
+   throw new TransportRejected("VEHICLE_NOT_SEEN_STANDING","the vehicle has not been seen standing still since the start, recently",true);
   if(outbox.closeInDoubtAfterRestart(commandId,reason))
    jdbc.update("UPDATE transport.restart_check SET settled_commands=settled_commands+1 WHERE site_id=? AND finished_at IS NULL",siteId);
   return state(siteId);
@@ -112,10 +132,18 @@ public class RestartCheck {
  public State confirm(long siteId,String reason,String actor){
   requireReason(reason);
   var since=lockOpen(siteId);
+  long revisionId=ledger.activeRevision(siteId);
+  // Every vehicle is held still for the decision: what is judged is what is acted on.
+  fleet.lockForAssignment(siteId,fleet.snapshot(siteId,revisionId).stream().map(VehicleSnapshot::id).toList());
   var items=items(siteId,since);
   long blocking=items.stream().filter(Item::blocking).count();
   if(blocking>0)
    throw new TransportRejected("RESTART_CHECK_UNRESOLVED",blocking+" item(s) still unresolved",true);
+  // Work the vehicle's own report contradicts, or caught in a handover, is not resumed: where the
+  // carrier is becomes a person's question.
+  for(var item:items)
+   if(("CARRIER_MISMATCH".equals(item.kind())||"HANDOVER_INTERRUPTED".equals(item.kind()))&&item.orderId()!=null)
+    orders.advance(siteId,item.orderId(),OrderStatus.RECOVERY_REQUIRED,"RESTART_CHECK: "+item.kind(),actor,null);
   // Decided before the start, on a state nobody has confirmed since; its work will be given road
   // again from where the vehicle actually is. A stop is kept.
   int withdrawn=0;
@@ -126,15 +154,15 @@ public class RestartCheck {
    }
   }
   int released=0;
-  long revisionId=ledger.activeRevision(siteId);
+  var cutoff=cutoff(siteId);
   for(var v:fleet.snapshot(siteId,revisionId)){
-   if(!standingSince(v,since)||!outbox.unresolvedForVehicle(siteId,v.id()).isEmpty()) continue;
-   var holds=traffic.heldBy(siteId,v.id());
-   if(holds.size()>1) released+=traffic.releaseAhead(siteId,v.id(),v.nodeId(),"RESTART_CHECK");
+   if(!standingNow(v,since,cutoff)||!outbox.unresolvedForVehicle(siteId,v.id()).isEmpty()) continue;
+   if(traffic.heldBy(siteId,v.id()).size()>1) released+=traffic.releaseAhead(siteId,v.id(),v.nodeId(),"RESTART_CHECK");
   }
   jdbc.update("UPDATE transport.restart_check SET finished_at=clock_timestamp(),outcome='CONFIRMED',finished_by=?,"
    +"finish_reason=?,released_nodes=?,withdrawn_commands=? WHERE site_id=? AND finished_at IS NULL",
    actor.length()<=128?actor:actor.substring(0,128),reason.length()<=256?reason:reason.substring(0,256),released,withdrawn,siteId);
+  operations.markRestartCheck(siteId,null);
   return state(siteId);
  }
 
@@ -146,11 +174,17 @@ public class RestartCheck {
  private static void requireReason(String reason){
   if(reason==null||reason.isBlank()) throw new TransportRejected("REASON_REQUIRED","say what was checked (X-Amhs-Reason)",false);
  }
-
- /** Seen standing still on a node, online, in a report made since the start. */
- private static boolean standingSince(VehicleSnapshot v,OffsetDateTime since){
+ /** A report older than this says where the vehicle was, not where it is. */
+ private OffsetDateTime cutoff(long siteId){
+  return OffsetDateTime.now().minusSeconds(operations.get(siteId).settings().positionStaleSeconds());
+ }
+ private static boolean reportedSince(VehicleSnapshot v,OffsetDateTime since){
+  return v.reportedAt()!=null&&v.reportedAt().isAfter(since);
+ }
+ /** Seen standing still on a node, online, in a report made since the start and recent enough to be now. */
+ private static boolean standingNow(VehicleSnapshot v,OffsetDateTime since,OffsetDateTime cutoff){
   return v.online()&&v.nodeId()!=null&&!v.betweenNodes()&&v.idle()&&"IDLE".equals(v.effectiveStatus())
-   &&v.reportedAt()!=null&&v.reportedAt().isAfter(since);
+   &&reportedSince(v,since)&&v.reportedSince(cutoff);
  }
 
  private List<DeviceCommand> commands(long siteId){
@@ -172,11 +206,13 @@ public class RestartCheck {
 
  private List<Item> items(long siteId,OffsetDateTime since){
   long revisionId=ledger.activeRevision(siteId);
+  var cutoff=cutoff(siteId);
   var vehicles=fleet.snapshot(siteId,revisionId);
   var holds=new HashMap<Long,List<Long>>();
   for(NodeHold h:traffic.held(siteId)) holds.computeIfAbsent(h.vehicleId(),k->new ArrayList<>()).add(h.nodeId());
   var involved=new TreeSet<Long>(holds.keySet());
-  for(var a:ledger.activeAssignments(siteId)) involved.add(a.vehicleId());
+  var workOf=new HashMap<Long,Long>();
+  for(var a:ledger.activeAssignments(siteId)){ involved.add(a.vehicleId()); workOf.put(a.vehicleId(),a.orderId()); }
   for(var r:ledger.openRelocations(siteId)) involved.add(r.vehicleId());
   involved.addAll(ledger.chargingVehicleIds(siteId));
   var commands=commands(siteId);
@@ -186,18 +222,27 @@ public class RestartCheck {
   for(var v:vehicles){
    if(!involved.contains(v.id())) continue;
    var held=holds.getOrDefault(v.id(),List.of());
+   boolean heard=false;
    if(v.outOfService()||!v.enabled()){
     out.add(new Item("VEHICLE_ISOLATED",false,v.id(),null,null,v.nodeId(),v.outOfService()?"OUT_OF_SERVICE":"NOT_IN_USE"));
-   }else if(v.reportedAt()==null||!v.reportedAt().isAfter(since)){
+   }else if(!reportedSince(v,since)){
     out.add(new Item("VEHICLE_SILENT",true,v.id(),null,null,v.nodeId(),null));
+   }else if(!v.reportedSince(cutoff)){
+    out.add(new Item("VEHICLE_REPORT_STALE",true,v.id(),null,null,v.nodeId(),String.valueOf(v.reportedAt())));
    }else if(v.nodeId()==null){
     out.add(new Item("POSITION_UNKNOWN",true,v.id(),null,null,null,null));
    }else if(!held.isEmpty()&&!held.contains(v.nodeId())){
     out.add(new Item("VEHICLE_OFF_ROAD",true,v.id(),null,null,v.nodeId(),"HOLDS "+held));
-   }else if(!standingSince(v,since)){
-    out.add(new Item("VEHICLE_MOVING",false,v.id(),null,null,v.nodeId(),v.effectiveStatus()));
    }else{
-    out.add(new Item("VEHICLE_CONFIRMED",false,v.id(),null,null,v.nodeId(),held.size()>1?"ROAD_AHEAD_GIVEN_BACK_ON_CONFIRM":null));
+    heard=true;
+    if(!standingNow(v,since,cutoff)) out.add(new Item("VEHICLE_MOVING",false,v.id(),null,null,v.nodeId(),v.effectiveStatus()));
+    else out.add(new Item("VEHICLE_CONFIRMED",false,v.id(),null,null,v.nodeId(),held.size()>1?"ROAD_AHEAD_GIVEN_BACK_ON_CONFIRM":null));
+   }
+   // What the vehicle now says it carries, against what its work says it should.
+   Long orderId=workOf.get(v.id());
+   if(heard&&orderId!=null){
+    var order=ledger.find(siteId,orderId).orElse(null);
+    if(order!=null) carrierItem(order,v).ifPresent(out::add);
    }
   }
   for(var c:commands){
@@ -210,5 +255,21 @@ public class RestartCheck {
    if(o.status()==OrderStatus.RECOVERY_REQUIRED||o.status()==OrderStatus.CANCEL_REQUESTED)
     out.add(new Item("ORDER_WAITS_FOR_OPERATOR",false,null,o.id(),null,null,o.status().name()));
   return out;
+ }
+
+ /**
+  * Before pickup the vehicle should carry nothing; between pickup and drop it should carry the
+  * carrier. A handover the restart cut through is not known either way.
+  */
+ private static Optional<Item> carrierItem(TransportOrder order,VehicleSnapshot v){
+  return switch(order.status()){
+   case ASSIGNED,TO_SOURCE -> v.carrierPresent()
+    ?Optional.of(new Item("CARRIER_UNEXPECTED",true,v.id(),order.id(),null,v.nodeId(),order.status().name()))
+    :Optional.empty();
+   case TO_DESTINATION -> v.carrierPresent()?Optional.empty()
+    :Optional.of(new Item("CARRIER_MISMATCH",false,v.id(),order.id(),null,v.nodeId(),"TO_DESTINATION, NO CARRIER REPORTED"));
+   case LOADING,UNLOADING -> Optional.of(new Item("HANDOVER_INTERRUPTED",false,v.id(),order.id(),null,v.nodeId(),order.status().name()));
+   default -> Optional.empty();
+  };
  }
 }

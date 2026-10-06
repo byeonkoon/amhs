@@ -100,6 +100,16 @@ public interface TransportLedger {
  void finishRelocation(long relocationId,String reason);
  /** Orders that are still being worked on, newest first. Finished ones are history. */
  List<TransportOrder> listActive(long siteId,int limit);
+ /**
+  * Unfinished work counted over every order, not over a page of them: a count read off "the most
+  * recent so many" is wrong exactly when the site is busiest.
+  */
+ record WorkCounts(int queued,int running,int recoveryRequired,java.time.OffsetDateTime oldestQueuedAt){}
+ WorkCounts workCounts(long siteId);
+ /** How many distinct carriers unfinished work is moving, over every order. */
+ int carriersInTransport(long siteId);
+ /** Every order in one status, oldest first; for statuses that each need someone's attention. */
+ List<TransportOrder> inStatus(long siteId,OrderStatus status);
  /** Orders that have finished (completed, cancelled or failed), newest first. */
  List<TransportOrder> listFinished(long siteId,int limit);
 

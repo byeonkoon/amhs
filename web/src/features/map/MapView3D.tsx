@@ -262,6 +262,9 @@ class World {
     this.nodePos.clear();
     this.map = map;
     this.placesKey = '';
+    // Held road and destinations are drawn at the nodes' places, so a new layout redraws them even
+    // when the holds and headings themselves have not changed.
+    this.overlaysKey = '';
     if (map.nodes.length === 0) return;
 
     const xs = map.nodes.map(n => n.x * S), ys = map.nodes.map(n => n.y * S);
