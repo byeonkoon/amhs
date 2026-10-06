@@ -120,7 +120,7 @@ table.t tbody tr:last-child td{border-bottom:0}
 .maplegend{display:flex;flex-wrap:wrap;gap:16px;padding:10px 15px;border-top:1px solid var(--ln);font-size:11px;color:var(--ink2)}
 .maplegend .li{display:flex;align-items:center;gap:7px}
 .mapwrap{padding:0;overflow-x:auto}
-.mapwrap svg{display:block;width:100%;min-width:520px}
+.mapwrap svg{display:block;width:100%;min-width:520px;max-height:min(58vh,620px)}
 .mapwrap text{font-family:var(--mono);fill:var(--mut)}
 .vehicle-btn{display:block;width:100%;text-align:left;border:1px solid var(--ln);background:var(--srf);
  border-radius:6px;padding:9px 11px;cursor:pointer;margin-bottom:8px}

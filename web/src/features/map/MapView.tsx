@@ -117,9 +117,16 @@ export function MapView(props: {
     const w = full.w / next, h = full.h / next;
     return { x: cx - (cx - v.x) * (w / v.w), y: cy - (cy - v.y) * (h / v.h), w, h };
   });
+  /**
+   * Where a screen point is on the map. Asked of the element itself rather than worked out from its
+   * box: a site that is taller than the panel is drawn to fit inside it, so the box and the drawing
+   * are not the same rectangle, and anything that assumes they are points at the wrong node.
+   */
   const toMap = (clientX: number, clientY: number) => {
-    const r = svg.current!.getBoundingClientRect();
-    return { x: view.x + ((clientX - r.left) / r.width) * view.w, y: view.y + ((clientY - r.top) / r.height) * view.h };
+    const m = svg.current?.getScreenCTM();
+    if (!m) return { x: view.x, y: view.y };
+    const p = new DOMPoint(clientX, clientY).matrixTransform(m.inverse());
+    return { x: p.x, y: p.y };
   };
 
   React.useEffect(() => {
@@ -140,9 +147,9 @@ export function MapView(props: {
   };
   const onPointerMove = (e: React.PointerEvent) => {
     const d = drag.current;
-    if (!d || !svg.current) return;
-    const r = svg.current.getBoundingClientRect();
-    const dx = (e.clientX - d.x) / r.width * d.view.w, dy = (e.clientY - d.y) / r.height * d.view.h;
+    const m = svg.current?.getScreenCTM();
+    if (!d || !m) return;
+    const dx = (e.clientX - d.x) / m.a, dy = (e.clientY - d.y) / m.d;
     if (Math.abs(e.clientX - d.x) + Math.abs(e.clientY - d.y) > 3) d.moved = true;
     if (d.moved) setView({ ...d.view, x: d.view.x - dx, y: d.view.y - dy });
   };
