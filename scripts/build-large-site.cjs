@@ -18,6 +18,7 @@
 const fs = require('fs');
 
 const SPACING = 8000;      // how often a node is dropped on a straight, mm
+const STALL = 7000;        // how far a charging or waiting stall sits off its lane, mm
 const CHORDS = 1;          // one chord per 90 degrees: the first node past a turnout is clear of the line
 const nodes = [], segments = [], ports = [], vehicles = [], zones = [];
 const byCode = new Map();
@@ -133,11 +134,35 @@ function spur(path, atIndex, span, depth, label, extras = {}, laneNodes = 1, rad
   p.straight(depth - 2 * radius, {}, (depth - 2 * radius));
   p.turn(radius, 90);
   const laneCodes = [];
-  for (let i = 0; i < laneNodes; i++) {
-    p.straight(far / (laneNodes + 1), extras, far / (laneNodes + 1));
+  if (laneNodes <= 1) {
+    p.straight(far / 2, extras, far / 2);
     laneCodes.push(p.path[p.path.length - 1]);
+    p.straight(far / 2, {}, far / 2);
+  } else {
+    // Stalls beside the lane, never one behind another. A row of stalls is a queue: the vehicle in
+    // front decides when the one behind may leave, and a vehicle that is parked has no reason to
+    // move -- so a charger behind a parked vehicle is a charger nobody can reach. Each stall is its
+    // own short branch off the lane instead, which is how a charging bay is actually built.
+    const spine = [p.path[p.path.length - 1]];
+    for (let i = 0; i < laneNodes; i++) {
+      p.straight(far / laneNodes, {}, far / laneNodes);
+      spine.push(p.path[p.path.length - 1]);
+    }
+    const entry = byCode.get(path[atIndex]);
+    for (let i = 0; i < laneNodes; i++) {
+      const s = byCode.get(spine[i]), e = byCode.get(spine[i + 1]);
+      const mx = (s.xMm + e.xMm) / 2, my = (s.yMm + e.yMm) / 2;
+      const ux = e.xMm - s.xMm, uy = e.yMm - s.yMm, len2 = Math.hypot(ux, uy) || 1;
+      // Off the side away from the main line, so a stall never reaches back towards it.
+      let ox = -uy / len2 * STALL, oy = ux / len2 * STALL;
+      if (Math.hypot(mx + ox - entry.xMm, my + oy - entry.yMm)
+        < Math.hypot(mx - ox - entry.xMm, my - oy - entry.yMm)) { ox = -ox; oy = -oy; }
+      const stall = node(`${label}-${i + 1}`, mx + ox, my + oy, extras);
+      link(spine[i], stall);
+      link(stall, spine[i + 1]);
+      laneCodes.push(stall);
+    }
   }
-  p.straight(far / (laneNodes + 1), {}, far / (laneNodes + 1));
   p.turn(radius, 90);
   p.straight(depth - 2 * radius, {}, (depth - 2 * radius));
   p.turn(radius, -90);
@@ -147,12 +172,13 @@ function spur(path, atIndex, span, depth, label, extras = {}, laneNodes = 1, rad
   byCode.delete(last);
   segments.splice(segments.findIndex(s => s.to === last), 1);
   link(p.path[p.path.length - 2], path[dIndex], 0);
-  laneCodes.forEach((code, i) => {
+  // A single stall is the lane itself and still carries the pen's own name; the stalls of a bay
+  // with more than one were named as they were made.
+  if (laneNodes <= 1) laneCodes.forEach((code, i) => {
     const n = byCode.get(code);
-    const wanted = laneNodes === 1 ? label : `${label}-${i + 1}`;
-    byCode.delete(code); n.code = wanted; byCode.set(wanted, n);
-    for (const seg of segments) { if (seg.from === code) seg.from = wanted; if (seg.to === code) seg.to = wanted; }
-    laneCodes[i] = wanted;
+    byCode.delete(code); n.code = label; byCode.set(label, n);
+    for (const seg of segments) { if (seg.from === code) seg.from = label; if (seg.to === code) seg.to = label; }
+    laneCodes[i] = label;
   });
   return { lane: laneCodes, path };
 }
@@ -209,13 +235,17 @@ if (inspection.length)
   zones.push({ code: 'INSPECTION', capacity: inspection.length, kind: 'MAINTENANCE', nodes: inspection });
 
 /* ================= AGV: its own loop, bays, chargers and a waiting spur ======================== */
-const agvRing = mainLine('AGV-M', 20000, 180000, 140000, 64000, 4500);
+const agvRing = mainLine('AGV-M', 20000, 180000, 170000, 84000, 4500);
 let agvPath = agvRing.path;
+// Ten AGVs, four chargers and eight waiting stalls. Fewer chargers than vehicles is ordinary and
+// the controller queues for them, but there must be somewhere for a charged vehicle to stand: with
+// a stall for every vehicle and one over, a vehicle that has finished charging always has a place
+// to go, so the charger it is standing on comes free for the one that needs it next.
 const agvSides = [
   { bays: 2, span: 4, depth: 22000 },
-  { bays: 1, span: 5, depth: 26000, label: 'AGV-CHG', extras: { chargePoint: true }, laneNodes: 3 },
+  { bays: 1, span: 5, depth: 26000, label: 'AGV-CHG', extras: { chargePoint: true }, laneNodes: 4 },
   { bays: 2, span: 4, depth: 22000 },
-  { bays: 1, span: 4, depth: 22000, label: 'AGV-WAIT', extras: { waitFor: 'AGV' }, laneNodes: 2 },
+  { bays: 1, span: 6, depth: 24000, label: 'AGV-WAIT', extras: { waitFor: 'AGV' }, laneNodes: 8 },
 ];
 const agvPlan = planBays(agvRing.runs, agvSides, 'AGV-B');
 const agvLanes = new Map();
