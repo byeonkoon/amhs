@@ -102,6 +102,39 @@ function mainLine(prefix, x0, y0, width, height, radius) {
 }
 
 /**
+ * A loop with semicircular ends, driven the same way round as the main line.
+ *
+ * <p>An overhead rail is hung from a structure and follows it, so its interbay is a rectangle with
+ * its corners eased. A floor route is not hung from anything: it is an aisle taken round, and its
+ * ends are turns a vehicle can hold a steady wheel through. Giving the two networks the same
+ * outline would be drawing the rail twice and calling one of them AGV.
+ *
+ * <p>Only the two straights carry bays -- a bay off an arc would leave the line at a slant and
+ * foul it -- so this returns those two as the runs a bay may sit in.
+ */
+function oval(prefix, x0, y0, width, height) {
+  const r = height / 2;
+  const run = width - 2 * r;
+  const p = pen(prefix, x0 + r, y0, 0);
+  const runs = [];
+  for (let i = 0; i < 2; i++) {
+    const from = p.path.length - 1;
+    p.straight(run);
+    runs.push([from, p.path.length - 1]);
+    // Fifteen degrees at a time: a chord of a half-circle this size would put the nodes twice as
+    // far apart as the straights do, and a vehicle is only ever as precisely placed as its nodes.
+    for (let k = 0; k < 12; k++) p.turn(r, 15);
+  }
+  const last = p.path.pop(), first = p.path[0];
+  const k = nodes.findIndex(n => n.code === last);
+  if (k >= 0) nodes.splice(k, 1);
+  byCode.delete(last);
+  const closing = segments.find(s => s.to === last);
+  if (closing) { closing.to = first; }
+  return { path: p.path, runs };
+}
+
+/**
  * A spur between two main-line nodes: out at a right angle on a rounded corner, along its own lane,
  * and back. Everything the main line had between those two nodes is gone -- the main line runs
  * straight from one junction to the other, and the spur is the other way round.
@@ -118,6 +151,7 @@ function mainLine(prefix, x0, y0, width, height, radius) {
  * vehicle holds at a time, and that is what makes the junction safe without anything else.
  */
 function spur(path, atIndex, span, depth, label, extras = {}, laneNodes = 1, radius = 4000) {
+  const ownFirst = segments.length;          // everything this bay adds, for the bow pass at the end
   const a = byCode.get(path[atIndex]);
   const dIndex = (atIndex + span) % path.length;
   const d = byCode.get(path[dIndex]);
@@ -184,25 +218,39 @@ function spur(path, atIndex, span, depth, label, extras = {}, laneNodes = 1, rad
     for (const seg of segments) { if (seg.from === code) seg.from = label; if (seg.to === code) seg.to = label; }
     laneCodes[i] = label;
   });
+  // A bay's curves bow the other way from the main line's. The track is the same track either way
+  // -- the nodes do not move -- but the turn into a bay then reads as a turn away from the line
+  // rather than as a bulge back towards it, which is how a turnout is drawn.
+  for (let i = ownFirst; i < segments.length; i++)
+    if (segments[i].curveMm) segments[i].curveMm = -segments[i].curveMm;
   return { lane: laneCodes, path };
 }
 
-/** Spreads the bays a side asks for along that side's straight run, leaving room between them. */
+/**
+ * Spreads a side's bays along its straight run with even room between them.
+ *
+ * <p>A side is either `bays` of one kind, or `each`: a list of bays laid out in order, which is
+ * what lets one side carry a long bay and a short one without pretending they are the same.
+ */
 function planBays(runs, sides, prefix) {
   const plan = [];
   let numbered = 0;
   sides.forEach((side, i) => {
+    if (!runs[i]) return;
     const [from, to] = runs[i];
+    const list = side.each ?? Array.from({ length: side.bays }, () => side);
     const room = to - from;
-    const each = Math.floor(room / side.bays);
-    for (let k = 0; k < side.bays; k++) {
-      const at = from + k * each + Math.max(1, Math.floor((each - side.span) / 2));
-      if (at + side.span > to) continue;      // it would reach into the corner
+    const taken = list.reduce((sum, bay) => sum + bay.span, 0);
+    const gap = Math.max(1, Math.floor((room - taken) / (list.length + 1)));
+    let at = from + gap;
+    for (const bay of list) {
+      if (at + bay.span > to) continue;       // it would reach into the corner
       plan.push({
-        at, span: side.span, depth: side.depth,
-        label: side.label ?? `${prefix}${String(++numbered).padStart(2, '0')}`,
-        extras: side.extras, laneNodes: side.laneNodes,
+        at, span: bay.span, depth: bay.depth,
+        label: bay.label ?? `${prefix}${String(++numbered).padStart(2, '0')}`,
+        extras: bay.extras, laneNodes: bay.laneNodes,
       });
+      at += bay.span + gap;
     }
   });
   return plan;
@@ -239,7 +287,7 @@ if (inspection.length)
   zones.push({ code: 'INSPECTION', capacity: inspection.length, kind: 'MAINTENANCE', nodes: inspection });
 
 /* ================= AGV: its own loop, bays, chargers and a waiting spur ======================== */
-const agvRing = mainLine('AGV-M', 20000, 180000, 170000, 84000, 4500);
+const agvRing = oval('AGV-M', 20000, 190000, 230000, 90000);
 let agvPath = agvRing.path;
 // Ten AGVs: four chargers and eight places to stand, in one bay. Fewer chargers than vehicles is
 // ordinary and the controller queues for them, but a vehicle that has finished charging must have
@@ -249,11 +297,14 @@ let agvPath = agvRing.path;
 const stalls = i => i < 4
   ? { code: `AGV-CHG-${i + 1}`, chargePoint: true }
   : { code: `AGV-WAIT-${i - 3}`, waitFor: 'AGV' };
+// An oval has two straights, so the bays are shared between them: work on the near side, the
+// charging and parking area on the far one, where a vehicle standing is out of everybody's way.
 const agvSides = [
-  { bays: 2, span: 4, depth: 22000 },
-  { bays: 1, span: 4, depth: 22000 },
-  { bays: 1, span: 8, depth: 26000, label: 'AGV-PARK', extras: stalls, laneNodes: 12 },
-  { bays: 1, span: 4, depth: 22000 },
+  { bays: 3, span: 4, depth: 22000 },
+  { each: [
+    { span: 8, depth: 26000, label: 'AGV-PARK', extras: stalls, laneNodes: 12 },
+    { span: 4, depth: 22000 },
+  ] },
 ];
 const agvPlan = planBays(agvRing.runs, agvSides, 'AGV-B');
 const agvLanes = new Map();
