@@ -133,4 +133,21 @@ public interface TransportLedger {
   */
  TransportOrder transition(long siteId,long orderId,OrderStatus target,String reason,String actorCode,String traceId,
                            TransitionEvidence evidence);
+
+ /**
+  * A transfer report the order's stage no longer allows -- late, or after a cancel was asked for.
+  * The status stays; the report is kept as an event. An unfinished order takes the carrier location
+  * it establishes, so a later cancel confirmation decides on where the carrier really is. A finished
+  * order is not reopened: a location that differs from what it records is kept as late evidence for
+  * a person, never dropped.
+  */
+ TransportOrder recordLateReport(long siteId,long orderId,OrderStatus reported,TransitionEvidence evidence,
+                                 String actorCode,String traceId);
+ record LateEvidence(long id,long orderId,String orderStatus,String reportedStatus,String recordedLocation,
+                     String reportedLocation,String evidenceKind,String commandId,java.time.OffsetDateTime receivedAt,
+                     java.time.OffsetDateTime resolvedAt,String resolvedBy,String resolution){}
+ /** Late evidence nobody has dealt with yet, oldest first. */
+ List<LateEvidence> openLateEvidence(long siteId);
+ /** A person has dealt with it and says how. False when it was not open. */
+ boolean resolveLateEvidence(long siteId,long id,String resolution,String actorCode);
 }

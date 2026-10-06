@@ -95,6 +95,9 @@ export const api = {
   transportOrders: (limit = 20) => `/api/v1/sites/${SITE_ID}/transport-orders?limit=${limit}`,
   /** Work still going on; finished orders are history. */
   activeOrders: (limit = 200) => `/api/v1/sites/${SITE_ID}/transport-orders?scope=active&limit=${limit}`,
+  /** Transfer reports that arrived after their order ended and disagree with it; and closing one. */
+  lateEvidence: () => `/api/v1/sites/${SITE_ID}/transport-orders/late-evidence`,
+  resolveLateEvidence: (id: number) => `/api/v1/sites/${SITE_ID}/transport-orders/late-evidence/${id}/resolve`,
   finishedOrders: (limit = 200) => `/api/v1/sites/${SITE_ID}/transport-orders?scope=finished&limit=${limit}`,
   orderEvents: (orderId: number) => `/api/v1/sites/${SITE_ID}/transport-orders/${orderId}/events`,
 };
@@ -369,6 +372,12 @@ export type RestartCheckState = {
     finishedBy: string | null; reason: string | null; releasedNodes: number | null; withdrawnCommands: number | null;
     settledCommands: number;
   } | null;
+};
+
+/** A carrier reported somewhere after its order ended, not yet dealt with by a person. */
+export type LateEvidence = {
+  id: number; orderId: number; orderStatus: string; reportedStatus: string; recordedLocation: string | null;
+  reportedLocation: string; evidenceKind: string; commandId: string | null; receivedAt: string;
 };
 
 export const opsApi = {

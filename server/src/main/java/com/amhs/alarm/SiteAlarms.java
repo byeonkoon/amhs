@@ -215,6 +215,14 @@ public class SiteAlarms {
      "이 작업은 스스로 끝나지 않습니다. 화물 위치를 사람이 확인해 기록해야 완료나 취소로 닫힙니다.",
      order.createdAt(),"접수 시각","transport"));
   }
+  // A carrier reported somewhere after its order closed is a carrier nobody else is tracking.
+  for(var late:ledger.openLateEvidence(siteId))
+   out.add(new Alarm("LATE_EVIDENCE:"+late.id(),Severity.CRITICAL,"종료된 작업의 늦은 화물 보고",
+    "작업 #"+late.orderId()+" · "+late.orderStatus(),
+    "작업이 끝난 뒤 화물이 %s에 있다는 보고가 왔습니다(기록: %s).".formatted(late.reportedLocation(),
+     late.recordedLocation()==null?"없음":late.recordedLocation()),
+    "작업은 다시 열리지 않습니다. 화물 위치를 확인해 재고 기록을 맞추고, 확인 내용을 남겨야 알람이 닫힙니다.",
+    late.receivedAt(),"보고 시각","transport"));
  }
 
  private void commands(long siteId,List<Alarm> out){

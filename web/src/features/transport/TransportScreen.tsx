@@ -1,6 +1,6 @@
 import React from 'react';
 import {
-  ApiError, explainDecision, get, opsApi, send, hasWriteToken,
+  ApiError, api, explainDecision, get, opsApi, send, hasWriteToken, type LateEvidence,
   type Assigned, type DeviceCommand, type Extension, type MapData,
   type TransportOrder, type VehicleSnapshot,
 } from '../../api';
@@ -154,7 +154,63 @@ export function TransportScreen(props: {
       </section>
 
       {selected !== null && <OrderDetail orderId={selected} map={props.map} vehicles={props.vehicles} />}
+      <LateReports />
     </>
+  );
+}
+
+const LOCATION: Record<string, string> = { SOURCE: '출발지', VEHICLE: '차량', DESTINATION: '목적지', UNKNOWN: '불명' };
+
+/**
+ * Transfer reports that came after their order had ended and say the carrier is somewhere else.
+ * The order is not reopened; a person finds the carrier, puts the stock record right, and says so.
+ */
+function LateReports() {
+  const [rows, setRows] = React.useState<LateEvidence[] | null>(null);
+  const [reason, setReason] = React.useState('');
+  const [message, setMessage] = React.useState<string | null>(null);
+  const [tick, setTick] = React.useState(0);
+  React.useEffect(() => {
+    const c = new AbortController();
+    get<LateEvidence[]>(api.lateEvidence(), c.signal).then(setRows).catch(() => setRows(null));
+    const t = setInterval(() => setTick(v => v + 1), 10000);
+    return () => { c.abort(); clearInterval(t); };
+  }, [tick]);
+  if (!rows || rows.length === 0) return null;
+  const resolve = async (id: number) => {
+    setMessage(null);
+    try { await send(api.resolveLateEvidence(id), 'POST', {}, reason.trim()); setReason(''); setTick(v => v + 1); }
+    catch (e) { setMessage(e instanceof ApiError && e.message === 'REASON_REQUIRED' ? '확인 내용을 적어 주세요.' : (e as Error).message); }
+  };
+  return (
+    <section className="card" style={{ borderColor: 'var(--crit)' }}>
+      <div className="ch">
+        <h2>종료된 작업의 늦은 화물 보고</h2>
+        <span className="aux">작업은 다시 열리지 않습니다. 화물 위치를 확인해 재고 기록을 맞춘 뒤 확인 내용을 남기면 알람이 닫힙니다</span>
+      </div>
+      <div className="cb" style={{ display: 'grid', gap: 8 }}>
+        <div className="tbl-scroll">
+          <table className="t">
+            <thead><tr><th>작업</th><th>작업 상태</th><th>보고</th><th>기록 위치</th><th>보고 위치</th><th>보고 시각</th><th></th></tr></thead>
+            <tbody>
+              {rows.map(r => (
+                <tr key={r.id}>
+                  <td className="mono">#{r.orderId}</td>
+                  <td>{r.orderStatus}</td>
+                  <td>{r.reportedStatus}</td>
+                  <td>{r.recordedLocation ? LOCATION[r.recordedLocation] ?? r.recordedLocation : '—'}</td>
+                  <td><Chip tone="er">{LOCATION[r.reportedLocation] ?? r.reportedLocation}</Chip></td>
+                  <td className="mono">{new Date(r.receivedAt).toLocaleTimeString('ko-KR', { hour12: false })}</td>
+                  <td><button type="button" disabled={!reason.trim() || !hasWriteToken()} onClick={() => resolve(r.id)}>확인 완료</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <input value={reason} onChange={e => setReason(e.target.value)} placeholder="화물을 어디서 찾아 어떻게 맞췄는지 (필수)" />
+        {message && <p className="hint" style={{ margin: 0 }}>{message}</p>}
+      </div>
+    </section>
   );
 }
 

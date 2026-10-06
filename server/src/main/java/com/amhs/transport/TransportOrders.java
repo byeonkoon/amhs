@@ -107,6 +107,43 @@ public class TransportOrders {
  }
 
  /**
+  * What a vehicle or a piece of equipment says happened in a transfer, however late it arrives.
+  *
+  * <ul>
+  * <li>A step the order may take is taken, on that evidence.</li>
+  * <li>The step the order is already at changes nothing: a report repeated is not a second event.</li>
+  * <li>A step the order may no longer take -- the cancel asked for meanwhile, or recovery begun --
+  * leaves the status where it is, but where the report says the carrier went is recorded, so the
+  * cancel confirmation that follows ends in recovery when the carrier is aboard and in a plain
+  * cancel when it never left.</li>
+  * <li>An order already finished is not reopened; a carrier reported somewhere else than it records
+  * is kept as late evidence for a person, so a carrier that moved after its work closed does not
+  * disappear from view.</li>
+  * </ul>
+  */
+ @Transactional
+ public TransportOrder reportTransfer(long siteId,long orderId,OrderStatus reported,TransitionEvidence evidence,
+                                      String actorCode,String traceId){
+  var order=ledger.lock(siteId,orderId).orElseThrow(()->reject("ORDER_NOT_FOUND","unknown order"));
+  if(order.status()==reported) return order;
+  if(order.status().canTransitionTo(reported))
+   return advance(siteId,orderId,reported,"transfer report",actorCode,traceId,evidence);
+  return ledger.recordLateReport(siteId,orderId,reported,evidence,actorCode,traceId);
+ }
+
+ /** Late evidence about finished orders that a person still has to deal with. */
+ @Transactional(readOnly=true)
+ public List<TransportLedger.LateEvidence> openLateEvidence(long siteId){ return ledger.openLateEvidence(siteId); }
+
+ /** A person has dealt with late evidence and says how; a reason is required. */
+ @Transactional
+ public void resolveLateEvidence(long siteId,long id,String resolution,String actorCode){
+  if(resolution==null||resolution.isBlank()) throw reject("REASON_REQUIRED","say how the carrier was dealt with");
+  if(!ledger.resolveLateEvidence(siteId,id,resolution,actorCode))
+   throw new TransportRejected("LATE_EVIDENCE_NOT_OPEN","no open late evidence with that id",true);
+ }
+
+ /**
   * Ends a recovery once somebody has established where the carrier is. A carrier at the
   * destination completes the order, one back at the source cancels it. Still on the vehicle, or
   * not known, is not an answer: the order stays in recovery and keeps what it holds.

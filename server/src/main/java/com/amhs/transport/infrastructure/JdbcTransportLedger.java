@@ -199,6 +199,41 @@ class JdbcTransportLedger implements TransportLedger {
   return find(siteId,orderId).orElseThrow();
  }
 
+ @Transactional
+ public TransportOrder recordLateReport(long siteId,long orderId,OrderStatus reported,TransitionEvidence evidence,
+                                        String actorCode,String traceId){
+  if(evidence==null) evidence=TransitionEvidence.system();
+  var order=one("SELECT "+COLS+" FROM transport.order WHERE site_id=? AND id=? FOR UPDATE",siteId,orderId)
+   .orElseThrow(()->new TransportRejected("ORDER_NOT_FOUND","unknown order",false));
+  var established=evidence.kind().establishes()?evidence.carrierLocation():null;
+  if(established!=null&&!order.status().isTerminal())
+   jdbc.update("UPDATE transport.order SET carrier_location=?,version=version+1 WHERE id=?",established.name(),orderId);
+  if(established!=null&&order.status().isTerminal()&&established!=order.carrierLocation())
+   jdbc.update("INSERT INTO transport.late_evidence(site_id,order_id,order_status,reported_status,recorded_location,"
+    +"reported_location,evidence_kind,command_id) VALUES(?,?,?,?,?,?,?,?)",siteId,orderId,order.status().name(),reported.name(),
+    order.carrierLocation()==null?null:order.carrierLocation().name(),established.name(),evidence.kind().name(),evidence.commandId());
+  Integer seq=jdbc.queryForObject("SELECT COALESCE(MAX(seq),0)+1 FROM transport.order_event WHERE order_id=?",Integer.class,orderId);
+  jdbc.update("INSERT INTO transport.order_event(order_id,seq,old_status,new_status,reason,actor_code,trace_id,"
+   +"evidence_kind,command_id,carrier_location) VALUES(?,?,?,?,?,?,?,?,?,?)",
+   orderId,seq,order.status().name(),order.status().name(),"LATE_REPORT: "+reported.name(),actorCode,traceId,
+   evidence.kind().name(),evidence.commandId(),established==null?null:established.name());
+  return find(siteId,orderId).orElseThrow();
+ }
+ @Transactional(readOnly=true)
+ public List<LateEvidence> openLateEvidence(long siteId){
+  return jdbc.query("SELECT id,order_id,order_status,reported_status,recorded_location,reported_location,evidence_kind,command_id,"
+   +"received_at,resolved_at,resolved_by,resolution FROM transport.late_evidence WHERE site_id=? AND resolved_at IS NULL"
+   +" ORDER BY received_at,id",(r,n)->new LateEvidence(r.getLong(1),r.getLong(2),r.getString(3),r.getString(4),r.getString(5),
+   r.getString(6),r.getString(7),r.getString(8),r.getObject(9,java.time.OffsetDateTime.class),
+   r.getObject(10,java.time.OffsetDateTime.class),r.getString(11),r.getString(12)),siteId);
+ }
+ @Transactional
+ public boolean resolveLateEvidence(long siteId,long id,String resolution,String actorCode){
+  return jdbc.update("UPDATE transport.late_evidence SET resolved_at=clock_timestamp(),resolved_by=?,resolution=?"
+   +" WHERE site_id=? AND id=? AND resolved_at IS NULL",actorCode,
+   resolution.length()<=256?resolution:resolution.substring(0,256),siteId,id)>0;
+ }
+
  /** Where the carrier must be shown to be for this step, or null when the step does not move it. */
  private static CarrierLocation requiredLocation(OrderStatus from,OrderStatus to){
   if(from==OrderStatus.LOADING&&to==OrderStatus.TO_DESTINATION) return CarrierLocation.VEHICLE;

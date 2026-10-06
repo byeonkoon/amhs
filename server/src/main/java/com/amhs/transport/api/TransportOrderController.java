@@ -43,6 +43,15 @@ class TransportOrderController {
   return orders.find(siteId,orderId).orElseThrow(()->new TransportRejected("ORDER_NOT_FOUND","unknown order",false));
  }
  /** Which vehicle each order is holding right now. */
+ /** Transfer reports that arrived after their order ended and disagree with it, not yet dealt with. */
+ @GetMapping("/late-evidence")
+ List<TransportLedger.LateEvidence> lateEvidence(@PathVariable long siteId){ return orders.openLateEvidence(siteId); }
+ @PostMapping("/late-evidence/{id}/resolve")
+ Map<String,Object> resolveLate(@PathVariable long siteId,@PathVariable long id,
+  @RequestHeader(value="X-Amhs-Reason",required=false) String reason){
+  orders.resolveLateEvidence(siteId,id,com.amhs.platform.RequestReason.fromHeader(reason),actor());
+  return Map.of("id",id,"resolved",true);
+ }
  @GetMapping("/assignments")
  List<AssignmentView> assignments(@PathVariable long siteId){return assignment.active(siteId);}
 
