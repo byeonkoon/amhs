@@ -270,7 +270,8 @@ function OrderDetail({ orderId, map, vehicles }: { orderId: number; map: MapData
 
   return (
     <>
-    <OrderWhy orderId={orderId} map={map} vehicles={vehicles} />
+    {/* One per order: nothing read for one order can be drawn under another's heading. */}
+    <OrderWhy key={orderId} orderId={orderId} map={map} vehicles={vehicles} />
     <section className="card">
       <div className="ch"><h2>작업 #{orderId} 장비 명령</h2><span className="aux">배정은 차량을 잡는 것이고, 명령은 차량에 알리는 것입니다</span></div>
       {error ? <Empty title="명령을 불러오지 못했습니다" hint="잠시 후 다시 시도해 주세요." />
@@ -322,18 +323,22 @@ const PLACE: Record<string, string> = { SOURCE: '출발지', VEHICLE: '차량', 
  * evidence nobody has dealt with yet, and the alarms that were about it.
  */
 function OrderWhy({ orderId, map, vehicles }: { orderId: number; map: MapData; vehicles: VehicleSnapshot[] }) {
-  const [why, setWhy] = React.useState<OrderExplanation | null>(null);
-  const [alarms, setAlarms] = React.useState<AlarmOccurrence[]>([]);
+  const [read, setWhy] = React.useState<OrderExplanation | null>(null);
+  const [readAlarms, setAlarms] = React.useState<AlarmOccurrence[]>([]);
+  // Only what was read for this order is drawn under this order's heading.
+  const why = read && read.order.id === orderId ? read : null;
+  const alarms = readAlarms.filter(o => o.orderId === orderId);
   const [failed, setFailed] = React.useState(false);
   React.useEffect(() => {
     let live = true;
     const load = () => {
       const c = new AbortController();
       get<OrderExplanation>(api.orderExplanation(orderId), c.signal)
-        .then(w => { if (live) { setWhy(w); setFailed(false); } })
+        .then(w => { if (live && w.order.id === orderId) { setWhy(w); setFailed(false); } })
         .catch(e => { if ((e as Error).name !== 'AbortError' && live) setFailed(true); });
       get<AlarmOccurrence[]>(alarmApi.history({ orderId, limit: 20 }), c.signal)
-        .then(a => { if (live) setAlarms(a); }).catch(() => { /* the explanation above still stands */ });
+        .then(a => { if (live) setAlarms(a.filter(o => o.orderId === orderId)); })
+        .catch(() => { /* the explanation above still stands */ });
       return c;
     };
     let controller = load();
@@ -366,6 +371,8 @@ function OrderWhy({ orderId, map, vehicles }: { orderId: number; map: MapData; v
       <div className="ch"><h2>작업 #{orderId} 지금 상태</h2>
         {why && <span className="aux"><Chip tone={toneOf(why.order.status)}>{STAGE[why.order.status] ?? why.order.status}</Chip></span>}</div>
       <div className="cb" style={{ display: 'grid', gap: 6 }}>
+        {/* A failed read is always said; what is below is then the last thing that could be read. */}
+        {failed && why && <p className="hint" style={{ margin: 0, color: 'var(--crit)' }}>최신 상태를 불러오지 못했습니다. 아래는 마지막으로 읽은 내용입니다.</p>}
         {failed && !why ? <p className="hint" style={{ margin: 0 }}>상태 설명을 불러오지 못했습니다.</p>
           : !why ? <p className="hint" style={{ margin: 0 }}>불러오는 중…</p>
             : lines.length === 0 ? <p className="hint" style={{ margin: 0 }}>설명할 만한 막힘이 없습니다.</p>

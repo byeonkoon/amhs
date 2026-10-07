@@ -211,6 +211,7 @@ class JdbcTransportLedger implements TransportLedger {
    .orElseThrow(()->new TransportRejected("ORDER_NOT_FOUND","unknown order",false));
   var established=evidence.kind().establishes()?evidence.carrierLocation():null;
   String note="LATE_REPORT: "+reported.name();
+  boolean conflicted=false;
   if(established!=null&&!order.status().isTerminal()){
    // What earlier evidence already said about this carrier. A late report that disagrees with it
    // cannot be ordered against it -- devices do not number their attempts -- so neither is
@@ -226,6 +227,7 @@ class JdbcTransportLedger implements TransportLedger {
     note="CONFLICTING_REPORT: "+reported.name();
     jdbc.update("UPDATE transport.order SET carrier_location='UNKNOWN',version=version+1 WHERE id=?",orderId);
     lateEvidence(siteId,order,"CONFLICT",reported,earlier,established,evidence);
+    conflicted=true;
    }else{
     jdbc.update("UPDATE transport.order SET carrier_location=?,version=version+1 WHERE id=?",established.name(),orderId);
    }
@@ -237,6 +239,10 @@ class JdbcTransportLedger implements TransportLedger {
    +"evidence_kind,command_id,carrier_location) VALUES(?,?,?,?,?,?,?,?,?,?)",
    orderId,seq,order.status().name(),order.status().name(),note,actorCode,traceId,
    evidence.kind().name(),evidence.commandId(),established==null?null:established.name());
+  // Where the carrier is has become a person's question; the order waits for one in recovery, where
+  // nothing moves it and only a person's statement of the carrier's place ends it.
+  if(conflicted&&order.status().canTransitionTo(OrderStatus.RECOVERY_REQUIRED))
+   return transition(siteId,orderId,OrderStatus.RECOVERY_REQUIRED,"CONFLICTING_REPORTS",actorCode,traceId,TransitionEvidence.system());
   return find(siteId,orderId).orElseThrow();
  }
  /**
@@ -279,8 +285,25 @@ class JdbcTransportLedger implements TransportLedger {
  }
  @Transactional(readOnly=true)
  public TransferAction actionOfCommand(long orderId,String commandId){
-  return jdbc.query("SELECT action FROM transport.transfer_report WHERE order_id=? AND command_id=? AND action IS NOT NULL"
+  var logged=jdbc.query("SELECT action FROM transport.transfer_report WHERE order_id=? AND command_id=? AND action IS NOT NULL"
    +" ORDER BY id LIMIT 1",(r,n)->TransferAction.valueOf(r.getString(1)),orderId,commandId).stream().findFirst().orElse(null);
+  if(logged!=null) return logged;
+  // Reports from before the report log: the stage the order was in when the command first moved it says which action it was.
+  return jdbc.query("SELECT old_status FROM transport.order_event WHERE order_id=? AND command_id=? ORDER BY seq LIMIT 1",
+   (r,n)->r.getString(1),orderId,commandId).stream().findFirst()
+   .map(s->{ try{ return TransferAction.of(OrderStatus.valueOf(s)); }catch(IllegalArgumentException e){ return null; } })
+   .orElse(null);
+ }
+ @Transactional(readOnly=true)
+ public boolean disputed(long orderId){
+  return Boolean.TRUE.equals(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM transport.late_evidence WHERE order_id=? AND kind='CONFLICT')"
+   +" AND EXISTS(SELECT 1 FROM transport.order WHERE id=? AND status NOT IN ('COMPLETED','CANCELLED','FAILED'))",Boolean.class,orderId,orderId));
+ }
+ @Transactional(readOnly=true)
+ public boolean sameReportInHistory(long orderId,String commandId,OrderStatus reported,CarrierLocation location){
+  return Boolean.TRUE.equals(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM transport.order_event WHERE order_id=? AND command_id=?"
+   +" AND new_status=? AND carrier_location IS NOT DISTINCT FROM ?)",Boolean.class,orderId,commandId,reported.name(),
+   location==null?null:location.name()));
  }
  @Transactional
  public void recordTransferReport(long orderId,String commandId,TransferAction action,OrderStatus reported,

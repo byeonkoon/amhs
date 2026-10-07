@@ -130,4 +130,27 @@ class AlarmHistoryAndExplanationSqlTest {
    assertThat(a.severity()).isEqualTo(com.amhs.alarm.Alarm.Severity.CRITICAL);
   });
  }
+
+ // Review S1 of be2dac4: an acknowledgement is part of the record the moment it is made.
+ @Test void s1_anAcknowledgementMadeBetweenLooksIsKeptWhenTheConditionEndsBeforeTheNext(){
+  report(OHT1,101L,"ERROR"); String key="VEHICLE_ERROR:"+OHT1;
+  tx.executeWithoutResult(s->alarms.observe(SITE));
+  tx.executeWithoutResult(s->alarms.acknowledge(SITE,key,"checked and repaired","tester"));
+  report(OHT1,101L,"IDLE");
+  tx.executeWithoutResult(s->{ alarms.observe(SITE); alarms.retireAcknowledgementsOfEndedConditions(SITE); });
+  var past=occurrence(key);
+  assertThat(past.clearedAt()).isNotNull();
+  assertThat(past.ackReason()).isEqualTo("checked and repaired");
+  assertThat(past.ackActor()).isEqualTo("tester");
+ }
+ @Test void s1_anAcknowledgementBeforeTheFirstLookStillLeavesARecord(){
+  report(OHT1,101L,"ERROR"); String key="VEHICLE_ERROR:"+OHT1;
+  tx.executeWithoutResult(s->alarms.acknowledge(SITE,key,"observed by operator","tester"));
+  report(OHT1,101L,"IDLE");
+  tx.executeWithoutResult(s->{ alarms.observe(SITE); alarms.retireAcknowledgementsOfEndedConditions(SITE); });
+  var past=occurrence(key);
+  assertThat(past).isNotNull();
+  assertThat(past.ackReason()).isEqualTo("observed by operator");
+  assertThat(past.clearedAt()).isNotNull();
+ }
 }

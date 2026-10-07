@@ -32,7 +32,7 @@ import static org.assertj.core.api.Assertions.*;
 @EnabledIfEnvironmentVariable(named="AMHS_SQL_TEST",matches="true")
 class CancelAndLateReportSqlTest {
  @Autowired TransportOrders orders; @Autowired TransportAssignment assignment; @Autowired CommandOutbox outbox;
- @Autowired FleetState fleet; @Autowired SiteAlarms alarms; @Autowired JdbcTemplate jdbc;
+ @Autowired FleetState fleet; @Autowired SiteAlarms alarms; @Autowired JdbcTemplate jdbc; @Autowired ContinuousMovement movement;
  private static final long SITE=1, REVISION=1, OHT1=1;
 
  @BeforeEach @AfterEach void clean(){
@@ -234,5 +234,44 @@ class CancelAndLateReportSqlTest {
   assertThat(orders.events(SITE,id)).anyMatch(e->e.reason()!=null&&e.reason().startsWith("LATE_REPORT"));
   assertThat(orders.find(SITE,id).orElseThrow().carrierLocation()).isEqualTo(CarrierLocation.VEHICLE);
   assertThat(statusOf(id)).isEqualTo(OrderStatus.CANCEL_REQUESTED);
+ }
+
+ // Review N1/N2 of be2dac4: a carrier in dispute is a person's to place; an old report repeated is still the same report.
+ private long conflictDuringCancel(){
+  long id=loading(); orders.cancel(SITE,id,"cancel","tester",null);
+  orders.reportTransfer(SITE,id,OrderStatus.TO_DESTINATION,feedback("pickup-2",CarrierLocation.VEHICLE),TransferAction.PICKUP,"device",null);
+  var conflict=orders.reportTransfer(SITE,id,OrderStatus.TO_SOURCE,feedback("pickup-1",CarrierLocation.SOURCE),TransferAction.PICKUP,"device",null);
+  assertThat(conflict.carrierLocation()).isEqualTo(CarrierLocation.UNKNOWN);
+  assertThat(conflict.status()).isEqualTo(OrderStatus.RECOVERY_REQUIRED);
+  return id;
+ }
+ @Test void n1_aDeviceCompletionDoesNotEndADisputedOrder(){
+  long id=conflictDuringCancel();
+  var after=orders.reportTransfer(SITE,id,OrderStatus.COMPLETED,feedback("drop-1",CarrierLocation.DESTINATION),TransferAction.DROP,"device",null);
+  assertThat(after.status()).isEqualTo(OrderStatus.RECOVERY_REQUIRED);
+  assertThat(after.carrierLocation()).isEqualTo(CarrierLocation.UNKNOWN);
+  assertThat(assignment.active(SITE)).anyMatch(a->a.orderId()==id);
+  // A person saying where the carrier is ends it.
+  assertThat(orders.resolveRecovery(SITE,id,CarrierLocation.DESTINATION,"found at OHT-C","tester",null).status())
+   .isEqualTo(OrderStatus.COMPLETED);
+ }
+ @Test void n1_aDisputeDuringDeliveryStopsTheVehicleBeingSentOn(){
+  long id=loading();
+  orders.reportTransfer(SITE,id,OrderStatus.TO_DESTINATION,feedback("pickup-2",CarrierLocation.VEHICLE),TransferAction.PICKUP,"device",null);
+  fleet.report(SITE,REVISION,OHT1,new VehicleReport(101L,true,true,true,true,"SIMULATED"));
+  var conflict=orders.reportTransfer(SITE,id,OrderStatus.TO_SOURCE,feedback("pickup-1",CarrierLocation.SOURCE),TransferAction.PICKUP,"device",null);
+  assertThat(conflict.carrierLocation()).isEqualTo(CarrierLocation.UNKNOWN);
+  assertThat(conflict.status()).isEqualTo(OrderStatus.RECOVERY_REQUIRED);
+  assertThat(movement.resume(SITE,id).decision()).isNotEqualTo("RESUMED");
+ }
+ @Test void n2_aPickupRecordedBeforeTheReportLogIsNotTakenForAFailedDrop(){
+  long id=loading();
+  var proof=feedback("pre-log-pickup",CarrierLocation.VEHICLE);
+  // How the earlier HTTP handler recorded it: straight into the order's history.
+  orders.advance(SITE,id,OrderStatus.TO_DESTINATION,"before the report log","device",null,proof);
+  orders.advance(SITE,id,OrderStatus.UNLOADING,"arrived","device",null);
+  var replay=orders.reportTransfer(SITE,id,OrderStatus.TO_DESTINATION,proof,"device",null);
+  assertThat(replay.status()).isEqualTo(OrderStatus.UNLOADING);
+  assertThat(jdbc.queryForObject("SELECT transfer_attempt FROM transport.order WHERE id=?",Integer.class,id)).isZero();
  }
 }

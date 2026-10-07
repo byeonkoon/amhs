@@ -168,6 +168,16 @@ public interface TransportLedger {
  int transferAttempts(long orderId);
  /** Whether a report with this key was already handled for the order. */
  boolean transferReportSeen(long orderId,String reportKey);
+ /**
+  * Whether this order's carrier is in dispute: reports about it contradicted each other and no person
+  * has yet said where it is. A disputed order is moved, progressed and ended only by a person.
+  */
+ boolean disputed(long orderId);
+ /**
+  * Whether a report from before the report log existed already said this: the same command, the
+  * same step and the same place, written straight into the order's history.
+  */
+ boolean sameReportInHistory(long orderId,String commandId,OrderStatus reported,CarrierLocation location);
  /** The action a device command was first reported for on this order, or null when it was never seen. */
  TransferAction actionOfCommand(long orderId,String commandId);
  /** Keeps a transfer report as it was judged. */

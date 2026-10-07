@@ -140,22 +140,31 @@ public class TransportOrders {
   var location=evidence.kind().establishes()?evidence.carrierLocation():null;
   String command=evidence.commandId();
   String key=command==null?null:command+"|"+reported+"|"+(location==null?"-":location);
-  // The same report again: handled already, whatever has happened to the order since.
+  // The same report again: handled already, whatever has happened to the order since -- including
+  // one handled before the report log existed, which left its trace in the order's history.
   if(key!=null&&ledger.transferReportSeen(orderId,key)) return order;
+  if(command!=null&&ledger.sameReportInHistory(orderId,command,reported,location)){
+   ledger.recordTransferReport(orderId,command,TransferAction.of(order.status()),reported,location,"REPEATED",key);
+   return order;
+  }
   // A command is about one action for good: the first report of it says which.
   TransferAction known=command==null?null:ledger.actionOfCommand(orderId,command);
   if(known!=null) action=known;
   TransferAction stage=TransferAction.of(order.status());
   boolean aboutThisStage=stage==null||action==null||action==stage;
   TransportOrder after; String outcome;
+  // A carrier in dispute is a person's to place: a device report is kept as evidence and moves nothing.
+  boolean disputed=ledger.disputed(orderId);
   if(order.status()==reported){ after=order; outcome="REPEATED"; }
-  else if(aboutThisStage&&order.status().canTransitionTo(reported)){
+  else if(!disputed&&aboutThisStage&&order.status().canTransitionTo(reported)){
    after=advance(siteId,orderId,reported,"transfer report",actorCode,traceId,evidence);
    outcome="APPLIED";
    if(action==null) action=stage;
   }else{
    after=ledger.recordLateReport(siteId,orderId,reported,evidence,actorCode,traceId);
-   outcome="LATE";
+   outcome=disputed?"DISPUTED":"LATE";
+   // Gone into recovery over a dispute: movement it has not been sent is taken back.
+   if(after.status()!=order.status()&&!after.status().movable()) outbox.withdraw(orderId,"ORDER_"+after.status());
   }
   ledger.recordTransferReport(orderId,command,action,reported,location,outcome,key);
   return after;

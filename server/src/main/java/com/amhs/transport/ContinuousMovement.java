@@ -61,6 +61,8 @@ public class ContinuousMovement {
   var order=ledger.lock(siteId,orderId)
    .orElseThrow(()->new TransportRejected("ORDER_NOT_FOUND","unknown order",false));
   if(order.status().isTerminal()) return none(orderId,0,"ORDER_FINISHED");
+  // Nobody knows where the carrier is: the vehicle is not sent anywhere until a person says.
+  if(ledger.disputed(orderId)) return none(orderId,0,"CARRIER_IN_DISPUTE");
   var assignment=ledger.activeAssignment(siteId,orderId);
   if(assignment.isEmpty()) return none(orderId,0,"NO_ASSIGNMENT");
   long vehicleId=assignment.get().vehicleId();
@@ -141,6 +143,8 @@ public class ContinuousMovement {
   var order=ledger.lock(siteId,orderId)
    .orElseThrow(()->new TransportRejected("ORDER_NOT_FOUND","unknown order",false));
   if(order.status().isTerminal()) return none(orderId,0,"ORDER_FINISHED");
+  // Nobody knows where the carrier is: the vehicle is not sent anywhere until a person says.
+  if(ledger.disputed(orderId)) return none(orderId,0,"CARRIER_IN_DISPUTE");
   var assignment=ledger.activeAssignment(siteId,orderId);
   if(assignment.isEmpty()) return none(orderId,0,"NO_ASSIGNMENT");
   long vehicleId=assignment.get().vehicleId();

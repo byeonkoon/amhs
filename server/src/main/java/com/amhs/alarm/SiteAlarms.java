@@ -94,7 +94,14 @@ public class SiteAlarms {
    +" VALUES(?,?,?,?) ON CONFLICT (site_id,alarm_key) DO UPDATE SET reason=EXCLUDED.reason,"
    +"actor_code=EXCLUDED.actor_code,acknowledged_at=now()",
    siteId,alarmKey,reason.substring(0,Math.min(reason.length(),256)),actorCode);
-  return alarms(siteId).stream().filter(a->a.key().equals(alarmKey)).findFirst().orElse(live);
+  // The record of it is written now, with the acknowledgement: the condition may be gone before the
+  // upkeep next looks, and the acknowledgement is forgotten with it.
+  var acknowledged=alarms(siteId).stream().filter(a->a.key().equals(alarmKey)).findFirst().orElse(live);
+  var seen=acknowledged.seen();
+  int noted=jdbc.update("UPDATE platform.alarm_occurrence SET ack_reason=?,ack_actor=?,ack_at=? WHERE site_id=? AND alarm_key=?"
+   +" AND cleared_at IS NULL",seen==null?reason:seen.reason(),actorCode,seen==null?OffsetDateTime.now():seen.at(),siteId,alarmKey);
+  if(noted==0) openOccurrence(siteId,acknowledged);
+  return acknowledged;
  }
 
  /**
@@ -149,16 +156,8 @@ public class SiteAlarms {
   var seenNow=new java.util.HashSet<String>();
   for(var a:live){
    seenNow.add(a.key());
-   var about=a.about()==null?Alarm.About.NOTHING:a.about();
-   String vehicles=about.vehicleIds().isEmpty()?null
-    :"{"+String.join(",",about.vehicleIds().stream().map(String::valueOf).toList())+"}";
    Long id=open.get(a.key());
-   if(id==null)
-    jdbc.update("INSERT INTO platform.alarm_occurrence(site_id,alarm_key,severity,rule,subject,summary,vehicle_ids,order_id,"
-     +"command_id,condition_since,ack_reason,ack_actor,ack_at) VALUES(?,?,?,?,?,?,?::bigint[],?,?,?,?,?,?)",
-     siteId,a.key(),a.severity().name(),a.rule(),cut(a.subject(),256),cut(a.summary(),512),vehicles,about.orderId(),
-     about.commandId(),a.since(),a.seen()==null?null:a.seen().reason(),a.seen()==null?null:a.seen().actorCode(),
-     a.seen()==null?null:a.seen().at());
+   if(id==null) openOccurrence(siteId,a);
    else
     jdbc.update("UPDATE platform.alarm_occurrence SET last_seen_at=clock_timestamp(),summary=?,"
      +"ack_reason=COALESCE(?,ack_reason),ack_actor=COALESCE(?,ack_actor),ack_at=COALESCE(?,ack_at) WHERE id=?",
@@ -168,6 +167,18 @@ public class SiteAlarms {
   for(var e:open.entrySet())
    if(!seenNow.contains(e.getKey()))
     jdbc.update("UPDATE platform.alarm_occurrence SET cleared_at=clock_timestamp() WHERE id=?",e.getValue());
+ }
+ /** Opens the record of a condition seen true, with whoever has already looked at it. */
+ private void openOccurrence(long siteId,Alarm a){
+  var about=a.about()==null?Alarm.About.NOTHING:a.about();
+  String vehicles=about.vehicleIds().isEmpty()?null
+   :"{"+String.join(",",about.vehicleIds().stream().map(String::valueOf).toList())+"}";
+  jdbc.update("INSERT INTO platform.alarm_occurrence(site_id,alarm_key,severity,rule,subject,summary,vehicle_ids,order_id,"
+   +"command_id,condition_since,ack_reason,ack_actor,ack_at) VALUES(?,?,?,?,?,?,?::bigint[],?,?,?,?,?,?)"
+   +" ON CONFLICT (site_id,alarm_key) WHERE cleared_at IS NULL DO NOTHING",
+   siteId,a.key(),a.severity().name(),a.rule(),cut(a.subject(),256),cut(a.summary(),512),vehicles,about.orderId(),
+   about.commandId(),a.since(),a.seen()==null?null:a.seen().reason(),a.seen()==null?null:a.seen().actorCode(),
+   a.seen()==null?null:a.seen().at());
  }
  private static String cut(String s,int n){ return s==null||s.length()<=n?s:s.substring(0,n); }
 
