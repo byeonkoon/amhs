@@ -144,7 +144,10 @@ public class TransportOrders {
   // one handled before the report log existed, which left its trace in the order's history.
   if(key!=null&&ledger.transferReportSeen(orderId,key)) return order;
   if(command!=null&&ledger.sameReportInHistory(orderId,command,reported,location)){
-   ledger.recordTransferReport(orderId,command,TransferAction.of(order.status()),reported,location,"REPEATED",key);
+   // Kept with the action the command had when it first moved the order -- never the stage the
+   // order happens to be in now, which would make a pickup heard again during unloading a drop.
+   TransferAction was=ledger.actionOfCommand(orderId,command);
+   ledger.recordTransferReport(orderId,command,was!=null?was:action,reported,location,"REPEATED",key);
    return order;
   }
   // A command is about one action for good: the first report of it says which.

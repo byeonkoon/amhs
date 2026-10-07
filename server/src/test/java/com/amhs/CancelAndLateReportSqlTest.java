@@ -274,4 +274,22 @@ class CancelAndLateReportSqlTest {
   assertThat(replay.status()).isEqualTo(OrderStatus.UNLOADING);
   assertThat(jdbc.queryForObject("SELECT transfer_attempt FROM transport.order WHERE id=?",Integer.class,id)).isZero();
  }
+
+ // Review N3 of 276ce5b: an old pickup heard again keeps its action; later reports of that command stay pickups.
+ @Test void n3_anOldPickupHeardAgainStaysAPickupAndCannotCompleteTheOrder(){
+  long id=loading();
+  var proof=feedback("old-pickup",CarrierLocation.VEHICLE);
+  orders.advance(SITE,id,OrderStatus.TO_DESTINATION,"old handler","device",null,proof);
+  orders.advance(SITE,id,OrderStatus.UNLOADING,"arrived","device",null);
+  orders.reportTransfer(SITE,id,OrderStatus.TO_DESTINATION,proof,TransferAction.PICKUP,"device",null);
+  assertThat(jdbc.queryForObject("SELECT action FROM transport.transfer_report WHERE order_id=? AND command_id='old-pickup' ORDER BY id LIMIT 1",
+   String.class,id)).isEqualTo("PICKUP");
+  // The same command saying something else is still about the pickup: it does not finish the drop.
+  // Saying the carrier is at the destination contradicts what that pickup said before, so the carrier
+  // goes into dispute and the order waits for a person -- it is not completed, and keeps its vehicle.
+  var after=orders.reportTransfer(SITE,id,OrderStatus.COMPLETED,feedback("old-pickup",CarrierLocation.DESTINATION),
+   TransferAction.PICKUP,"device",null);
+  assertThat(after.status()).isNotEqualTo(OrderStatus.COMPLETED).isIn(OrderStatus.UNLOADING,OrderStatus.RECOVERY_REQUIRED);
+  assertThat(assignment.active(SITE)).anyMatch(a->a.orderId()==id);
+ }
 }
