@@ -13,12 +13,15 @@ import java.util.*;
 @RequestMapping("/api/v1/sites/{siteId}/simulation")
 class SimulationController {
  private final SimulatedVehicles vehicles; private final SiteSweep sweep; private final OperationOptionConfiguration options;
- private final com.amhs.equipment.SimulatedEquipment equipment;
+ private final com.amhs.equipment.SimulatedEquipment equipment; private final com.amhs.simulation.SimulatedLoad load;
  SimulationController(SimulatedVehicles vehicles,SiteSweep sweep,OperationOptionConfiguration options,
-                      com.amhs.equipment.SimulatedEquipment equipment){
+                      com.amhs.equipment.SimulatedEquipment equipment,com.amhs.simulation.SimulatedLoad load){
   this.vehicles=vehicles;this.sweep=sweep;this.options=options;
-  this.equipment=equipment;
+  this.equipment=equipment; this.load=load;
  }
+ /** What a load run has seen: work written and refused, what was never to be seen, and how long the work took. */
+ @GetMapping("/load")
+ com.amhs.simulation.SimulatedLoad.Report load(@PathVariable long siteId){ return load.report(siteId); }
  @GetMapping("/equipment")
  List<com.amhs.equipment.SimulatedEquipment.State> equipment(@PathVariable long siteId){
   return equipment.list(siteId);

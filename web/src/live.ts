@@ -61,6 +61,38 @@ export function applyLive(state: LiveState, msg: LiveMessage): { state: LiveStat
 }
 
 /**
+ * Measuring, when asked for (localStorage amhs.latencyProbe = '1'): for each vehicle a delta
+ * carries, the time from the vehicle's report (server clock) to the next frame after the screen
+ * took it in (window.__amhsLatency), and to when the message was applied (window.__amhsLatencyReceived).
+ * The browser and server share a clock only on one machine, which is what a measured run is. Nothing
+ * is sent anywhere.
+ */
+const probeSeen = new Map<number, number>();
+function probeLatency(msg: LiveMessage) {
+  let on = false;
+  try { on = localStorage.getItem('amhs.latencyProbe') === '1'; } catch { /* no storage, no probe */ }
+  if (!on || !msg.data?.vehicles) return;
+  // Only reports that are new since the last delta: a vehicle carried along unchanged says nothing
+  // about how long a report takes to reach the screen.
+  const reported: number[] = [];
+  for (const v of msg.data.vehicles) {
+    const t = v.reportedAt ? Date.parse(v.reportedAt) : NaN;
+    if (Number.isNaN(t) || probeSeen.get(v.id) === t) continue;
+    probeSeen.set(v.id, t);
+    reported.push(t);
+  }
+  const w = window as unknown as { __amhsLatency?: number[]; __amhsLatencyReceived?: number[] };
+  const keep = (out: number[], at: number) => {
+    for (const t of reported) if (at - t < 60_000) out.push(at - t);
+    if (out.length > 200_000) out.splice(0, out.length - 200_000);
+  };
+  // Taken in: when the message has been applied. Shown: the next frame after that, which a page
+  // that is not on screen never draws, so that series is empty for a hidden page.
+  keep((w.__amhsLatencyReceived ??= []), Date.now());
+  requestAnimationFrame(() => keep((w.__amhsLatency ??= []), Date.now()));
+}
+
+/**
  * live: in step with the server. resyncing: asked again, waiting. down: no connection; trying
  * again. stale: connected and in step, but the server named parts of the site it cannot read, so
  * what is on screen for those is the last thing it could read and not the present.
@@ -124,6 +156,7 @@ export function useLive(enabled: boolean): Live {
         // heartbeat does not make a screen that missed a delta current.
         const next: LiveStatus = !state.synced ? 'resyncing' : state.unread.length > 0 ? 'stale' : 'live';
         if (step.changed || next !== shown) publish(next);
+        if (step.changed && msg.type === 'delta') probeLatency(msg);
       };
       ws.onclose = () => {
         if (socket === ws) socket = null;
