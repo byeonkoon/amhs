@@ -1,6 +1,7 @@
 import React from 'react';
 import { api, ApiError, get, type MapData, type OrderEvent, type TransportOrder } from '../../api';
 import { Chip, Empty } from '../../shell/States';
+import { DailyPanel } from './DailyPanel';
 
 /**
  * Finished work: completed, cancelled and failed orders, newest first, and the event log of the one
@@ -41,6 +42,7 @@ export function HistoryScreen({ map }: { map: MapData }) {
 
   return (
     <>
+      <DailyPanel />
       <section className="card">
         <div className="ch">
           <h2>끝난 작업</h2>
