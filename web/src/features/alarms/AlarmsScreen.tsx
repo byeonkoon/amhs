@@ -1,5 +1,5 @@
 import React from 'react';
-import { ApiError, alarmApi, get, hasWriteToken, send, type Alarm, type AlarmOccurrence, type MenuTarget } from '../../api';
+import { ApiError, alarmApi, get, canOperate, send, type Alarm, type AlarmOccurrence, type MenuTarget } from '../../api';
 import { Chip, Empty } from '../../shell/States';
 import { Grid, Row } from '../../shell/Panel';
 import { aborted } from '../equipment/EquipmentScreen';
@@ -124,8 +124,8 @@ export function AlarmsScreen({ onGo }: { onGo: (screen: MenuTarget) => void }) {
                           style={{ fontSize: 10.5, color: 'var(--mut)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           <Chip tone="id">확인됨</Chip> {a.seen.actorCode ?? ''}
                         </span>
-                      : <button type="button" style={ghost} disabled={busy || !hasWriteToken()}
-                          title={hasWriteToken()
+                      : <button type="button" style={ghost} disabled={busy || !canOperate()}
+                          title={canOperate()
                             ? '봤다는 것만 남깁니다. 조건은 그대로이며 고쳐야 사라집니다.'
                             : 'Lv2 운전 이상으로 로그인해야 기록할 수 있습니다.'}
                           onClick={() => markSeen(a)}>확인함</button>}

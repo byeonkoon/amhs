@@ -1,6 +1,6 @@
 import React from 'react';
 import {
-  ApiError, alarmApi, api, explainDecision, get, opsApi, send, hasWriteToken, type LateEvidence,
+  ApiError, alarmApi, api, explainDecision, get, opsApi, send, canOperate, type LateEvidence,
   type AlarmOccurrence, type OrderExplanation,
   type Assigned, type DeviceCommand, type Extension, type MapData,
   type TransportOrder, type VehicleSnapshot,
@@ -87,7 +87,7 @@ export function TransportScreen(props: {
         <div className="ch">
           <h2>반송 작업</h2>
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
-            <button type="button" onClick={extendAll} disabled={busy || !hasWriteToken()} style={ghost}>
+            <button type="button" onClick={extendAll} disabled={busy || !canOperate()} style={ghost}>
               이동 허가 연장
             </button>
             <Refreshed at={props.loadedAt} onRetry={props.onRetry} />
@@ -102,7 +102,7 @@ export function TransportScreen(props: {
             </p>
           </div>
         )}
-        {!hasWriteToken() && (
+        {!canOperate() && (
           <div className="cb" style={{ paddingBottom: 0 }}>
             <p className="hint" style={{ margin: 0 }}>조회는 열려 있고 상태를 바꾸는 요청만 로그인을 요구합니다. 오른쪽 위 계정 메뉴에서 Lv2 운전 이상으로 로그인하면 배차·취소·연장이 열립니다.</p>
           </div>
@@ -130,17 +130,17 @@ export function TransportScreen(props: {
                       <td className="mono">{o.priority}</td>
                       <td onClick={e => e.stopPropagation()}>
                         <span style={{ display: 'flex', gap: 6 }}>
-                          <button type="button" style={ghost} disabled={busy || !hasWriteToken() || o.status !== 'QUEUED'}
+                          <button type="button" style={ghost} disabled={busy || !canOperate() || o.status !== 'QUEUED'}
                             title={o.status === 'QUEUED' ? undefined : '대기 중인 작업만 배차할 수 있습니다.'}
                             onClick={() => assign(o.id)}>배차</button>
-                          <button type="button" style={ghost} disabled={busy || !hasWriteToken() || TERMINAL.has(o.status)}
+                          <button type="button" style={ghost} disabled={busy || !canOperate() || TERMINAL.has(o.status)}
                             title={TERMINAL.has(o.status) ? '이미 끝난 작업입니다.' : undefined}
                             onClick={() => cancel(o.id)}>취소</button>
                           {o.status === 'RECOVERY_REQUIRED' && <>
-                            <button type="button" style={ghost} disabled={busy || !hasWriteToken()}
+                            <button type="button" style={ghost} disabled={busy || !canOperate()}
                               title="화물이 출발지에 있음을 확인했으면 작업을 취소로 끝냅니다."
                               onClick={() => recover(o.id, 'SOURCE')}>출발지 확인</button>
-                            <button type="button" style={ghost} disabled={busy || !hasWriteToken()}
+                            <button type="button" style={ghost} disabled={busy || !canOperate()}
                               title="화물이 목적지에 있음을 확인했으면 작업을 완료로 끝냅니다."
                               onClick={() => recover(o.id, 'DESTINATION')}>목적지 확인</button>
                           </>}
@@ -203,7 +203,7 @@ function LateReports() {
                   <td>{r.recordedLocation ? LOCATION[r.recordedLocation] ?? r.recordedLocation : '—'}</td>
                   <td><Chip tone="er">{LOCATION[r.reportedLocation] ?? r.reportedLocation}</Chip></td>
                   <td className="mono">{new Date(r.receivedAt).toLocaleTimeString('ko-KR', { hour12: false })}</td>
-                  <td><button type="button" disabled={!reason.trim() || !hasWriteToken()} onClick={() => resolve(r.id)}>확인 완료</button></td>
+                  <td><button type="button" disabled={!reason.trim() || !canOperate()} onClick={() => resolve(r.id)}>확인 완료</button></td>
                 </tr>
               ))}
             </tbody>
@@ -230,7 +230,7 @@ function CreateOrder(props: {
   const [priority, setPriority] = React.useState(50);
   const sourcePort = props.map.ports.find(p => p.code === source);
   const destinations = props.map.ports.filter(p => p.code !== source && (!sourcePort || p.accessVehicleType === sourcePort.accessVehicleType));
-  const ready = source && destination && hasWriteToken() && priority >= 0 && priority <= 100;
+  const ready = source && destination && canOperate() && priority >= 0 && priority <= 100;
   const field: React.CSSProperties = { border: '1px solid var(--ln2)', borderRadius: 5, padding: '3px 6px', fontSize: 12, background: 'var(--srf)', color: 'var(--ink)' };
   return (
     <div className="cb" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', borderBottom: '1px solid var(--ln)', fontSize: 12 }}>
@@ -249,7 +249,7 @@ function CreateOrder(props: {
       <button type="button" disabled={props.busy || !ready} onClick={() => props.onCreate({ source, destination, carrier, priority })}
         style={{ border: '1px solid var(--acc)', background: ready ? 'var(--acc)' : 'var(--srf)', color: ready ? '#fff' : 'var(--mut)',
           borderRadius: 5, padding: '3px 14px', fontSize: 12, cursor: ready ? 'pointer' : 'default' }}>생성</button>
-      {!hasWriteToken() && <span className="hint">로그인해야 만들 수 있습니다.</span>}
+      {!canOperate() && <span className="hint">로그인해야 만들 수 있습니다.</span>}
     </div>
   );
 }

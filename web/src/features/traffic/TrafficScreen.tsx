@@ -1,6 +1,6 @@
 import React from 'react';
 import {
-  hasWriteToken, opsApi, send, ApiError, type Deadlock, type DeadlockPlan, type DeadlockRecovery, type MapData, type NodeHold,
+  canOperate, opsApi, send, ApiError, type Deadlock, type DeadlockPlan, type DeadlockRecovery, type MapData, type NodeHold,
   type VehicleSnapshot, type ZoneOccupancy,
 } from '../../api';
 import { Chip, Empty } from '../../shell/States';
@@ -241,8 +241,8 @@ function RecoveryChoice(props: {
               <input value={reason} onChange={e => setReason(e.target.value)} placeholder="양보 사유 (필수)"
                 style={{ flex: '1 1 180px', minWidth: 140 }} disabled={busy} />
               {candidates.map(v => (
-                <button key={v} type="button" disabled={busy || !reason.trim() || !hasWriteToken()}
-                  title={hasWriteToken() ? '정지시킨 뒤 앞 예약만 반납하고, 상대가 지나갈 때까지 새 예약을 받지 않습니다.' : 'Lv2 운전 이상으로 로그인해야 합니다.'}
+                <button key={v} type="button" disabled={busy || !reason.trim() || !canOperate()}
+                  title={canOperate() ? '정지시킨 뒤 앞 예약만 반납하고, 상대가 지나갈 때까지 새 예약을 받지 않습니다.' : 'Lv2 운전 이상으로 로그인해야 합니다.'}
                   onClick={() => giveWay(v)}>{props.vehicleCode(v)} 양보</button>
               ))}
             </div>
@@ -293,7 +293,7 @@ function RecoveryList(props: {
                     <td>{r.reason}</td>
                     <td className="mono">{r.requestedBy} {time(r.requestedAt)}</td>
                     <td>{r.finishedAt == null &&
-                      <button type="button" disabled={busy === r.id || !hasWriteToken()} onClick={() => close(r.id)}>취소</button>}</td>
+                      <button type="button" disabled={busy === r.id || !canOperate()} onClick={() => close(r.id)}>취소</button>}</td>
                   </tr>
                 ))}
               </tbody>

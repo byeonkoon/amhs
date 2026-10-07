@@ -1,6 +1,6 @@
 import React from 'react';
 import {
-  ApiError, opsApi, send, hasWriteToken,
+  ApiError, opsApi, send, canOperate,
   type DeviceCommand, type CommandStatus, type MapData,
   type VehicleReportResult, type VehicleSnapshot,
 } from '../../api';
@@ -56,7 +56,7 @@ function InDoubtCommands({ commands, onChanged }: { commands: DeviceCommand[]; o
         <h2>결과 불명 장비 명령</h2>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
           <span className="aux">자동으로 정리되지 않는 명령입니다. 운전자 판단이 필요합니다</span>
-          <button type="button" onClick={publish} disabled={busy || !hasWriteToken()} style={ghost}>
+          <button type="button" onClick={publish} disabled={busy || !canOperate()} style={ghost}>
             {busy ? '발행 중…' : '대기 명령 발행'}
           </button>
         </div>
@@ -192,10 +192,10 @@ function VehicleReportPanel(props: {
                     <Toggle label="화물 적재" v={draft.carrierPresent} on={v => setDraft(d => ({ ...d, carrierPresent: v }))} />
                   </div>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                    <button type="button" onClick={submit} disabled={busy || !hasWriteToken()} style={primary}>
+                    <button type="button" onClick={submit} disabled={busy || !canOperate()} style={primary}>
                       {busy ? '보고 중…' : '보고'}
                     </button>
-                    {!hasWriteToken() && <span className="hint">오른쪽 위 계정 메뉴에서 먼저 로그인해 주세요.</span>}
+                    {!canOperate() && <span className="hint">오른쪽 위 계정 메뉴에서 먼저 로그인해 주세요.</span>}
                   </div>
                   {error && <p className="hint" style={{ color: 'var(--crit)', margin: 0 }}>{error}</p>}
                   {result && <ReportOutcome result={result} map={props.map} />}

@@ -207,6 +207,14 @@ export type NewAccount = AccountSettings & { password: string };
 let writeToken: string | null = null;
 export const setWriteToken = (v: string | null) => { writeToken = v && v.trim() ? v.trim() : null; };
 export const hasWriteToken = () => writeToken !== null;
+/**
+ * The level of the session the screens were last told about. A login alone is not leave to operate:
+ * a level 1 login reads like anyone else, and a button it cannot use must not look usable.
+ */
+let sessionLevel = 0;
+export const noteSessionLevel = (level: number) => { sessionLevel = level; };
+/** Logged in at level 2 (operation) or above: what every operating control on the screens needs. */
+export const canOperate = () => writeToken !== null && sessionLevel >= 2;
 
 export async function send<T>(url: string, method: 'POST' | 'PUT' | 'DELETE', body: unknown, reason?: string,
   extraHeaders?: Record<string, string>): Promise<T> {

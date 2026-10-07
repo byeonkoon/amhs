@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import './style.css';
 import './monitor.css';
 import {
-  alarmApi, api, cfgApi, explainDecision, freshness, get, getAs, hasWriteToken, opsApi, revisionId, send, setRevisionId, ApiError, MODE_LABEL, STATUS_LABEL,
+  alarmApi, api, cfgApi, explainDecision, freshness, get, getAs, canOperate, noteSessionLevel, opsApi, revisionId, send, setRevisionId, ApiError, MODE_LABEL, STATUS_LABEL,
   type AlarmCount,
   type AssignmentView, type Cfg, type Deadlock, type DeadlockPlan, type DeadlockRecovery, type DeviceCommand, type MapData, type NodeHold,
   type MapRevision, type OperationOptions, type Session, type TransportOrder, type Vehicle, type VehicleSnapshot,
@@ -136,7 +136,7 @@ function App() {
     const controller = new AbortController();
     const signal = controller.signal;
     setError(null);
-    softly(getAs<Session>(opsApi.session(), signal), ANONYMOUS).then(setSession);
+    softly(getAs<Session>(opsApi.session(), signal), ANONYMOUS).then(s => { noteSessionLevel(s.authenticated ? s.level : 0); setSession(s); });
     // Which map the site is running on is settled before anything else is read. Everything below
     // is read against a revision, and a screen that guesses it shows a different site from the one
     // the vehicles are driving on.
@@ -635,17 +635,17 @@ function VehicleDetail(props: {
           <span className="hint">시뮬레이션 상태</span>
           {([['REMOTE', 'IDLE', '원격·대기'], ['MANUAL', 'IDLE', '수동'], ['REMOTE', 'PAUSED', '일시정지'],
             ['REMOTE', 'ERROR', '에러'], ['REMOTE', 'CHARGING', '충전']] as const).map(([m, s, label]) => (
-            <button key={label} type="button" style={tiny} disabled={!hasWriteToken()} onClick={() => setState(m, s)}>{label}</button>
+            <button key={label} type="button" style={tiny} disabled={!canOperate()} onClick={() => setState(m, s)}>{label}</button>
           ))}
           <span className="hint" style={{ marginLeft: 6 }}>배터리</span>
           {[15, 35, 100].map(pct => (
-            <button key={pct} type="button" style={tiny} disabled={!hasWriteToken()} onClick={() => setBattery(pct)}>{pct}%</button>
+            <button key={pct} type="button" style={tiny} disabled={!canOperate()} onClick={() => setBattery(pct)}>{pct}%</button>
           ))}
           {/* Only a rail-fed vehicle has a pickup to fail. The charging kind runs its own cycle. */}
           {railFed && (
             <>
               <span className="hint" style={{ marginLeft: 6 }}>집전</span>
-              <button type="button" style={faulted ? tinyOn : tiny} disabled={!hasWriteToken()}
+              <button type="button" style={faulted ? tinyOn : tiny} disabled={!canOperate()}
                 title={faulted
                   ? '레일에서 전력을 받지 못하는 상태입니다. 버퍼가 계속 떨어집니다.'
                   : '집전 고장을 넣습니다. 버퍼가 오르지 않고 계속 떨어져 알람 조건을 만듭니다.'}
@@ -660,12 +660,12 @@ function VehicleDetail(props: {
       {props.simulated && r && (props.placeNodes?.length ?? 0) > 0 && (
         <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
           <span className="hint">위치 지정</span>
-          <select style={{ ...tiny, minWidth: 92 }} value={placeAt} disabled={!hasWriteToken()}
+          <select style={{ ...tiny, minWidth: 92 }} value={placeAt} disabled={!canOperate()}
             onChange={e => setPlaceAt(e.target.value === '' ? '' : Number(e.target.value))}>
             <option value="">노드</option>
             {props.placeNodes!.map(n => <option key={n.id} value={n.id}>{n.code}</option>)}
           </select>
-          <button type="button" style={tiny} disabled={!hasWriteToken() || !placeable}
+          <button type="button" style={tiny} disabled={!canOperate() || !placeable}
             onClick={() => place()}>놓기</button>
           <span className="hint">
             주행이 아니라 그 자리에 놓습니다. 쥐고 있던 구간은 모두 반납합니다. 작업이나 이동 중이면 한 번 되묻고,
@@ -785,14 +785,14 @@ function ManualMove(props: {
         : !(vehicle.status ? vehicle.status === 'IDLE' : vehicle.idle) ? '대기 상태가 아닙니다.'
           : props.target === null ? '목표 노드를 고르세요(목록 또는 지도 클릭).'
             : props.target === vehicle.nodeId ? '이미 그 노드에 있습니다.'
-              : !hasWriteToken() ? 'Lv2 운전 이상으로 로그인해야 명령할 수 있습니다.' : null;
+              : !canOperate() ? 'Lv2 운전 이상으로 로그인해야 명령할 수 있습니다.' : null;
 
   // Charging asks less than a move: no target node, and a charging vehicle may be told to stop
   // while it is not idle, because charging is exactly the state the stop ends.
   const charging = vehicle?.status === 'CHARGING';
   const chargeBlocker = !vehicle ? '차량을 고르세요.'
     : !vehicle.chargingPolicy || vehicle.chargingPolicy === 'DISABLED' ? '이 차량은 스스로 충전하지 않습니다(레일 급전).'
-      : !hasWriteToken() ? 'Lv2 운전 이상으로 로그인해야 명령할 수 있습니다.'
+      : !canOperate() ? 'Lv2 운전 이상으로 로그인해야 명령할 수 있습니다.'
         : charging ? null
           : !vehicle.online ? '오프라인 차량입니다.'
             : (vehicle.mode ?? (vehicle.remote ? 'REMOTE' : 'MANUAL')) !== 'REMOTE' ? '원격 모드가 아닙니다.'
@@ -881,7 +881,7 @@ function ManualMove(props: {
           <Chip tone={open.stopRequestedAt ? 'wr' : 'ok'}>{open.stopRequestedAt ? '중지 중' : '이동 중'}</Chip>
           <span>{open.purpose === 'MANUAL' ? '수동 이동' : 'Zone 퇴출'} → {nodeCode(open.targetNodeId)}</span>
           {open.purpose === 'MANUAL' && !open.stopRequestedAt && (
-            <button type="button" disabled={busy || !hasWriteToken()} onClick={stop} style={{
+            <button type="button" disabled={busy || !canOperate()} onClick={stop} style={{
               border: '1px solid var(--crit)', background: 'var(--srf)', color: 'var(--crit)', borderRadius: 5,
               padding: '3px 12px', fontSize: 12, cursor: 'pointer' }}>이동 중지</button>
           )}
@@ -892,11 +892,11 @@ function ManualMove(props: {
           what stops the next dispatch picking it up while somebody decides where to put it. */}
       {vehicle && (
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          <button type="button" disabled={busy || !hasWriteToken()} onClick={toggleService} style={{
+          <button type="button" disabled={busy || !canOperate()} onClick={toggleService} style={{
             border: `1px solid ${vehicle.outOfServiceSince ? 'var(--ln2)' : 'var(--warn)'}`,
             background: 'var(--srf)', color: vehicle.outOfServiceSince ? 'var(--ink2)' : '#8A5C05',
             borderRadius: 5, padding: '3px 12px', fontSize: 12,
-            cursor: hasWriteToken() ? 'pointer' : 'default' }}>
+            cursor: canOperate() ? 'pointer' : 'default' }}>
             {vehicle.outOfServiceSince ? '서비스 복귀' : '서비스 제외'}
           </button>
           <span className="hint">
