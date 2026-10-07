@@ -5,6 +5,7 @@ import {
   type VehicleReportResult, type VehicleSnapshot,
 } from '../../api';
 import { Chip, Empty } from '../../shell/States';
+import { HostPanel } from './HostPanel';
 
 /** Command states, described by what they permit rather than by their name. */
 const COMMAND_STATE: Record<CommandStatus, { tone: string; label: string; note: string }> = {
@@ -26,6 +27,7 @@ export function DiagnosticsScreen(props: {
 }) {
   return (
     <>
+      <HostPanel />
       <InDoubtCommands commands={props.inDoubt} onChanged={props.onChanged} />
       <VehicleReportPanel map={props.map} revisionId={props.revisionId}
         vehicles={props.vehicles} onChanged={props.onChanged} />
