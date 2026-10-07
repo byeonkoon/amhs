@@ -156,6 +156,16 @@ public interface TransportLedger {
  record LateEvidence(long id,long orderId,String kind,String orderStatus,String reportedStatus,String recordedLocation,
                      String reportedLocation,String evidenceKind,String commandId,java.time.OffsetDateTime receivedAt,
                      java.time.OffsetDateTime resolvedAt,String resolvedBy,String resolution){}
+ /**
+  * Why each waiting order was passed over this pass. The time is kept from when the reason began,
+  * so it says how long the order has been waiting for that same thing.
+  */
+ void noteDispatchReasons(java.util.Map<Long,String> reasonByOrder);
+ record DispatchNote(String reason,java.time.OffsetDateTime since){}
+ /** The last reason a waiting order was passed over, or null when it never was. */
+ DispatchNote dispatchNote(long orderId);
+ /** How many times a transfer of this order has been tried again. */
+ int transferAttempts(long orderId);
  /** Whether a report with this key was already handled for the order. */
  boolean transferReportSeen(long orderId,String reportKey);
  /** The action a device command was first reported for on this order, or null when it was never seen. */

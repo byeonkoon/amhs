@@ -1,5 +1,5 @@
 import React from 'react';
-import { ApiError, alarmApi, get, hasWriteToken, send, type Alarm, type MenuTarget } from '../../api';
+import { ApiError, alarmApi, get, hasWriteToken, send, type Alarm, type AlarmOccurrence, type MenuTarget } from '../../api';
 import { Chip, Empty } from '../../shell/States';
 import { Grid, Row } from '../../shell/Panel';
 import { aborted } from '../equipment/EquipmentScreen';
@@ -147,8 +147,71 @@ export function AlarmsScreen({ onGo }: { onGo: (screen: MenuTarget) => void }) {
             </p>
           </section>
         )}
+      <AlarmHistory />
     </>
   );
+}
+
+/**
+ * When each alarm was seen true and seen gone, with who looked and what they said. The record of
+ * having seen the conditions, not the conditions: the times are when the upkeep looked (every few
+ * seconds), so something shorter than that can come and go without a line here.
+ */
+function AlarmHistory() {
+  const [rows, setRows] = React.useState<AlarmOccurrence[] | null>(null);
+  const [failed, setFailed] = React.useState(false);
+  React.useEffect(() => {
+    let live = true;
+    const load = () => {
+      const c = new AbortController();
+      get<AlarmOccurrence[]>(alarmApi.history({ limit: 100 }), c.signal)
+        .then(list => { if (live) { setRows(list); setFailed(false); } })
+        .catch(cause => { if (!aborted(cause) && live) setFailed(true); });
+      return c;
+    };
+    let controller = load();
+    const timer = window.setInterval(() => { controller.abort(); controller = load(); }, 10000);
+    return () => { live = false; window.clearInterval(timer); controller.abort(); };
+  }, []);
+  return (
+    <section className="card">
+      <div className="ch">
+        <h2>발생·해제 이력</h2>
+        <span className="aux">관찰 기록입니다 — 몇 초 간격으로 확인하므로 그보다 짧게 생겼다 사라진 조건은 남지 않을 수 있습니다</span>
+      </div>
+      {rows === null
+        ? <div className="cb"><p className="hint" style={{ margin: 0 }}>{failed ? '이력을 불러오지 못했습니다.' : '불러오는 중…'}</p></div>
+        : rows.length === 0
+          ? <Empty title="기록된 알람이 없습니다" hint="알람이 생기면 처음 관찰한 시각부터 사라진 시각까지 여기에 남습니다." />
+          : (
+            <div className="tbl-scroll">
+              <table className="t">
+                <thead><tr><th>등급</th><th>규칙</th><th>대상</th><th>처음 관찰</th><th>해제</th><th>지속</th><th>확인</th></tr></thead>
+                <tbody>
+                  {rows.map(o => (
+                    <tr key={o.id}>
+                      <td><Chip tone={o.severity === 'CRITICAL' ? 'er' : 'wr'}>{o.severity === 'CRITICAL' ? '심각' : '주의'}</Chip></td>
+                      <td>{o.rule}</td>
+                      <td className="mono" title={o.summary}>{o.subject}</td>
+                      <td className="mono">{when(o.firstSeenAt)}</td>
+                      <td className="mono">{o.clearedAt ? when(o.clearedAt) : <Chip tone="er">진행 중</Chip>}</td>
+                      <td className="mono">{span(o.firstSeenAt, o.clearedAt ?? o.lastSeenAt)}</td>
+                      <td title={o.ackReason ?? ''}>{o.ackReason ? `${o.ackActor ?? ''} · ${o.ackReason}` : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+    </section>
+  );
+}
+
+function span(from: string, to: string): string {
+  const s = Math.max(0, Math.round((new Date(to).getTime() - new Date(from).getTime()) / 1000));
+  if (s < 60) return `${s}초`;
+  if (s < 3600) return `${Math.floor(s / 60)}분 ${s % 60}초`;
+  return `${Math.floor(s / 3600)}시간 ${Math.floor((s % 3600) / 60)}분`;
 }
 
 function explainAck(code: string): string {

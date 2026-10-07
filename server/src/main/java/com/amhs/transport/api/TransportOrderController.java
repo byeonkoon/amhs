@@ -55,6 +55,10 @@ class TransportOrderController {
  @GetMapping("/assignments")
  List<AssignmentView> assignments(@PathVariable long siteId){return assignment.active(siteId);}
 
+ /** Why the order is where it is: the facts a screen explains it from. */
+ @GetMapping("/{orderId}/explanation")
+ TransportOrders.Explanation explain(@PathVariable long siteId,@PathVariable long orderId){ return orders.explain(siteId,orderId); }
+
  @GetMapping("/{orderId}/events")
  List<OrderEventView> events(@PathVariable long siteId,@PathVariable long orderId){return orders.events(siteId,orderId);}
 

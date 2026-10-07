@@ -253,6 +253,25 @@ class JdbcTransportLedger implements TransportLedger {
    +"reported_location,evidence_kind,command_id) VALUES(?,?,?,?,?,?,?,?,?)",siteId,order.id(),kind,order.status().name(),
    reported.name(),recorded==null?null:recorded.name(),reportedLocation.name(),evidence.kind().name(),evidence.commandId());
  }
+ @Transactional
+ public void noteDispatchReasons(java.util.Map<Long,String> reasonByOrder){
+  if(reasonByOrder.isEmpty()) return;
+  var rows=new ArrayList<Object[]>();
+  reasonByOrder.forEach((id,reason)->{ String r=reason==null?null:reason.length()<=64?reason:reason.substring(0,64); rows.add(new Object[]{r,r,id,r}); });
+  jdbc.batchUpdate("UPDATE transport.order SET last_dispatch_reason=?,"
+   +"last_dispatch_at=CASE WHEN last_dispatch_reason IS DISTINCT FROM ? THEN now() ELSE last_dispatch_at END"
+   +" WHERE id=? AND status='QUEUED' AND (last_dispatch_reason IS DISTINCT FROM ? OR last_dispatch_at IS NULL)",rows);
+ }
+ @Transactional(readOnly=true)
+ public int transferAttempts(long orderId){
+  Integer n=jdbc.queryForObject("SELECT transfer_attempt FROM transport.order WHERE id=?",Integer.class,orderId);
+  return n==null?0:n;
+ }
+ @Transactional(readOnly=true)
+ public DispatchNote dispatchNote(long orderId){
+  return jdbc.query("SELECT last_dispatch_reason,last_dispatch_at FROM transport.order WHERE id=? AND last_dispatch_reason IS NOT NULL",
+   (r,n)->new DispatchNote(r.getString(1),r.getObject(2,java.time.OffsetDateTime.class)),orderId).stream().findFirst().orElse(null);
+ }
  @Transactional(readOnly=true)
  public boolean transferReportSeen(long orderId,String reportKey){
   return Boolean.TRUE.equals(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM transport.transfer_report WHERE order_id=? AND report_key=?)",

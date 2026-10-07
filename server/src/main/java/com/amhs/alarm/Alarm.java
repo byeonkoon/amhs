@@ -21,7 +21,7 @@ import java.time.OffsetDateTime;
 public record Alarm(String key,Severity severity,String rule,
                     String subject,String summary,String effect,
                     OffsetDateTime since,String sinceMeans,
-                    String screen,Seen seen){
+                    String screen,Seen seen,About about){
  /** How bad it is, in the only two degrees worth telling apart: act now, or see to it. */
  public enum Severity{ CRITICAL,WARNING }
 
@@ -38,10 +38,24 @@ public record Alarm(String key,Severity severity,String rule,
  /** A rule raises an alarm; whether anybody has looked at it is attached afterwards. */
  public Alarm(String key,Severity severity,String rule,String subject,String summary,String effect,
               OffsetDateTime since,String sinceMeans,String screen){
-  this(key,severity,rule,subject,summary,effect,since,sinceMeans,screen,null);
+  this(key,severity,rule,subject,summary,effect,since,sinceMeans,screen,null,About.NOTHING);
  }
  public Alarm withSeen(Seen seen){
-  return new Alarm(key,severity,rule,subject,summary,effect,since,sinceMeans,screen,seen);
+  return new Alarm(key,severity,rule,subject,summary,effect,since,sinceMeans,screen,seen,about);
+ }
+ /**
+  * What the condition is about, as references rather than words: the vehicles, the order and the
+  * command, so a screen can go from the alarm to the thing and back.
+  */
+ public record About(java.util.List<Long> vehicleIds,Long orderId,String commandId){
+  public About { vehicleIds=vehicleIds==null?java.util.List.of():java.util.List.copyOf(vehicleIds); }
+  public static final About NOTHING=new About(java.util.List.of(),null,null);
+ }
+ public Alarm about(java.util.List<Long> vehicleIds,Long orderId,String commandId){
+  return new Alarm(key,severity,rule,subject,summary,effect,since,sinceMeans,screen,seen,new About(vehicleIds,orderId,commandId));
+ }
+ public Alarm aboutVehicle(Long vehicleId){
+  return about(vehicleId==null?java.util.List.of():java.util.List.of(vehicleId),null,null);
  }
  public boolean acknowledged(){ return seen!=null; }
 }

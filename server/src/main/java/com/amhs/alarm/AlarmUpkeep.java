@@ -25,9 +25,10 @@ class AlarmUpkeep {
 
  @Scheduled(fixedDelayString="${amhs.alarm.upkeep-ms:5000}")
  void retireWhatIsOver(){
-  for(Long siteId:jdbc.query("SELECT DISTINCT site_id FROM platform.alarm_acknowledgement",
-    (r,n)->r.getLong(1))){
-   try{ alarms.retireAcknowledgementsOfEndedConditions(siteId); }
+  // Every site is looked at, so each alarm's coming and going is noted, with what anybody said about
+  // it copied into the record before the acknowledgement is forgotten.
+  for(Long siteId:jdbc.query("SELECT site_id FROM platform.site_operation ORDER BY site_id",(r,n)->r.getLong(1))){
+   try{ alarms.observe(siteId); alarms.retireAcknowledgementsOfEndedConditions(siteId); }
    catch(RuntimeException e){
     // One site that cannot be read must not stop the others being tidied.
     SiteAlarms.log.debug("alarm upkeep skipped site {}: {}",siteId,e.getMessage());

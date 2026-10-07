@@ -14,6 +14,13 @@ class AlarmController {
  @GetMapping
  List<Alarm> alarms(@PathVariable long siteId){ return alarms.alarms(siteId); }
 
+ /** When each alarm was seen true and gone, newest first; optionally about one vehicle or one order. */
+ @GetMapping("/history")
+ List<SiteAlarms.Occurrence> history(@PathVariable long siteId,@RequestParam(required=false) Long vehicleId,
+                                     @RequestParam(required=false) Long orderId,@RequestParam(defaultValue="100") int limit){
+  return alarms.history(siteId,vehicleId,orderId,limit);
+ }
+
  @GetMapping("/count")
  SiteAlarms.Count count(@PathVariable long siteId){ return alarms.count(siteId); }
 

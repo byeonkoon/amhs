@@ -1,6 +1,7 @@
 import React from 'react';
 import {
-  ApiError, api, explainDecision, get, opsApi, send, hasWriteToken, type LateEvidence,
+  ApiError, alarmApi, api, explainDecision, get, opsApi, send, hasWriteToken, type LateEvidence,
+  type AlarmOccurrence, type OrderExplanation,
   type Assigned, type DeviceCommand, type Extension, type MapData,
   type TransportOrder, type VehicleSnapshot,
 } from '../../api';
@@ -268,6 +269,8 @@ function OrderDetail({ orderId, map, vehicles }: { orderId: number; map: MapData
   }, [orderId]);
 
   return (
+    <>
+    <OrderWhy orderId={orderId} map={map} vehicles={vehicles} />
     <section className="card">
       <div className="ch"><h2>작업 #{orderId} 장비 명령</h2><span className="aux">배정은 차량을 잡는 것이고, 명령은 차량에 알리는 것입니다</span></div>
       {error ? <Empty title="명령을 불러오지 못했습니다" hint="잠시 후 다시 시도해 주세요." />
@@ -301,6 +304,81 @@ function OrderDetail({ orderId, map, vehicles }: { orderId: number; map: MapData
         표시된 허가 구간은 차량이 점유해도 되는 범위입니다. 계획 경로 전체가 아니라 교통이 실제로 내준 만큼만
         명령에 실립니다. {vehicles.length === 0 ? '' : ''}
       </p>
+    </section>
+    </>
+  );
+}
+
+const STAGE: Record<string, string> = {
+  QUEUED: '배차 대기', ASSIGNED: '차량 배정', TO_SOURCE: '출발지로 이동', LOADING: '적재 중', TO_DESTINATION: '목적지로 이동',
+  UNLOADING: '하역 중', COMPLETED: '완료', CANCEL_REQUESTED: '취소 요청', CANCELLED: '취소', FAILED: '실패',
+  RECOVERY_REQUIRED: '복구 대기',
+};
+const PLACE: Record<string, string> = { SOURCE: '출발지', VEHICLE: '차량', DESTINATION: '목적지', UNKNOWN: '불명' };
+
+/**
+ * Why the order is where it is, in sentences built from what the server knows: the answer it got
+ * when it was last passed over, what its vehicle waits for on the road, commands not settled, carrier
+ * evidence nobody has dealt with yet, and the alarms that were about it.
+ */
+function OrderWhy({ orderId, map, vehicles }: { orderId: number; map: MapData; vehicles: VehicleSnapshot[] }) {
+  const [why, setWhy] = React.useState<OrderExplanation | null>(null);
+  const [alarms, setAlarms] = React.useState<AlarmOccurrence[]>([]);
+  const [failed, setFailed] = React.useState(false);
+  React.useEffect(() => {
+    let live = true;
+    const load = () => {
+      const c = new AbortController();
+      get<OrderExplanation>(api.orderExplanation(orderId), c.signal)
+        .then(w => { if (live) { setWhy(w); setFailed(false); } })
+        .catch(e => { if ((e as Error).name !== 'AbortError' && live) setFailed(true); });
+      get<AlarmOccurrence[]>(alarmApi.history({ orderId, limit: 20 }), c.signal)
+        .then(a => { if (live) setAlarms(a); }).catch(() => { /* the explanation above still stands */ });
+      return c;
+    };
+    let controller = load();
+    const timer = window.setInterval(() => { controller.abort(); controller = load(); }, 3000);
+    return () => { live = false; window.clearInterval(timer); controller.abort(); };
+  }, [orderId]);
+  const code = (id: number | null) => id == null ? '—' : vehicles.find(v => v.id === id)?.code ?? `#${id}`;
+  const at = (t: string | null) => t ? new Date(t).toLocaleTimeString('ko-KR', { hour12: false }) : '';
+  const lines: string[] = [];
+  if (why) {
+    const o = why.order;
+    if (o.status === 'QUEUED')
+      lines.push(why.dispatch ? `배차되지 않고 있습니다: ${explainDecision(why.dispatch.reason)}${why.dispatch.since ? ` (${at(why.dispatch.since)}부터 같은 이유)` : ''}`
+        : '아직 배차를 시도하지 않았습니다. 자동 배차가 꺼져 있거나 다음 실행을 기다리는 중입니다.');
+    if (why.vehicleId != null) lines.push(`${code(why.vehicleId)} 차량이 맡고 있습니다.`);
+    if (why.roadWait)
+      lines.push(`${nodeCode(map, why.roadWait.wantedNodeId)} 노드를 ${code(why.roadWait.blockerId)} 차량이 쥐고 있어 ${at(why.roadWait.since)}부터 기다리는 중입니다.`);
+    if (o.status === 'CANCEL_REQUESTED') lines.push('취소를 요청했습니다. 차량이 멈췄다고 보고하면 화물 위치에 따라 취소 또는 복구 대기로 끝납니다.');
+    if (o.status === 'RECOVERY_REQUIRED')
+      lines.push(`복구 대기입니다. 화물 위치(현재 기록: ${PLACE[o.carrierLocation ?? 'UNKNOWN'] ?? o.carrierLocation})를 사람이 확인해 기록해야 완료나 취소로 닫힙니다.`);
+    if (why.transferAttempts > 0) lines.push(`이적재를 ${why.transferAttempts}번 다시 시도했습니다.`);
+    if (why.unsettled.length > 0)
+      lines.push(`아직 정리되지 않은 장비 명령이 ${why.unsettled.length}건 있습니다(${why.unsettled.map(c => `${c.commandType} ${c.status}`).join(', ')}).`);
+    for (const e of why.evidence)
+      lines.push(e.kind === 'CONFLICT' ? `화물 위치 보고가 서로 어긋납니다(${PLACE[e.recordedLocation ?? ''] ?? '없음'} ↔ ${PLACE[e.reportedLocation] ?? e.reportedLocation}). 사람이 확인해야 합니다.`
+        : `작업이 끝난 뒤 화물이 ${PLACE[e.reportedLocation] ?? e.reportedLocation}에 있다는 보고가 왔습니다.`);
+  }
+  return (
+    <section className="card">
+      <div className="ch"><h2>작업 #{orderId} 지금 상태</h2>
+        {why && <span className="aux"><Chip tone={toneOf(why.order.status)}>{STAGE[why.order.status] ?? why.order.status}</Chip></span>}</div>
+      <div className="cb" style={{ display: 'grid', gap: 6 }}>
+        {failed && !why ? <p className="hint" style={{ margin: 0 }}>상태 설명을 불러오지 못했습니다.</p>
+          : !why ? <p className="hint" style={{ margin: 0 }}>불러오는 중…</p>
+            : lines.length === 0 ? <p className="hint" style={{ margin: 0 }}>설명할 만한 막힘이 없습니다.</p>
+              : <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12.5 }}>{lines.map((l, i) => <li key={i}>{l}</li>)}</ul>}
+        {alarms.length > 0 && (
+          <div style={{ fontSize: 12 }}>
+            <b>이 작업에 관한 알람</b>
+            <ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>
+              {alarms.map(a => <li key={a.id}>{a.rule} · {at(a.firstSeenAt)}{a.clearedAt ? ` ~ ${at(a.clearedAt)}` : ' (진행 중)'}{a.ackReason ? ` · 확인: ${a.ackReason}` : ''}</li>)}
+            </ul>
+          </div>
+        )}
+      </div>
     </section>
   );
 }

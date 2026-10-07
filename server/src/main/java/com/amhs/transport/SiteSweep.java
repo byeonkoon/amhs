@@ -111,6 +111,10 @@ public class SiteSweep {
     }
     if(page.size()<200) break;
    }
+   // The answer each waiting order got, kept with it, so a screen can say why it is still waiting.
+   var reasons=new java.util.HashMap<Long,String>();
+   for(var s:skipped) reasons.put(s.orderId(),s.reason());
+   orders.noteDispatchReasons(reasons);
   }
   // A vehicle giving way to break a deadlock hands back its road before anyone resumes, so the one
   // it gave way to can take the node in this same pass.

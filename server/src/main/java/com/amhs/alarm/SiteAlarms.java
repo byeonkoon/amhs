@@ -35,12 +35,13 @@ public class SiteAlarms {
  private final TransportLedger ledger; private final CommandOutbox outbox;
  private final OperationOptionConfiguration operations;
  private final org.springframework.jdbc.core.JdbcTemplate jdbc;
+ private final com.amhs.transport.RestartCheck restartCheck;
 
  public SiteAlarms(FleetState fleet,TrafficControl traffic,TransportLedger ledger,
                    CommandOutbox outbox,OperationOptionConfiguration operations,
-                   org.springframework.jdbc.core.JdbcTemplate jdbc){
+                   org.springframework.jdbc.core.JdbcTemplate jdbc,com.amhs.transport.RestartCheck restartCheck){
   this.fleet=fleet; this.traffic=traffic; this.ledger=ledger;
-  this.outbox=outbox; this.operations=operations; this.jdbc=jdbc;
+  this.outbox=outbox; this.operations=operations; this.jdbc=jdbc; this.restartCheck=restartCheck;
  }
 
  /** Everything true now, worst first, and within a severity the oldest first. */
@@ -49,6 +50,7 @@ public class SiteAlarms {
   var options=operations.get(siteId).settings();
   long revisionId=ledger.activeRevision(siteId);
   var out=new ArrayList<Alarm>();
+  site(siteId,out);
   vehicles(siteId,revisionId,options,out);
   deadlocks(siteId,out);
   orders(siteId,out);
@@ -122,6 +124,73 @@ public class SiteAlarms {
    +" AND alarm_key NOT IN ("+marks+")",args);
  }
 
+ /**
+  * One stretch of time over which an alarm was seen true: when it was first and last seen, when it
+  * was seen gone, and what anybody said about it meanwhile. Observed, not reported: the times are
+  * when the upkeep looked, so a condition shorter than its interval can come and go unseen, and that
+  * is said rather than hidden.
+  */
+ public record Occurrence(long id,String key,Severity severity,String rule,String subject,String summary,
+                          List<Long> vehicleIds,Long orderId,String commandId,OffsetDateTime conditionSince,
+                          OffsetDateTime firstSeenAt,OffsetDateTime lastSeenAt,OffsetDateTime clearedAt,
+                          String ackReason,String ackActor,OffsetDateTime ackAt){}
+
+ /**
+  * Notes what is true now against what was open: new conditions open an occurrence, ones still
+  * true are seen again (with whoever has looked at them), and ones no longer true are closed.
+  * Run by the upkeep, never by a read.
+  */
+ @Transactional
+ public void observe(long siteId){
+  var live=alarms(siteId);
+  var open=new java.util.HashMap<String,Long>();
+  jdbc.query("SELECT alarm_key,id FROM platform.alarm_occurrence WHERE site_id=? AND cleared_at IS NULL",
+   (org.springframework.jdbc.core.RowCallbackHandler)r->open.put(r.getString(1),r.getLong(2)),siteId);
+  var seenNow=new java.util.HashSet<String>();
+  for(var a:live){
+   seenNow.add(a.key());
+   var about=a.about()==null?Alarm.About.NOTHING:a.about();
+   String vehicles=about.vehicleIds().isEmpty()?null
+    :"{"+String.join(",",about.vehicleIds().stream().map(String::valueOf).toList())+"}";
+   Long id=open.get(a.key());
+   if(id==null)
+    jdbc.update("INSERT INTO platform.alarm_occurrence(site_id,alarm_key,severity,rule,subject,summary,vehicle_ids,order_id,"
+     +"command_id,condition_since,ack_reason,ack_actor,ack_at) VALUES(?,?,?,?,?,?,?::bigint[],?,?,?,?,?,?)",
+     siteId,a.key(),a.severity().name(),a.rule(),cut(a.subject(),256),cut(a.summary(),512),vehicles,about.orderId(),
+     about.commandId(),a.since(),a.seen()==null?null:a.seen().reason(),a.seen()==null?null:a.seen().actorCode(),
+     a.seen()==null?null:a.seen().at());
+   else
+    jdbc.update("UPDATE platform.alarm_occurrence SET last_seen_at=clock_timestamp(),summary=?,"
+     +"ack_reason=COALESCE(?,ack_reason),ack_actor=COALESCE(?,ack_actor),ack_at=COALESCE(?,ack_at) WHERE id=?",
+     cut(a.summary(),512),a.seen()==null?null:a.seen().reason(),a.seen()==null?null:a.seen().actorCode(),
+     a.seen()==null?null:a.seen().at(),id);
+  }
+  for(var e:open.entrySet())
+   if(!seenNow.contains(e.getKey()))
+    jdbc.update("UPDATE platform.alarm_occurrence SET cleared_at=clock_timestamp() WHERE id=?",e.getValue());
+ }
+ private static String cut(String s,int n){ return s==null||s.length()<=n?s:s.substring(0,n); }
+
+ /** Occurrences newest first, optionally only those about one vehicle or one order. */
+ @Transactional(readOnly=true)
+ public List<Occurrence> history(long siteId,Long vehicleId,Long orderId,int limit){
+  var sql=new StringBuilder("SELECT id,alarm_key,severity,rule,subject,summary,vehicle_ids,order_id,command_id,condition_since,"
+   +"first_seen_at,last_seen_at,cleared_at,ack_reason,ack_actor,ack_at FROM platform.alarm_occurrence WHERE site_id=?");
+  var args=new ArrayList<Object>(List.of(siteId));
+  if(vehicleId!=null){ sql.append(" AND ?=ANY(vehicle_ids)"); args.add(vehicleId); }
+  if(orderId!=null){ sql.append(" AND order_id=?"); args.add(orderId); }
+  sql.append(" ORDER BY first_seen_at DESC,id DESC LIMIT ?"); args.add(Math.max(1,Math.min(limit,500)));
+  return jdbc.query(sql.toString(),(r,n)->{
+   var arr=r.getArray(7);
+   var vehicles=new ArrayList<Long>();
+   if(arr!=null) for(Object o:(Object[])arr.getArray()) vehicles.add(((Number)o).longValue());
+   return new Occurrence(r.getLong(1),r.getString(2),Severity.valueOf(r.getString(3)),r.getString(4),r.getString(5),
+    r.getString(6),vehicles,r.getObject(8,Long.class),r.getString(9),r.getObject(10,OffsetDateTime.class),
+    r.getObject(11,OffsetDateTime.class),r.getObject(12,OffsetDateTime.class),r.getObject(13,OffsetDateTime.class),
+    r.getString(14),r.getString(15),r.getObject(16,OffsetDateTime.class));
+  },args.toArray());
+ }
+
  /** How many of each, for a screen that wants the count without the list. */
  @Transactional(readOnly=true)
  public Count count(long siteId){
@@ -145,17 +214,17 @@ public class SiteAlarms {
     out.add(new Alarm("VEHICLE_ERROR:"+v.id(),Severity.CRITICAL,"차량 에러",
      v.code(),"차량이 에러 상태를 보고했습니다.",
      "이 차량은 작업을 받지 않고, 서 있는 자리를 계속 점유합니다. 뒤따르는 차량이 그 자리를 기다립니다.",
-     v.reportedAt(),"마지막 보고","fleet"));
+     v.reportedAt(),"마지막 보고","fleet").aboutVehicle(v.id()));
    else if(!v.online())
     out.add(new Alarm("VEHICLE_OFFLINE:"+v.id(),Severity.WARNING,"차량 오프라인",
      v.code(),"차량과의 통신이 끊겼습니다.",
      "명령을 보낼 수 없어 배차에서 제외됩니다. 마지막으로 받은 허가 끝에서 멈춥니다.",
-     v.reportedAt(),"마지막 보고","fleet"));
+     v.reportedAt(),"마지막 보고","fleet").aboutVehicle(v.id()));
    else if(v.reportedAt()!=null&&!v.reportedSince(staleBefore))
     out.add(new Alarm("VEHICLE_STALE:"+v.id(),Severity.WARNING,"위치 보고 지연",
      v.code(),"상태 보고가 %d초 넘게 오지 않았습니다.".formatted(options.positionStaleSeconds()),
      "보고가 오래된 위치로는 이동을 주지 않습니다. 이 차량은 배차와 연장에서 모두 빠집니다.",
-     v.reportedAt(),"마지막 보고","fleet"));
+     v.reportedAt(),"마지막 보고","fleet").aboutVehicle(v.id()));
 
    // Only a vehicle that charges has a charge to be low on. A vehicle with charging switched off
    // has no regime this threshold belongs to, and an alarm nobody can act on is the thing that
@@ -168,7 +237,7 @@ public class SiteAlarms {
      v.carrierPresent()
       ? "화물을 싣고 있어 충전하러 보내지 않습니다. 하역이 끝나기 전에 멈출 수 있습니다."
       : "작업을 주지 않고 충전을 우선합니다. 비어 있는 충전기가 없으면 그대로 기다립니다.",
-     v.reportedAt(),"마지막 보고","fleet"));
+     v.reportedAt(),"마지막 보고","fleet").aboutVehicle(v.id()));
 
    // The other direction, for a vehicle fed from the rail. It has no charging cycle, so its store
    // is a buffer the rail keeps full and a level is not the question -- it is full until it is not
@@ -183,8 +252,20 @@ public class SiteAlarms {
       options.powerDropWindowSeconds(),v.droppedSincePeak(),v.socPeakPct(),v.batteryPct()),
      "레일에서 전력을 받지 못하고 있습니다. 이대로 두면 본선에서 서고, 단일 루프에서는 뒤따르는 차량이 전부 막힙니다."
       +" 서 버리기 전에 정비 구역으로 빼내야 합니다.",
-     v.socPeakAt(),"마지막으로 오른 시각","fleet"));
+     v.socPeakAt(),"마지막으로 오른 시각","fleet").aboutVehicle(v.id()));
   }
+ }
+
+ /** The whole site held: the comparison after a server start is still waiting for somebody. */
+ private void site(long siteId,List<Alarm> out){
+  var check=restartCheck.state(siteId);
+  if(!check.pending()) return;
+  long blocking=check.items().stream().filter(com.amhs.transport.RestartCheck.Item::blocking).count();
+  out.add(new Alarm("RESTART_CHECK:"+check.checkId(),Severity.CRITICAL,"재시작 대조 대기",
+   "사이트","서버가 다시 시작될 때 진행 중이던 작업이 있어, 원장과 차량 상태를 대조해 확인해야 합니다%s.".formatted(
+    blocking>0?" (해결되지 않은 항목 %d건)".formatted(blocking):" (확인 가능)"),
+   "확인 전까지 사이트 전체가 진행하지 않습니다. 배차, 새 이동 허가, 명령 전송이 모두 멈춰 있습니다.",
+   check.since(),"서버 시작 시각","fleet"));
  }
 
  private void deadlocks(long siteId,List<Alarm> out){
@@ -194,7 +275,7 @@ public class SiteAlarms {
     "차량 "+String.join(", ",ids),
     "서로가 쥔 자리를 기다리는 닫힌 고리가 생겼습니다.",
     "이 차량들은 스스로 풀리지 않습니다. 누가 양보할지 사람이 정해 주기 전까지 전부 멈춰 있습니다.",
-    null,"시작 시각은 기록되지 않습니다","traffic"));
+    null,"시작 시각은 기록되지 않습니다","traffic").about(chain.vehicleIds(),null,null));
   }
   for(var recovery:traffic.recoveries(siteId,0)){
    if("DONE".equals(recovery.status())||"ABANDONED".equals(recovery.status())) continue;
@@ -202,7 +283,7 @@ public class SiteAlarms {
     "차량 "+recovery.vehicleId(),
     "교착을 풀기 위해 비켜 서는 중입니다(%s).".formatted(recovery.status()),
     "양보 차량은 상대가 지나갈 때까지 새 예약을 받지 않습니다. 멈추지 않으면 복구가 끝나지 않습니다.",
-    recovery.requestedAt(),"요청 시각","traffic"));
+    recovery.requestedAt(),"요청 시각","traffic").about(java.util.List.of(recovery.vehicleId(),recovery.beneficiaryVehicleId()),null,null));
   }
  }
 
@@ -213,7 +294,7 @@ public class SiteAlarms {
      "작업 #"+order.id()+(order.carrierCode()==null?"":" · "+order.carrierCode()),
      "화물이 어디 있는지 확인되어야 더 진행할 수 있습니다.",
      "이 작업은 스스로 끝나지 않습니다. 화물 위치를 사람이 확인해 기록해야 완료나 취소로 닫힙니다.",
-     order.createdAt(),"접수 시각","transport"));
+     order.createdAt(),"접수 시각","transport").about(List.of(),order.id(),null));
   }
   // A carrier reported somewhere after its order closed is a carrier nobody else is tracking.
   for(var late:ledger.openLateEvidence(siteId))
@@ -223,13 +304,13 @@ public class SiteAlarms {
      "앞선 보고는 %s, 늦게 온 보고는 %s라고 합니다. 어느 것이 나중인지 알 수 없습니다.".formatted(
       late.recordedLocation()==null?"없음":late.recordedLocation(),late.reportedLocation()),
      "화물 위치를 '불명'으로 두었습니다. 차량과 점유는 유지되며, 취소 확인은 복구 대기로 갑니다. 위치를 확인해 기록해야 합니다.",
-     late.receivedAt(),"보고 시각","transport")
+     late.receivedAt(),"보고 시각","transport").about(List.of(),late.orderId(),late.commandId())
     :new Alarm("LATE_EVIDENCE:"+late.id(),Severity.CRITICAL,"종료된 작업의 늦은 화물 보고",
      "작업 #"+late.orderId()+" · "+late.orderStatus(),
      "작업이 끝난 뒤 화물이 %s에 있다는 보고가 왔습니다(기록: %s).".formatted(late.reportedLocation(),
       late.recordedLocation()==null?"없음":late.recordedLocation()),
      "작업은 다시 열리지 않습니다. 화물 위치를 확인해 재고 기록을 맞추고, 확인 내용을 남겨야 알람이 닫힙니다.",
-     late.receivedAt(),"보고 시각","transport"));
+     late.receivedAt(),"보고 시각","transport").about(List.of(),late.orderId(),late.commandId()));
  }
 
  private void commands(long siteId,List<Alarm> out){
@@ -247,6 +328,7 @@ public class SiteAlarms {
      command.attempt(),command.lastError()==null?"":", 마지막 오류 "+command.lastError()),
     "이 차량에는 이 명령이 정리되기 전까지 다음 명령이 나가지 않습니다. 연장도 보류됩니다.",
     command.publishedAt()!=null?command.publishedAt():command.createdAt(),
-    command.publishedAt()!=null?"발행 시각":"생성 시각","diagnostics"));
+    command.publishedAt()!=null?"발행 시각":"생성 시각","diagnostics")
+    .about(command.vehicleId()==null?List.of():List.of(command.vehicleId()),command.orderId(),command.commandId()));
  }
 }

@@ -161,6 +161,32 @@ public class TransportOrders {
   return after;
  }
 
+ /** Why each waiting order was passed over in a dispatch pass. */
+ @Transactional
+ public void noteDispatchReasons(java.util.Map<Long,String> reasonByOrder){ ledger.noteDispatchReasons(reasonByOrder); }
+
+ /**
+  * Why an order is where it is, in the system's own terms, gathered in one place: the reason it was
+  * last passed over while waiting (and since when), the vehicle holding it, what that vehicle is
+  * waiting for on the road and for how long, the commands not settled yet, and any carrier
+  * evidence a person still has to deal with. Words are the screen's job; this gives it the facts.
+  */
+ public record Explanation(TransportOrder order,Long vehicleId,TransportLedger.DispatchNote dispatch,
+                           com.amhs.traffic.WaitingFor roadWait,List<com.amhs.integration.DeviceCommand> unsettled,
+                           List<TransportLedger.LateEvidence> evidence,int transferAttempts){}
+
+ @Transactional(readOnly=true)
+ public Explanation explain(long siteId,long orderId){
+  var order=ledger.find(siteId,orderId).orElseThrow(()->reject("ORDER_NOT_FOUND","unknown order"));
+  Long vehicle=ledger.activeAssignment(siteId,orderId).map(AssignmentView::vehicleId).orElse(null);
+  var dispatch=order.status()==OrderStatus.QUEUED?ledger.dispatchNote(orderId):null;
+  var wait=vehicle==null?null:traffic.waitingFor(siteId).stream().filter(w->w.vehicleId()==vehicle).findFirst().orElse(null);
+  var unsettled=outbox.byOrder(siteId,orderId).stream().filter(c->c.status()!=com.amhs.integration.CommandStatus.ACCEPTED
+   &&c.status()!=com.amhs.integration.CommandStatus.WITHDRAWN).toList();
+  var evidence=ledger.openLateEvidence(siteId).stream().filter(e->e.orderId()==orderId).toList();
+  return new Explanation(order,vehicle,dispatch,wait,unsettled,evidence,ledger.transferAttempts(orderId));
+ }
+
  /** Late evidence about finished orders that a person still has to deal with. */
  @Transactional(readOnly=true)
  public List<TransportLedger.LateEvidence> openLateEvidence(long siteId){ return ledger.openLateEvidence(siteId); }

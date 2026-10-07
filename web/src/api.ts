@@ -100,6 +100,7 @@ export const api = {
   resolveLateEvidence: (id: number) => `/api/v1/sites/${SITE_ID}/transport-orders/late-evidence/${id}/resolve`,
   finishedOrders: (limit = 200) => `/api/v1/sites/${SITE_ID}/transport-orders?scope=finished&limit=${limit}`,
   orderEvents: (orderId: number) => `/api/v1/sites/${SITE_ID}/transport-orders/${orderId}/events`,
+  orderExplanation: (orderId: number) => `/api/v1/sites/${SITE_ID}/transport-orders/${orderId}/explanation`,
 };
 
 // ---- 설정 (A19 계약) ----
@@ -571,12 +572,36 @@ export type Alarm = {
    * remove a true condition is how a real fault disappears.
    */
   seen: { reason: string; actorCode: string | null; at: string } | null;
+  /** What it is about, as references: so a screen can go from the alarm to the vehicle, order or command. */
+  about: { vehicleIds: number[]; orderId: number | null; commandId: string | null } | null;
 };
 export type MenuTarget = 'fleet' | 'transport' | 'traffic' | 'diagnostics' | 'inventory';
 /** `unseen` is how many nobody has said they have looked at yet. */
 export type AlarmCount = { total: number; critical: number; warning: number; unseen: number };
+/** One stretch of time an alarm was seen true, with who looked and what it was about. Observed times. */
+export type AlarmOccurrence = {
+  id: number; key: string; severity: 'CRITICAL' | 'WARNING'; rule: string; subject: string; summary: string;
+  vehicleIds: number[]; orderId: number | null; commandId: string | null; conditionSince: string | null;
+  firstSeenAt: string; lastSeenAt: string; clearedAt: string | null;
+  ackReason: string | null; ackActor: string | null; ackAt: string | null;
+};
+/** Why an order is where it is: the facts the order screen explains it from. */
+export type OrderExplanation = {
+  order: TransportOrder; vehicleId: number | null;
+  dispatch: { reason: string; since: string | null } | null;
+  roadWait: { vehicleId: number; wantedNodeId: number; blockerId: number; since: string } | null;
+  unsettled: DeviceCommand[]; evidence: LateEvidence[]; transferAttempts: number;
+};
+
 export const alarmApi = {
   alarms: () => `/api/v1/sites/${SITE_ID}/alarms`,
+  history: (filter: { vehicleId?: number; orderId?: number; limit?: number } = {}) => {
+    const q = new URLSearchParams();
+    if (filter.vehicleId != null) q.set('vehicleId', String(filter.vehicleId));
+    if (filter.orderId != null) q.set('orderId', String(filter.orderId));
+    q.set('limit', String(filter.limit ?? 100));
+    return `/api/v1/sites/${SITE_ID}/alarms/history?${q}`;
+  },
   count: () => `/api/v1/sites/${SITE_ID}/alarms/count`,
   seen: (alarmKey: string) => `/api/v1/sites/${SITE_ID}/alarms/${encodeURIComponent(alarmKey)}/seen`,
 };
