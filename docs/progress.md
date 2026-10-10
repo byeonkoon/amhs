@@ -47,9 +47,16 @@
 - 작업 접수부터 배차·이동·이적재·완료까지 내부 시뮬레이션 연결.
 - SIMULATION과 OPERATION 운전 모드 구분.
 
+**구현 완료 · 차량 통신**
+
+- 차량 TCP 링크(`JSON_LINE_V1`): 연결 프로파일당 TCP 클라이언트 연결 하나, 한 줄에 JSON 객체 하나. 라인 앞단의 제어기·게이트웨이가 차량 고유 프로토콜로 번역하는 것을 전제로 한 [자체 계약](vehicle-tcp-contract.md)입니다.
+- 송신 판정을 세 가지로 구분합니다. 쓰지 못함(재전송 가능), 수신 확인됨, 썼으나 응답 없음(재전송 금지). 결과 불명은 재시작 대조에서 운전자가 닫습니다.
+- 차량 보고를 `source=DEVICE`로 기록해 시뮬레이터 보고와 구분합니다. 모르는 모드·상태는 아는 값으로 바꾸지 않고 보고를 버린 뒤 남깁니다.
+- 연결 프로파일·프로토콜 프로파일·차량 통신이 모두 갖춰져야 사용으로 둘 수 있습니다. TCP 클라이언트 외의 구성은 어댑터가 없으므로 사용 설정을 거부합니다.
+
 **설계 확정 / 후속 구현**
 
-AMHS의 Equipment Adapter는 OPC UA Client, 외부 Equipment Gateway는 OPC UA Server로 분리하는 공통 계약을 정의했습니다. Gateway가 설비별 프로토콜 변환을 담당합니다. 실제 OPC UA 연결과 실장비 inbound 응답 처리는 후속 구현이며, 내부 시뮬레이션 결과를 현장 장비 검증으로 표현하지 않습니다.
+AMHS의 Equipment Adapter는 OPC UA Client, 외부 Equipment Gateway는 OPC UA Server로 분리하는 공통 계약을 정의했습니다. Gateway가 설비별 프로토콜 변환을 담당합니다. 실제 OPC UA 연결과 실장비 inbound 응답 처리는 후속 구현이며, 내부 시뮬레이션 결과를 현장 장비 검증으로 표현하지 않습니다. 차량 TCP 링크도 시험용 소켓을 상대로만 확인했으며 실장비 검증은 하지 않았습니다.
 
 ## 5단계 · 운영 화면과 지도 구성
 
@@ -82,9 +89,10 @@ AMHS의 Equipment Adapter는 OPC UA Client, 외부 Equipment Gateway는 OPC UA S
 
 ## 후속 범위
 
+- 차량이 접속해 오는 TCP 서버 구성, MQTT 브로커와 VDA5050 매핑, PC·PLC 고유 프로토콜의 직접 매핑.
 - 실장비 Vehicle Adapter와 Equipment Gateway 연결, inbound 응답 및 장비별 계약 검증.
 - 상위 제조·물류 시스템별 외부 연계와 Mock 기반 계약 시험.
 - 통신 지연·단절·결과 불명 상황의 Fault Injection 및 부하 검증 확대.
 - 실제 장비와 현장 조건에서의 통합 시나리오 검증.
 
-[공개 설계 개요](portfolio-amhs-design.md) · [검증 시나리오](portfolio-amhs-validation.md) · [설비 OPC UA 계약](equipment-opcua-contract.md)
+[공개 설계 개요](portfolio-amhs-design.md) · [검증 시나리오](portfolio-amhs-validation.md) · [설비 OPC UA 계약](equipment-opcua-contract.md) · [차량 TCP 계약](vehicle-tcp-contract.md)

@@ -1,5 +1,23 @@
 # 검증 기록
 
+## 2026-10-10 · 차량 TCP 링크 (A24)
+
+실제 차량과의 첫 어댑터다. 운전 모드가 OPERATION인 사이트의 명령은 지금까지 보낼 곳이 없어 모두
+`ADAPTER_NOT_IMPLEMENTED`로 돌아왔다. 이제 설정된 차량에 대해서는 TCP로 나간다.
+
+- 독립 시험 클러스터에서 **421개 통과, 실패·오류·skip 0**. migration 추가 없음.
+- `VehicleLinkSqlTest` 5건. 시험용 소켓이 라인 앞단 제어기 역할을 한다.
+  - 받은 쪽이 `ack`를 보내면 `DELIVERED`이고, 나간 프레임에 외부 차량 ID·명령·payload가 들어 있다.
+  - 아무도 듣지 않는 포트면 `NOT_DELIVERED`(`LINK_REFUSED`) — 한 바이트도 쓰지 않았으므로 재전송 가능.
+  - 썼는데 `ack`가 없으면 `IN_DOUBT`(`ACK_TIMEOUT`), 그리고 프레임은 실제로 나갔다.
+  - 링크 설정이 없는 차량은 `NOT_DELIVERED`(`ADAPTER_NOT_CONFIGURED`).
+  - 반대 방향 `report`가 fleet에 기록된다(노드·상태·적재·배터리, `source=DEVICE`).
+- 구현 중 찾은 결함 둘:
+  - 링크를 연결 프로파일 id로만 캐싱해 **주소를 바꿔도 옛 주소로 계속 보냈다.** 주소가 다르면 열린 연결을 닫고 새로 연다.
+  - 차량 보고의 `source`를 `TCP`로 적어 `vehicle_state_source_check`에 걸렸다. 스키마가 이미 구분해 둔 `DEVICE`가 맞다 — 진단 화면의 차량 링크 판정도 같은 값을 쓴다.
+- 기존 시험 2건의 기대값을 `ADAPTER_NOT_IMPLEMENTED` → `ADAPTER_NOT_CONFIGURED`로 바꿨다. 동작(재전송 가능한 미전송)은 같고, 사유가 "어댑터가 없다"에서 "이 차량이 링크에 연결돼 있지 않다"로 정확해졌다.
+- **실장비로는 확인하지 않았다.** 시험용 소켓을 상대로만 확인했다.
+
 ## 2026-10-07 · 서버 호스트 진단과 날짜별 처리 결과 (A31·A32)
 
 조건: 이 PC(Windows 11 Pro), 격리 PostgreSQL 클러스터(127.0.0.1:55432), `scripts/test-postgres.ps1`.

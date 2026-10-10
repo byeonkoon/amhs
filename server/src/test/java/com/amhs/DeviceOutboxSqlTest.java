@@ -174,7 +174,8 @@ class DeviceOutboxSqlTest {
   assertThat(published.delivered()).isZero();
   var command=reload(id,cmd);
   assertThat(command.status()).isEqualTo(CommandStatus.FAILED);
-  assertThat(command.lastError()).isEqualTo("ADAPTER_NOT_IMPLEMENTED");
+  // The adapter is there now; this vehicle is simply not wired to a link, which is still nothing sent.
+  assertThat(command.lastError()).isEqualTo("ADAPTER_NOT_CONFIGURED");
   assertThat(command.status().retryable()).isTrue();
  }
 

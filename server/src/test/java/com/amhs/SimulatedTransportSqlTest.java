@@ -215,7 +215,7 @@ class SimulatedTransportSqlTest {
   assertThat(pass.assigned()).contains(id);
   assertThat(pass.published().notDelivered()).isPositive();
   assertThat(jdbc.queryForObject("SELECT last_error FROM integration.command_outbox WHERE order_id=? ORDER BY id LIMIT 1",
-   String.class,id)).isEqualTo("ADAPTER_NOT_IMPLEMENTED");
+   String.class,id)).isEqualTo("ADAPTER_NOT_CONFIGURED");
  }
 
  /**

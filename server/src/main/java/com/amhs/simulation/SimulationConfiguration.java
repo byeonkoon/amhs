@@ -14,6 +14,7 @@ import com.amhs.transport.TransportOrders;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -41,13 +42,17 @@ class SimulationConfiguration {
  /**
   * Routes each command by its site's run mode. In SIMULATION it goes to the simulated vehicle, and
   * a vehicle not simulated is reported as not delivered. In OPERATION it goes to the device
-  * adapters; none is implemented yet, so nothing leaves and the command stays retryable.
+  * adapter, which answers for the vehicles configuration has put on a link and says
+  * ADAPTER_NOT_CONFIGURED for the rest.
+  *
+  * <p>The routing lives here because this is what makes a site simulated at all; the adapter is
+  * taken as a plain dependency, so nothing in the simulator knows what it talks to.
   */
  @Bean @Primary
- DeviceChannel runModeDeviceChannel(SimulatedVehicles vehicles,OperationOptionConfiguration options){
+ DeviceChannel runModeDeviceChannel(SimulatedVehicles vehicles,OperationOptionConfiguration options,
+                                    @Qualifier("jsonLineVehicleLinks") DeviceChannel devices){
   return (DeviceCommand command)->{
-   if(!options.get(command.siteId()).settings().simulated())
-    return DeviceChannel.Verdict.notDelivered("ADAPTER_NOT_IMPLEMENTED");
+   if(!options.get(command.siteId()).settings().simulated()) return devices.send(command);
    return vehicles.receive(command)
     ?DeviceChannel.Verdict.delivered()
     :DeviceChannel.Verdict.notDelivered("NOT_A_SIMULATED_VEHICLE");

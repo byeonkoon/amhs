@@ -18,6 +18,15 @@ public class CommunicationConfiguration {
  private void validate(long site,long id,CommunicationSettings s){s.validate();vehicles.get(site,s.vehicleId());
  var c=connections.get(site,s.connectionProfileId()).settings();var p=protocols.get(site,s.protocolProfileId()).settings();
  ConfigurationException.require(("MQTT".equals(c.commType()))==("VDA5050".equals(p.protoType())),"UNSUPPORTED_PROTOCOL_COMBINATION");
+ // In use means there is something to put it in use on: the link must be one this build can open,
+ // switched on itself, and the protocol profile must name an adapter that exists. Otherwise the
+ // row would say a vehicle is connected while every command to it goes nowhere.
+ if(s.enabled()){
+  // What we cannot speak at all is said first: it is the stronger answer, and the one that does not
+  // change when somebody switches the link on.
+  ConfigurationException.require(VehicleAdapters.KNOWN.contains(p.adapterKey()),"ADAPTER_NOT_IMPLEMENTED");
+  ConfigurationException.require(c.enabled()&&"TCP".equals(c.commType())&&"CLIENT".equals(c.role()),"CONNECTION_NOT_IN_USE");
+ }
  if("VDA5050".equals(p.protoType()))ConfigurationException.require(s.serialNumber()!=null&&s.interfaceName()!=null,"VDA_IDENTITY_REQUIRED");
  else ConfigurationException.require(s.serialNumber()==null&&s.interfaceName()==null,"VDA_IDENTITY_NOT_APPLICABLE");}
  @Transactional
