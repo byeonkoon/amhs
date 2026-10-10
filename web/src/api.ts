@@ -784,8 +784,38 @@ export function explainDecision(decision: string): string {
     APPROACH_ROUTE_START_UNKNOWN: '차량 위치를 몰라 인수 지점까지 경로를 낼 수 없습니다.',
     APPROACH_ROUTE_NO_PATH: '모든 차량이 인수 지점에 도달할 수 없습니다.',
     DELIVERY_ROUTE_NO_PATH: '인수 지점에서 목적지까지 경로가 없습니다.',
+    NO_REACHABLE_VEHICLE: '인수 지점에 닿을 수 있는 차량이 없습니다. 차량마다 막히는 이유가 서로 달라 하나로 말할 수 없습니다.',
+    PORT_NOT_FOUND: '출발 또는 목적 포트를 지금 쓰는 지도에서 찾을 수 없습니다.',
+    PORT_TYPE_MISMATCH: '출발 포트와 목적 포트에 닿는 차량 종류가 다릅니다(OHT·AGV).',
+    SAME_PORT: '출발 포트와 목적 포트가 같습니다.',
+    EQUIPMENT_DISABLED: '설비가 사용 중지 상태입니다.',
+    EQUIPMENT_CALL_DISABLED: '설비가 호출을 받지 않는 상태입니다.',
+    ORDER_NOT_QUEUED: '이미 배차됐거나 끝난 작업이라 배차 대상이 아닙니다.',
+    ASSIGNMENT_CONFLICT: '같은 차량이나 같은 작업에 다른 배차가 이미 있어 거절됐습니다. 다음 실행에서 다시 시도합니다.',
+    NO_ACTIVE_MAP: '사용 중인 지도가 없습니다. 지도 버전을 활성화해야 합니다.',
+    ORDER_NOT_FOUND: '작업을 찾을 수 없습니다.',
+    RESTART_CHECK_PENDING: '재시작 대조를 기다리는 중입니다. 운전 현황 화면에서 대조를 확인해야 진행합니다.',
+    CARRIER_IN_DISPUTE: '화물 위치 보고가 서로 어긋나 어디에 있는지 알 수 없습니다. 사람이 위치를 확정하기 전까지 이 작업은 움직이지 않습니다.',
   };
   if (map[decision]) return map[decision];
+  // A route that could not be laid says which leg it was and what stopped it, so a reason the
+  // planner learns to give later is still read as a sentence rather than printed as its code.
+  const leg: Record<string, string> = {
+    APPROACH_ROUTE_: '차량이 인수 지점까지 갈 경로를 낼 수 없습니다',
+    DELIVERY_ROUTE_: '인수 지점에서 목적지까지 갈 경로를 낼 수 없습니다',
+  };
+  const blocked: Record<string, string> = {
+    START_UNKNOWN: '출발 노드를 지도에서 찾지 못했습니다',
+    GOAL_UNKNOWN: '도착 노드를 지도에서 찾지 못했습니다',
+    START_BLOCKED: '출발 노드가 사용 중지 상태입니다',
+    GOAL_BLOCKED: '도착 노드가 사용 중지 상태입니다',
+    NO_PATH: '이어진 길이 없습니다',
+  };
+  for (const [prefix, what] of Object.entries(leg))
+    if (decision.startsWith(prefix)) {
+      const rest = decision.slice(prefix.length);
+      return `${what} — ${blocked[rest] ?? rest}.`;
+    }
   // Reasons that carry the vehicle's reported state after a fixed prefix.
   const status: Record<string, string> = {
     ERROR: '에러', PAUSED: '일시정지', CHARGING: '충전', LOADING: '적재', UNLOADING: '하역', RESET: '리셋',
