@@ -49,6 +49,8 @@
 
 **구현 완료 · 차량 통신**
 
+- 차량 MQTT 링크: 브로커 연결 하나로 여러 차량을 싣고, 토픽과 본문은 매핑 문서가 정합니다. QoS 1 발행에 대한 브로커 확인까지가 전달이며 차량의 수행 완료가 아닙니다. VDA5050 3.0 예제 문서를 함께 둡니다([매핑 파일](mapping-file.md)).
+- 차량 메시지 매핑: 제조사마다 다른 이름과 모양을 **코드가 아니라 문서**로 번역합니다. 수식도 스크립트도 없으며, 표에 없는 값은 통과하지 않고, 이 관제가 아는 보고 항목만 만들 수 있습니다.
 - 차량 TCP 링크(`JSON_LINE_V1`): 연결 프로파일당 TCP 클라이언트 연결 하나, 한 줄에 JSON 객체 하나. 라인 앞단의 제어기·게이트웨이가 차량 고유 프로토콜로 번역하는 것을 전제로 한 [자체 계약](vehicle-tcp-contract.md)입니다.
 - 송신 판정을 세 가지로 구분합니다. 쓰지 못함(재전송 가능), 수신 확인됨, 썼으나 응답 없음(재전송 금지). 결과 불명은 재시작 대조에서 운전자가 닫습니다.
 - 차량 보고를 `source=DEVICE`로 기록해 시뮬레이터 보고와 구분합니다. 모르는 모드·상태는 아는 값으로 바꾸지 않고 보고를 버린 뒤 남깁니다.
@@ -89,10 +91,10 @@ AMHS의 Equipment Adapter는 OPC UA Client, 외부 Equipment Gateway는 OPC UA S
 
 ## 후속 범위
 
-- 차량이 접속해 오는 TCP 서버 구성, MQTT 브로커와 VDA5050 매핑, PC·PLC 고유 프로토콜의 직접 매핑.
+- 차량이 접속해 오는 TCP 서버 구성, PC·PLC 슬롯 기반 매핑 대상, 매핑 문서의 업로드·보관·감사.
 - 실장비 Vehicle Adapter와 Equipment Gateway 연결, inbound 응답 및 장비별 계약 검증.
 - 상위 제조·물류 시스템별 외부 연계와 Mock 기반 계약 시험.
 - 통신 지연·단절·결과 불명 상황의 Fault Injection 및 부하 검증 확대.
 - 실제 장비와 현장 조건에서의 통합 시나리오 검증.
 
-[공개 설계 개요](portfolio-amhs-design.md) · [검증 시나리오](portfolio-amhs-validation.md) · [설비 OPC UA 계약](equipment-opcua-contract.md) · [차량 TCP 계약](vehicle-tcp-contract.md)
+[공개 설계 개요](portfolio-amhs-design.md) · [검증 시나리오](portfolio-amhs-validation.md) · [설비 OPC UA 계약](equipment-opcua-contract.md) · [차량 TCP 계약](vehicle-tcp-contract.md) · [매핑 파일](mapping-file.md)

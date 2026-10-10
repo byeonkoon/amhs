@@ -13,6 +13,11 @@
 <dependency><groupId>org.flywaydb</groupId><artifactId>flyway-core</artifactId></dependency>
 <dependency><groupId>org.flywaydb</groupId><artifactId>flyway-database-postgresql</artifactId></dependency>
 <dependency><groupId>org.postgresql</groupId><artifactId>postgresql</artifactId><scope>runtime</scope></dependency>
+<!-- MQTT 3.1.1 client for the VDA5050-style vehicle link. Paho rather than a Spring Integration
+     starter: one connection per broker profile, opened and closed by this system's own rules. -->
+<dependency><groupId>org.eclipse.paho</groupId><artifactId>org.eclipse.paho.client.mqttv3</artifactId><version>1.2.5</version></dependency>
+<!-- An MQTT broker inside the test run, so the link is proved against a real one rather than a mock. -->
+<dependency><groupId>io.moquette</groupId><artifactId>moquette-broker</artifactId><version>0.17</version><scope>test</scope></dependency>
 <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-test</artifactId><scope>test</scope></dependency>
 <dependency><groupId>org.springframework.modulith</groupId><artifactId>spring-modulith-starter-test</artifactId><scope>test</scope></dependency>
 </dependencies>

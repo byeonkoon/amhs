@@ -8,7 +8,8 @@ import org.springframework.transaction.annotation.Transactional;
 public class CommunicationConfiguration {
  private final JdbcTemplate jdbc; private final ConfigurationLock guard;
  private final com.amhs.fleet.VehicleConfiguration vehicles; private final ConnectionConfiguration connections; private final ProtocolConfiguration protocols;
- public CommunicationConfiguration(JdbcTemplate jdbc,ConfigurationLock guard,com.amhs.fleet.VehicleConfiguration vehicles,ConnectionConfiguration connections,ProtocolConfiguration protocols){this.jdbc=jdbc;this.guard=guard;this.vehicles=vehicles;this.connections=connections;this.protocols=protocols;}
+ private final com.amhs.integration.mapping.MappingLibrary mappings;
+ public CommunicationConfiguration(JdbcTemplate jdbc,ConfigurationLock guard,com.amhs.fleet.VehicleConfiguration vehicles,ConnectionConfiguration connections,ProtocolConfiguration protocols,com.amhs.integration.mapping.MappingLibrary mappings){this.jdbc=jdbc;this.guard=guard;this.vehicles=vehicles;this.connections=connections;this.protocols=protocols;this.mappings=mappings;}
  private final RowMapper<ConfigurationRecord<CommunicationSettings>> mapper=(r,n)->new ConfigurationRecord<>(r.getLong("id"),r.getLong("version"),new CommunicationSettings(r.getLong("vehicle_id"),r.getLong("connection_profile_id"),r.getLong("protocol_profile_id"),r.getString("manufacturer"),r.getString("external_vehicle_id"),r.getString("serial_number"),r.getString("interface_name"),r.getBoolean("enabled")));
  public List<ConfigurationRecord<CommunicationSettings>> list(long site){guard.requireSite(site);return jdbc.query("SELECT * FROM integration.vehicle_communication WHERE site_id=? ORDER BY id",mapper,site);}
  public ConfigurationRecord<CommunicationSettings> get(long site,long id){
@@ -23,9 +24,13 @@ public class CommunicationConfiguration {
  // row would say a vehicle is connected while every command to it goes nowhere.
  if(s.enabled()){
   // What we cannot speak at all is said first: it is the stronger answer, and the one that does not
-  // change when somebody switches the link on.
-  ConfigurationException.require(VehicleAdapters.KNOWN.contains(p.adapterKey()),"ADAPTER_NOT_IMPLEMENTED");
-  ConfigurationException.require(c.enabled()&&"TCP".equals(c.commType())&&"CLIENT".equals(c.role()),"CONNECTION_NOT_IN_USE");
+  // change when somebody switches the link on. An adapter key is either one built in or the name of
+  // a mapping document this server has read -- the second is how a new vehicle family arrives
+  // without a release.
+  ConfigurationException.require(VehicleAdapters.KNOWN.contains(p.adapterKey())||mappings.has(p.adapterKey()),
+   "ADAPTER_NOT_IMPLEMENTED");
+  ConfigurationException.require(c.enabled()&&(("TCP".equals(c.commType())&&"CLIENT".equals(c.role()))
+   ||("MQTT".equals(c.commType())&&"BROKER".equals(c.role()))),"CONNECTION_NOT_IN_USE");
  }
  if("VDA5050".equals(p.protoType()))ConfigurationException.require(s.serialNumber()!=null&&s.interfaceName()!=null,"VDA_IDENTITY_REQUIRED");
  else ConfigurationException.require(s.serialNumber()==null&&s.interfaceName()==null,"VDA_IDENTITY_NOT_APPLICABLE");}

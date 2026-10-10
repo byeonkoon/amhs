@@ -25,10 +25,7 @@ import static org.assertj.core.api.Assertions.*;
  * same as any other. A socket in this test stands in for the controller in front of a line.
  */
 @SpringBootTest(properties={
- "spring.datasource.url=${AMHS_TEST_DB_URL:jdbc:postgresql://127.0.0.1:5432/amhs_test}",
- "amhs.device.tcp.ack-timeout-ms=400",
- "amhs.device.tcp.connect-timeout-ms=400",
- "amhs.device.tcp.retry-after-ms=0"})
+ "spring.datasource.url=${AMHS_TEST_DB_URL:jdbc:postgresql://127.0.0.1:5432/amhs_test}"})
 @EnabledIfEnvironmentVariable(named="AMHS_SQL_TEST",matches="true")
 class VehicleLinkSqlTest {
  @Autowired @Qualifier("jsonLineVehicleLinks") DeviceChannel link;
@@ -72,6 +69,7 @@ class VehicleLinkSqlTest {
   jdbc.update("DELETE FROM integration.connection_profile WHERE id=?",PROFILE);
   jdbc.update("DELETE FROM integration.protocol_profile WHERE id=?",PROTOCOL);
   jdbc.update("UPDATE integration.command_outbox SET status='WITHDRAWN' WHERE command_id LIKE 'link-test-%'");
+  jdbc.update("DELETE FROM fleet.vehicle_state WHERE site_id=? AND vehicle_id=?",SITE,AGV1);
  }
 
  /** A vehicle wired to a controller on this port, the way configuration would leave it. */

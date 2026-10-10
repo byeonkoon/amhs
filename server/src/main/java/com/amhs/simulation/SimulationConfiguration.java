@@ -50,7 +50,7 @@ class SimulationConfiguration {
   */
  @Bean @Primary
  DeviceChannel runModeDeviceChannel(SimulatedVehicles vehicles,OperationOptionConfiguration options,
-                                    @Qualifier("jsonLineVehicleLinks") DeviceChannel devices){
+                                    @Qualifier("vehicleChannels") DeviceChannel devices){
   return (DeviceCommand command)->{
    if(!options.get(command.siteId()).settings().simulated()) return devices.send(command);
    return vehicles.receive(command)

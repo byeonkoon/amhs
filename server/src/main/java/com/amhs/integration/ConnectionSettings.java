@@ -8,9 +8,9 @@ public record ConnectionSettings(String commType,String role,String host,int por
   ConfigurationException.require(port>=1&&port<=65535,"INVALID_PORT");
   ConfigurationException.require(("TCP".equals(commType)&&Set.of("CLIENT","SERVER").contains(role==null?"":role))
     ||("MQTT".equals(commType)&&"BROKER".equals(role)),"INVALID_CONNECTION_ROLE");
-  // Only the kind of link this build can actually open may be switched on. Dialling out over TCP
-  // is implemented; listening for a vehicle that dials in, and an MQTT broker, are not, and a
-  // profile that claims to be in use when nothing can open it is a site that looks connected.
-  ConfigurationException.require(!enabled||("TCP".equals(commType)&&"CLIENT".equals(role)),"ADAPTER_NOT_IMPLEMENTED");
+  // Only the kind of link this build can actually open may be switched on: dialling out over TCP,
+  // and an MQTT broker. Listening for a vehicle that dials in is not implemented, and a profile
+  // that claims to be in use when nothing can open it is a site that looks connected.
+  ConfigurationException.require(!enabled||("TCP".equals(commType)&&"CLIENT".equals(role))||("MQTT".equals(commType)&&"BROKER".equals(role)),"ADAPTER_NOT_IMPLEMENTED");
  }
 }
