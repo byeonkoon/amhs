@@ -1,0 +1,70 @@
+{
+  "mapping": "VDA5050-V3",
+  "adapter": "MQTT_JSON_V1",
+  "version": 1,
+  "notes": "VDA5050 3.0 최소 반송 계약. 토픽은 {prefix}/{version}/{manufacturer}/{serial}/{channel} 형태이며, prefix·version·manufacturer·serial은 차량의 VDA 프로파일과 통신 설정에서 채워집니다.",
+
+  "identity": { "fromTopic": "serial" },
+
+  "outbound": {
+    "MOVE": {
+      "topic": "{prefix}/{version}/{manufacturer}/{serial}/order",
+      "body": {
+        "headerId":      { "from": "command.sequence" },
+        "timestamp":     { "from": "command.sentAt" },
+        "version":       "3.0.0",
+        "manufacturer":  { "from": "topic.manufacturer" },
+        "serialNumber":  { "from": "command.externalId" },
+        "orderId":       { "from": "command.commandId" },
+        "orderUpdateId": { "from": "command.sequence", "default": 0 },
+        "nodes": {
+          "from": "payload.authorizedNodeIds",
+          "each": {
+            "nodeId":      { "from": "item", "op": "text" },
+            "sequenceId":  { "from": "index" },
+            "released":    true,
+            "actions":     []
+          }
+        },
+        "edges": []
+      }
+    },
+
+    "STOP": {
+      "topic": "{prefix}/{version}/{manufacturer}/{serial}/instantActions",
+      "body": {
+        "headerId":     { "from": "command.sequence" },
+        "timestamp":    { "from": "command.sentAt" },
+        "version":      "3.0.0",
+        "manufacturer": { "from": "topic.manufacturer" },
+        "serialNumber": { "from": "command.externalId" },
+        "actions": [
+          { "actionType": "stopPause", "actionId": "stop", "blockingType": "HARD" }
+        ]
+      }
+    }
+  },
+
+  "inbound": [
+    {
+      "when": { "topic": "{prefix}/{version}/{manufacturer}/{serial}/state" },
+      "report": {
+        "nodeCode":   { "from": "body.lastNodeId" },
+        "mode":       { "from": "body.operatingMode",
+                        "values": { "AUTOMATIC": "REMOTE", "SEMIAUTOMATIC": "SEMI_AUTO", "MANUAL": "MANUAL",
+                                    "SERVICE": "MANUAL", "TEACHIN": "MANUAL" } },
+        "status":     { "from": "body.driving",
+                        "values": { "true": "MOVING", "false": "IDLE" } },
+        "carrier":    { "from": "body.loads", "op": "notEmpty" },
+        "batteryPct": { "from": "body.batteryState.batteryCharge" }
+      }
+    },
+    {
+      "when": { "topic": "{prefix}/{version}/{manufacturer}/{serial}/connection" },
+      "report": {
+        "online": { "from": "body.connectionState",
+                    "values": { "ONLINE": true, "OFFLINE": false, "CONNECTIONBROKEN": false } }
+      }
+    }
+  ]
+}
