@@ -66,6 +66,7 @@ class MqttVehicleLinks implements DeviceChannel {
   // Configuration let the vehicle be switched on against a document that is now unreadable or gone.
   // Nothing was written, so the command waits rather than being counted as lost.
   if(mapping==null) return Verdict.notDelivered("MAPPING_NOT_IN_USE");
+  if(!"MQTT_JSON_V1".equals(mapping.adapter())) return Verdict.notDelivered("ADAPTER_NOT_CONFIGURED");
   var message=mapper.toMessage(mapping,view(command,wired)).orElse(null);
   // A command the mapping does not describe is not this vehicle family's to receive. Said rather
   // than dropped: an operator can see that the document is missing a command the controller sends.

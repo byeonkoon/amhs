@@ -116,6 +116,91 @@
 }
 ```
 
+## 자리로 찾는 어댑터 — `layout`
+
+JSON은 이름으로 찾지만 **PC 프레임과 PLC 레지스터는 자리로 찾습니다.** 그래서 "어떤 이름이 어디에 있고
+무슨 타입인가"를 `layout`에 한 번 적고, `outbound`/`inbound`는 **이름으로만** 값을 채웁니다. 차량사가
+오프셋을 바꾸면 `layout`만 고칩니다.
+
+```json
+"layout": {
+  "command":  { "at": 1,  "type": "u8" },
+  "vehicle":  { "at": 4,  "type": "ascii", "length": 8 },
+  "nodes":    { "at": 13, "type": "u16", "repeat": 6 },
+  "battery":  { "at": 28, "type": "u16", "scale": 0.1 },
+
+  "sequence": { "word": 1, "type": "u16" },
+  "request":  { "word": 10, "bit": 0 },
+  "nodeNow":  { "word": 3, "type": "u16", "area": "read" }
+}
+```
+
+| 키 | 뜻 |
+|---|---|
+| `at` | 바이트 오프셋 |
+| `word` | 16비트 워드 번호. **워드 n은 바이트 2n**이라, 프레임과 레지스터를 한 어휘로 적습니다 |
+| `type` | `u8` `u16` `u32` `i8` `i16` `i32` `bcd` `ascii` `bit` |
+| `bit` | 비트 번호. `at`과 쓰면 **그 바이트의 비트**, `word`와 쓰면 **그 워드의 비트**(0이 최하위, 바이트 순서를 따라갑니다) |
+| `length` | `ascii`·`bcd`의 바이트 수 |
+| `repeat` | 같은 타입이 연속으로 몇 개 (목록이 됩니다) |
+| `scale` | 정수를 실수로 (`615` × `0.1` = `61.5`) |
+| `area` | PLC에서 `write`(기본) 블록인지 `read` 블록인지 |
+
+**값이 자리에 안 들어가면 보내지 않고 거절합니다.** 잘린 노드 번호는 다른 노드이고, 1바이트 모자란
+프레임은 "거의 맞는" 프레임이 아닙니다.
+
+상수는 문서가 쓰는 대로 **16진수 문자열**로 적어도 됩니다 — `"command": "0x10"`.
+
+## PC 프레임 (`PC_FRAME_V1`)
+
+```json
+"frame": {
+  "size": 32, "start": "0x02", "end": "0x03", "endian": "big",
+  "checksum": { "type": "xor", "at": 30, "over": [1, 29] }
+}
+```
+
+- 고정 길이 프레임을 **끝까지 다 읽고 나서** 해석합니다. 중간까지 읽은 프레임은 프레임이 아닙니다.
+- **검사 값이 맞지 않으면 아예 읽지 않습니다.** 어차피 맞겠지 하고 읽는 것이 손상된 노드 번호로 차량을
+  보내는 길입니다.
+- 응답 짝은 명령 id가 아니라 **시퀀스**로 맞춥니다(바이트 프레임에 id를 넣을 자리가 없으므로). 아웃박스의
+  시도 번호를 시퀀스로 씁니다 — 이미 시도를 구분하는 값이기 때문입니다.
+- `inbound`의 `ack`에 `sequence`를 적으면 그 프레임이 수신 확인입니다.
+
+## PLC 레지스터 (`PLC_WORD_V1`, Modbus TCP)
+
+```json
+"area": { "write": "40100", "read": "40200", "words": 16, "endian": "big", "poll-ms": 300 },
+"handshake": {
+  "write": ["command", "sequence", "nodes"],
+  "then-set": "request",
+  "accepted-bit": "accepted",
+  "echo-slot": "seqEcho",
+  "clear": "request",
+  "timeout-ms": 2000
+}
+```
+
+주소는 문서가 쓰는 대로 적습니다 — `40100`은 4x 관례의 100번째 보유 레지스터이고 와이어에서는 99입니다.
+
+**순서가 안전의 전부입니다.**
+
+1. 값을 먼저 씁니다 (`request` 비트는 내려둔 채로)
+2. 그다음 `request` 비트를 세웁니다
+3. 컨트롤러가 `accepted` 비트를 세우고 **`seqEcho`로 어느 명령을 받았는지 되돌려주면** 전달 성공
+4. `request` 비트를 내립니다
+
+2번이 1번 뒤인 이유: 중간에 컨트롤러가 읽어도 **아직 요청하지 않은 명령**을 볼 뿐입니다. 반대 순서였다면
+절반만 쓰인 명령을 집어갈 수 있습니다.
+
+3번의 에코가 없으면 **지금 수락인지 직전 명령의 수락인지 구분할 수 없습니다.** 그래서 필수입니다.
+
+**수락이 없으면 `IN_DOUBT`입니다.** 값은 이미 레지스터에 남아 있고 컨트롤러가 나중에 집어갈 수도
+있습니다. 이 시스템이 스스로 다시 쓰지 않으며, 재시작 대조에서 사람이 닫습니다.
+
+**읽기는 폴링입니다.** 아무것도 오지 않고 블록을 계속 읽는 것이 전부이므로, **`poll-ms`가 위치 보고
+지연 기준보다 충분히 작아야** 합니다. 그렇지 않으면 매 주기마다 모든 차량이 잠시 "보고 지연"이 됩니다.
+
 ## 토픽 패턴
 
 `{이름}`은 한 레벨을 잡아 `topic.이름`으로 쓸 수 있게 하고, MQTT의 `+`(한 레벨)·`#`(나머지)도 그대로
@@ -160,8 +245,11 @@ inbound[0].speed: 이 관제가 아는 보고 항목이 아닙니다 [...]
 
 ## 예제
 
-[sample-mappings/vda5050-v3.json](sample-mappings/vda5050-v3.json) — VDA5050 3.0 최소 반송 계약
-(order·instantActions 발행, state·connection 수신).
+- [sample-mappings/vda5050-v3.json](sample-mappings/vda5050-v3.json) — VDA5050 3.0 최소 반송 계약(order·instantActions 발행, state·connection 수신)
+- [sample-mappings/pc-frame-example.json](sample-mappings/pc-frame-example.json) — 32바이트 고정 프레임, STX/ETX, XOR 체크섬
+- [sample-mappings/plc-word-example.json](sample-mappings/plc-word-example.json) — Modbus TCP 보유 레지스터 16워드, 요청/수락 핸드셰이크
+
+셋 다 **가상의 값**입니다. 현장 값은 복사해서 `config/mappings` 아래에서 고칩니다.
 
 ## 문서를 어디에 두는가
 
@@ -197,6 +285,7 @@ config/mappings/vda5050-v3.json   →  "mapping": "VDA5050-V3"
 ## 아직 아닌 것
 
 - 매핑 문서를 올리고 보관하는 저장소·화면(지금은 디렉터리의 파일). 지도 JSON과 같은 방식으로 올리도록 맞출 예정입니다.
-- PLC 슬롯·오프셋을 위한 `slot` 대상(지금 대상은 JSON 경로뿐).
 - 이적재 완료 같은 **작업 증거**의 매핑. 작업 상태를 바꾸는 판단은 링크가 아니라 작업 원장의 몫이므로
   별도 계약(`POST /transport-orders/{id}/transitions`)으로 둡니다.
+- Modbus 외의 PLC 드라이버(MC 프로토콜 등), 코일·입력 레지스터(지금은 보유 레지스터 읽기·쓰기만).
+- 실장비·실제 컨트롤러 검증. 세 어댑터 모두 시험용 서버를 상대로만 확인했습니다.

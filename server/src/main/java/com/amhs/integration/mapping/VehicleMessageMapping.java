@@ -74,7 +74,8 @@ public record VehicleMessageMapping(String code,String adapter,int version,Strin
   * protocol and a register block are described the same way. {@code repeat} is a run of the same
   * type; {@code scale} turns the integer on the wire into the number it stands for.
   */
- public record Slot(String name,int at,String type,Integer bit,int length,int repeat,double scale,String area){}
+ public record Slot(String name,int at,String type,Integer bit,int length,int repeat,double scale,String area,
+                    boolean inWord){}
 
  /**
   * One value.
@@ -268,7 +269,7 @@ public record VehicleMessageMapping(String code,String adapter,int version,Strin
    out.put(e.getKey(),new Slot(e.getKey(),at,slot.path("type").asText(slot.has("bit")?"bit":"u16"),
     slot.has("bit")?slot.get("bit").asInt():null,slot.path("length").asInt(0),
     Math.max(1,slot.path("repeat").asInt(1)),slot.path("scale").asDouble(1.0),
-    slot.path("area").asText("write")));
+    slot.path("area").asText("write"),slot.has("word")));
   });
   return Collections.unmodifiableMap(out);
  }

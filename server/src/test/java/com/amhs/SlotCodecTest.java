@@ -18,11 +18,11 @@ class SlotCodecTest {
  private final ObjectMapper json=new ObjectMapper();
  private final SlotCodec codec=new SlotCodec(json);
 
- private static Slot slot(String name,int at,String type){ return new Slot(name,at,type,null,0,1,1.0,"write"); }
+ private static Slot slot(String name,int at,String type){ return new Slot(name,at,type,null,0,1,1.0,"write",false); }
  private static Slot slot(String name,int at,String type,int length,int repeat,double scale){
-  return new Slot(name,at,type,null,length,repeat,scale,"write");
+  return new Slot(name,at,type,null,length,repeat,scale,"write",false);
  }
- private static Slot bit(String name,int at,int bit){ return new Slot(name,at,"bit",bit,0,1,1.0,"write"); }
+ private static Slot bit(String name,int at,int bit){ return new Slot(name,at,"bit",bit,0,1,1.0,"write",false); }
 
  @Test void wholeNumbersGoOutAndComeBackTheSame(){
   var frame=new byte[16];

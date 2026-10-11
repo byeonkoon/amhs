@@ -46,7 +46,10 @@ public final class SlotCodec {
   if(at<0||at+width>buffer.length) return null;
   var factory=json.getNodeFactory();
   return switch(slot.type()){
-   case "bit" -> factory.booleanNode((buffer[at]>>slot.bit()&1)==1);
+   case "bit" -> {
+    int where=bitByte(slot,at,littleEndian);
+    yield factory.booleanNode((buffer[where]>>(slot.bit()&7)&1)==1);
+   }
    case "ascii" -> factory.textNode(new String(buffer,at,slot.length(),StandardCharsets.US_ASCII)
     .replace('\0',' ').trim());
    case "bcd" -> {
@@ -88,8 +91,8 @@ public final class SlotCodec {
    throw new SlotRejected("slot "+slot.name()+": 프레임 길이 "+buffer.length+" 밖(오프셋 "+at+")입니다");
   switch(slot.type()){
    case "bit" -> {
-    int mask=1<<slot.bit();
-    buffer[at]=(byte)(value.asBoolean()?buffer[at]|mask:buffer[at]&~mask);
+    int where=bitByte(slot,at,littleEndian), mask=1<<(slot.bit()&7);
+    buffer[where]=(byte)(value.asBoolean()?buffer[where]|mask:buffer[where]&~mask);
    }
    case "ascii" -> {
     var text=value.asText();
@@ -133,9 +136,23 @@ public final class SlotCodec {
   return value&0xFF;
  }
 
+ /**
+  * Which byte a bit lives in.
+  *
+  * <p>A bit of a byte frame is a bit of that byte. A bit of a PLC word is numbered from the least
+  * significant end of the sixteen, and which byte that lands in depends on the order the words are
+  * stored in -- which is the one place byte order reaches a value that is not a number.
+  */
+ private static int bitByte(Slot slot,int at,boolean littleEndian){
+  if(!slot.inWord()) return at;
+  boolean low=slot.bit()<8;
+  return at+(littleEndian?(low?0:1):(low?1:0));
+ }
+
  public static int width(Slot slot){
   return switch(slot.type()){
-   case "u8","i8","bit" -> 1;
+   case "u8","i8" -> 1;
+   case "bit" -> slot.inWord()?2:1;
    case "u16","i16" -> 2;
    case "u32","i32" -> 4;
    case "ascii","bcd" -> slot.length();

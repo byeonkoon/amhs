@@ -17,7 +17,7 @@ import java.util.List;
 @Component("vehicleChannels")
 class VehicleChannels implements DeviceChannel {
  private final List<DeviceChannel> adapters;
- VehicleChannels(JsonLineVehicleLinks tcp,MqttVehicleLinks mqtt){ this.adapters=List.of(tcp,mqtt); }
+ VehicleChannels(JsonLineVehicleLinks tcp,MqttVehicleLinks mqtt,PlcVehicleLinks plc){ this.adapters=List.of(tcp,mqtt,plc); }
 
  @Override public Verdict send(DeviceCommand command){
   Verdict last=Verdict.notDelivered("ADAPTER_NOT_CONFIGURED");

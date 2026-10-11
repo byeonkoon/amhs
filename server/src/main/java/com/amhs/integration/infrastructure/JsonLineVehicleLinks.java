@@ -3,6 +3,10 @@ import com.amhs.fleet.FleetState;
 import com.amhs.fleet.VehicleReport;
 import com.amhs.integration.DeviceChannel;
 import com.amhs.integration.DeviceCommand;
+import com.amhs.integration.mapping.FrameMapper;
+import com.amhs.integration.mapping.MappingLibrary;
+import com.amhs.integration.mapping.MessageMapper;
+import com.amhs.integration.mapping.SlotCodec;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -50,41 +54,62 @@ import java.util.concurrent.locks.ReentrantLock;
  */
 @Component
 class JsonLineVehicleLinks implements DeviceChannel {
- private static final String ADAPTER_KEY=com.amhs.integration.VehicleAdapters.JSON_LINE_V1;
+ private static final String JSON=com.amhs.integration.VehicleAdapters.JSON_LINE_V1;
+ private static final String FRAME=com.amhs.integration.VehicleAdapters.PC_FRAME_V1;
  private static final Logger log=LoggerFactory.getLogger(JsonLineVehicleLinks.class);
  private static final int MAX_FRAME=64*1024;
 
- private final JdbcTemplate jdbc; private final FleetState fleet;
+ private final JdbcTemplate jdbc; private final FleetState fleet; private final MappingLibrary mappings;
  private final ObjectMapper json=new ObjectMapper();
+ private final FrameMapper frames=new FrameMapper(json,new MessageMapper(json),new SlotCodec(json));
  private final Map<Long,Link> links=new ConcurrentHashMap<>();
  private final int connectTimeoutMs,ackTimeoutMs,retryAfterMs;
 
- JsonLineVehicleLinks(JdbcTemplate jdbc,FleetState fleet,
+ JsonLineVehicleLinks(JdbcTemplate jdbc,FleetState fleet,MappingLibrary mappings,
                       @Value("${amhs.device.tcp.connect-timeout-ms:2000}") int connectTimeoutMs,
                       @Value("${amhs.device.tcp.ack-timeout-ms:3000}") int ackTimeoutMs,
                       @Value("${amhs.device.tcp.retry-after-ms:1000}") int retryAfterMs){
-  this.jdbc=jdbc; this.fleet=fleet;
+  this.jdbc=jdbc; this.fleet=fleet; this.mappings=mappings;
   this.connectTimeoutMs=connectTimeoutMs; this.ackTimeoutMs=ackTimeoutMs; this.retryAfterMs=retryAfterMs;
  }
 
  /** One vehicle as the far side knows it, and where to reach it. */
- private record Target(long siteId,long profileId,String host,int port,String externalId){}
+ private record Target(long siteId,long profileId,String host,int port,String externalId,String adapterKey){
+  /** The document this vehicle is described by, where it is described by one. */
+  String mappingCode(){ return adapterKey; }
+ }
 
  @Override public Verdict send(DeviceCommand command){
   if(command.vehicleId()==null) return Verdict.notDelivered("COMMAND_NAMES_NO_VEHICLE");
   var target=targetOf(command.siteId(),command.vehicleId());
   // Not an error: a vehicle nobody has wired to this adapter is simply not ours to send to, and
   // saying so as "nothing left here" keeps the command repeatable once somebody does wire it.
-  if(target==null) return Verdict.notDelivered("ADAPTER_NOT_CONFIGURED");
+  if(target==null||dialect(target)==null) return Verdict.notDelivered("ADAPTER_NOT_CONFIGURED");
   // Kept by profile, but only while it is still the address that profile names: an operator who
   // repoints a controller has repointed it, and a link held open to where it used to be would send
   // commands to a machine nobody is talking about any more.
   var link=links.compute(target.profileId(),(id,open)->{
    if(open!=null&&open.reaches(target.host(),target.port())) return open;
    if(open!=null) open.close();
-   return new Link(target.host(),target.port());
+   var fresh=new Link(target.host(),target.port(),FRAME.equals(dialect(target)));
+   fresh.mappingCode=target.mappingCode();
+   return fresh;
   });
   return link.send(target,command);
+ }
+
+ /**
+  * Which of this adapter's two dialects the vehicle speaks, or null when it speaks neither.
+  *
+  * <p>JSON_LINE_V1 is built in and needs no document. Anything else is the name of a mapping
+  * document, and it is this adapter's only if that document says so -- the same key on a broker
+  * or a PLC belongs to another adapter, and answering for it would take the command away from the
+  * one that can actually send it.
+  */
+ private String dialect(Target target){
+  if(JSON.equals(target.adapterKey())) return JSON;
+  var mapping=mappings.byCode(target.adapterKey()).orElse(null);
+  return mapping!=null&&FRAME.equals(mapping.adapter())?FRAME:null;
  }
 
  /**
@@ -93,13 +118,13 @@ class JsonLineVehicleLinks implements DeviceChannel {
   * worse than a command delayed by one query.
   */
  private Target targetOf(long siteId,long vehicleId){
-  return jdbc.query("SELECT c.id,c.host,c.port,v.external_vehicle_id FROM integration.vehicle_communication v"
+  return jdbc.query("SELECT c.id,c.host,c.port,v.external_vehicle_id,p.adapter_key FROM integration.vehicle_communication v"
    +" JOIN integration.connection_profile c ON c.site_id=v.site_id AND c.id=v.connection_profile_id"
    +" JOIN integration.protocol_profile p ON p.site_id=v.site_id AND p.id=v.protocol_profile_id"
    +" WHERE v.site_id=? AND v.vehicle_id=? AND v.enabled AND c.enabled AND c.comm_type='TCP' AND c.role='CLIENT'"
-   +" AND p.adapter_key=?",
-   (r,n)->new Target(siteId,r.getLong(1),r.getString(2),r.getInt(3),r.getString(4)),
-   siteId,vehicleId,ADAPTER_KEY).stream().findFirst().orElse(null);
+   +"",
+   (r,n)->new Target(siteId,r.getLong(1),r.getString(2),r.getInt(3),r.getString(4),r.getString(5)),
+   siteId,vehicleId).stream().findFirst().orElse(null);
  }
 
  /** Which vehicle of this site the far side means by that identifier, or null. */
@@ -121,30 +146,48 @@ class JsonLineVehicleLinks implements DeviceChannel {
   * costs one attempt rather than one per command.
   */
  private final class Link {
-  private final String host; private final int port;
+  private final String host; private final int port; private final boolean framed; private volatile String mappingCode;
   private final ReentrantLock write=new ReentrantLock();
   private final Map<String,CompletableFuture<Void>> awaiting=new ConcurrentHashMap<>();
   private volatile Socket socket; private volatile OutputStream out; private volatile Thread reader;
   private volatile long nextAttemptAt;
 
-  Link(String host,int port){ this.host=host; this.port=port; }
+  Link(String host,int port,boolean framed){ this.host=host; this.port=port; this.framed=framed; }
   boolean reaches(String otherHost,int otherPort){ return host.equals(otherHost)&&port==otherPort; }
 
   Verdict send(Target target,DeviceCommand command){
-   var frame=json.createObjectNode();
-   frame.put("type","command"); frame.put("commandId",command.commandId()); frame.put("vehicle",target.externalId());
-   frame.put("command",command.commandType()); frame.put("sentAt",OffsetDateTime.now().toString());
-   // The payload is the decision's own shape; it is carried through rather than re-interpreted here,
-   // so an adapter that maps it to a vehicle's protocol has everything the decision had.
-   try{ frame.set("payload",json.readTree(command.payload()==null?"{}":command.payload())); }
-   catch(IOException e){ frame.put("payload",command.payload()); }
-   byte[] line;
-   try{ line=(json.writeValueAsString(frame)+"\n").getBytes(StandardCharsets.UTF_8); }
-   catch(IOException e){ return Verdict.notDelivered("PAYLOAD_NOT_WRITABLE"); }
+   byte[] line; String awaitKey=command.commandId();
+   if(framed){
+    // A byte protocol has no room for a command id, so what comes back is matched on the sequence
+    // the frame carried. The outbox's attempt number is that sequence: it is already the thing
+    // that tells one attempt from another.
+    var mapping=mappings.byCode(target.mappingCode()).orElse(null);
+    if(mapping==null) return Verdict.notDelivered("MAPPING_NOT_IN_USE");
+    try{
+     var built=frames.toFrame(mapping,view(target,command));
+     if(built.isEmpty()) return Verdict.notDelivered("COMMAND_NOT_IN_MAPPING");
+     line=built.get();
+    }catch(SlotCodec.SlotRejected e){
+     log.warn("command {} does not fit the frame: {}",command.commandId(),e.getMessage());
+     return Verdict.notDelivered("COMMAND_DOES_NOT_FIT");
+    }
+    awaitKey=String.valueOf(command.attempt());
+   }else{
+    var frame=json.createObjectNode();
+    frame.put("type","command"); frame.put("commandId",command.commandId()); frame.put("vehicle",target.externalId());
+    frame.put("command",command.commandType()); frame.put("sentAt",OffsetDateTime.now().toString());
+    // The payload is the decision's own shape; it is carried through rather than re-interpreted here,
+    // so an adapter that maps it to a vehicle's protocol has everything the decision had.
+    try{ frame.set("payload",json.readTree(command.payload()==null?"{}":command.payload())); }
+    catch(IOException e){ frame.put("payload",command.payload()); }
+    try{ line=(json.writeValueAsString(frame)+"\n").getBytes(StandardCharsets.UTF_8); }
+    catch(IOException e){ return Verdict.notDelivered("PAYLOAD_NOT_WRITABLE"); }
+   }
    if(line.length>MAX_FRAME) return Verdict.notDelivered("FRAME_TOO_LONG");
 
    var ack=new CompletableFuture<Void>();
-   awaiting.put(command.commandId(),ack);
+   final String waitingFor=awaitKey;
+   awaiting.put(waitingFor,ack);
    try{
     write.lock();
     try{
@@ -160,7 +203,17 @@ class JsonLineVehicleLinks implements DeviceChannel {
     catch(TimeoutException e){ return Verdict.inDoubt("ACK_TIMEOUT"); }
     catch(ExecutionException e){ return Verdict.inDoubt("LINK_LOST_AFTER_WRITE"); }
     catch(InterruptedException e){ Thread.currentThread().interrupt(); return Verdict.inDoubt("INTERRUPTED"); }
-   }finally{ awaiting.remove(command.commandId()); }
+   }finally{ awaiting.remove(waitingFor); }
+  }
+
+  /** The command as a mapping sees it. */
+  private MessageMapper.Command view(Target target,DeviceCommand command){
+   JsonNode payload;
+   try{ payload=json.readTree(command.payload()==null||command.payload().isBlank()?"{}":command.payload()); }
+   catch(IOException e){ payload=json.createObjectNode(); }
+   return new MessageMapper.Command(command.commandId(),command.commandType(),command.orderId(),
+    command.vehicleId()==null?0:command.vehicleId(),target.externalId(),command.attempt(),
+    OffsetDateTime.now().toString(),payload,java.util.Map.of());
   }
 
   /** Null when the link is open; otherwise why it is not, as a reason nothing was written. */
@@ -183,6 +236,7 @@ class JsonLineVehicleLinks implements DeviceChannel {
   }
 
   private void read(long siteId,long profileId,Socket s){
+   if(framed){ readFrames(siteId,profileId,s); return; }
    try(var in=new BufferedReader(new InputStreamReader(s.getInputStream(),StandardCharsets.UTF_8),MAX_FRAME)){
     String line;
     while((line=in.readLine())!=null){
@@ -192,6 +246,59 @@ class JsonLineVehicleLinks implements DeviceChannel {
     }
     drop("far side closed the link");
    }catch(IOException e){ drop("read failed: "+e.getMessage()); }
+  }
+
+  /**
+   * Frames of a fixed size, read whole or not at all.
+   *
+   * <p>A byte protocol has no way of saying "the rest follows", so a frame is read to its last
+   * byte before anything is made of it. A short read at the end of a link is not a short frame; it
+   * is the link ending, and the frame it was carrying is simply not there.
+   */
+  private void readFrames(long siteId,long profileId,Socket s){
+   var mapping=mappings.byCode(mappingCode).orElse(null);
+   int size=mapping==null||mapping.frame()==null||mapping.frame().size()==null?0:mapping.frame().size();
+   if(size<=0){ drop("the mapping does not say how long a frame is"); return; }
+   var buffer=new byte[size];
+   try(var in=new java.io.DataInputStream(s.getInputStream())){
+    while(true){
+     in.readFully(buffer);
+     try{
+      var decoded=frames.fromFrame(mapping,buffer.clone());
+      decoded.ifPresent(said->{
+       if(said.ackOf()!=null){
+        var waiting=awaiting.get(said.ackOf());
+        if(waiting!=null) waiting.complete(null);
+       }
+       if(said.report().saysAnything()) writeReport(siteId,profileId,said);
+      });
+     }catch(RuntimeException e){
+      // A frame that does not add up is dropped and said. Reading it anyway is how a corrupted
+      // node number becomes a vehicle driving somewhere nobody asked for.
+      log.warn("frame from {}:{} refused: {}",host,port,e.getMessage());
+     }
+    }
+   }catch(IOException e){ drop("read ended: "+e.getMessage()); }
+  }
+
+  private void writeReport(long siteId,long profileId,FrameMapper.Decoded said){
+   Long vehicleId=vehicleOf(siteId,profileId,said.externalVehicleId());
+   Long revisionId=activeRevision(siteId);
+   if(vehicleId==null||revisionId==null){
+    log.warn("frame report for {} on {}:{} has nowhere to go",said.externalVehicleId(),host,port);
+    return;
+   }
+   var report=said.report();
+   try{
+    if(report.mode()!=null||report.status()!=null||report.nodeId()!=null)
+     fleet.report(siteId,revisionId,vehicleId,new VehicleReport(report.nodeId(),
+      report.online()==null||report.online(),"REMOTE".equals(report.mode()),"IDLE".equals(report.status()),
+      Boolean.TRUE.equals(report.carrier()),"DEVICE",report.destinationChangeEnabled(),
+      report.mode(),report.status()));
+    if(report.batteryPct()!=null) fleet.reportBattery(siteId,revisionId,vehicleId,report.batteryPct());
+   }catch(IllegalArgumentException e){
+    log.warn("frame report for vehicle {} refused: {}",vehicleId,e.getMessage());
+   }
   }
 
   private void handle(long siteId,long profileId,JsonNode frame) throws IOException {

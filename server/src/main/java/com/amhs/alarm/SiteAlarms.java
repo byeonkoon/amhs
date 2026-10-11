@@ -149,6 +149,11 @@ public class SiteAlarms {
   */
  @Transactional
  public void observe(long siteId){
+  // When this pass began. Two passes can overlap -- the upkeep and an acknowledgement, or two
+  // upkeeps when a read is slow -- and the older one must not close a condition that appeared
+  // after it looked. Anything seen since this pass started is somebody else's news, not a
+  // condition gone; closing it there would split one alarm into two in the history.
+  var startedAt=jdbc.queryForObject("SELECT clock_timestamp()",OffsetDateTime.class);
   var live=alarms(siteId);
   var open=new java.util.HashMap<String,Long>();
   jdbc.query("SELECT alarm_key,id FROM platform.alarm_occurrence WHERE site_id=? AND cleared_at IS NULL",
@@ -166,7 +171,8 @@ public class SiteAlarms {
   }
   for(var e:open.entrySet())
    if(!seenNow.contains(e.getKey()))
-    jdbc.update("UPDATE platform.alarm_occurrence SET cleared_at=clock_timestamp() WHERE id=?",e.getValue());
+    jdbc.update("UPDATE platform.alarm_occurrence SET cleared_at=clock_timestamp() WHERE id=? AND last_seen_at<=?",
+     e.getValue(),startedAt);
  }
  /** Opens the record of a condition seen true, with whoever has already looked at it. */
  private void openOccurrence(long siteId,Alarm a){

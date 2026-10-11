@@ -42,7 +42,7 @@ public final class MessageMapper {
   var out=mapping.outbound().get(command.commandType());
   if(out==null) return Optional.empty();
   var body=json.createObjectNode();
-  out.body().forEach((field,rule)->set(body,field,value(rule,command,null,null)));
+  out.body().forEach((field,rule)->set(body,field,value(rule,command,null,null,null)));
   return Optional.of(new Message(fill(out.topic(),command.identity()),body));
  }
 
@@ -52,7 +52,7 @@ public final class MessageMapper {
    var captured=match(rule.whenTopic(),topic);
    if(captured==null) continue;
    var values=new LinkedHashMap<String,JsonNode>();
-   rule.report().forEach((field,field_)->{ var v=value(field_,null,body,captured); if(v!=null&&!v.isNull()) values.put(field,v); });
+   rule.report().forEach((field,field_)->{ var v=value(field_,null,body,captured,null); if(v!=null&&!v.isNull()) values.put(field,v); });
    var vehicle=vehicleOf(mapping,captured,body);
    var report=new Report(vehicle,
     asLong(values.get("nodeId")),asText(values.get("nodeCode")),asText(values.get("mode")),asText(values.get("status")),
@@ -79,14 +79,15 @@ public final class MessageMapper {
   * through the table if there is one, convert it if asked, and fall back only when what came out
   * was nothing.
   */
- private JsonNode value(VehicleMessageMapping.Rule rule,Command command,JsonNode body,Map<String,String> captured){
-  JsonNode found=rule.constant()!=null?rule.constant():source(rule.from(),command,body,captured,null,-1);
+ public JsonNode value(VehicleMessageMapping.Rule rule,Command command,JsonNode body,Map<String,String> captured,
+                 Map<String,JsonNode> slots){
+  JsonNode found=rule.constant()!=null?rule.constant():source(rule.from(),command,body,captured,slots,null,-1);
   if(rule.each()!=null&&found!=null&&found.isArray()){
    var list=json.createArrayNode();
    for(int i=0;i<found.size();i++){
     var element=json.createObjectNode();
     int index=i; var item=found.get(i);
-    rule.each().forEach((field,inner)->set(element,field,each(inner,command,body,captured,item,index)));
+    rule.each().forEach((field,inner)->set(element,field,each(inner,command,body,captured,slots,item,index)));
     list.add(element);
    }
    found=list;
@@ -103,15 +104,16 @@ public final class MessageMapper {
   return found;
  }
  private JsonNode each(VehicleMessageMapping.Rule rule,Command command,JsonNode body,Map<String,String> captured,
-                       JsonNode item,int index){
-  JsonNode found=rule.constant()!=null?rule.constant():source(rule.from(),command,body,captured,item,index);
+                       Map<String,JsonNode> slots,JsonNode item,int index){
+  JsonNode found=rule.constant()!=null?rule.constant():source(rule.from(),command,body,captured,slots,item,index);
   if(rule.values()!=null&&found!=null&&!found.isNull()) found=rule.values().get(found.asText());
   if(rule.op()!=null) found=apply(rule.op(),found);
   if((found==null||found.isNull())&&rule.fallback()!=null) found=rule.fallback();
   return found;
  }
 
- private JsonNode source(String from,Command command,JsonNode body,Map<String,String> captured,JsonNode item,int index){
+ private JsonNode source(String from,Command command,JsonNode body,Map<String,String> captured,
+                         Map<String,JsonNode> slots,JsonNode item,int index){
   if(from==null) return null;
   int dot=from.indexOf('.');
   String root=dot<0?from:from.substring(0,dot), rest=dot<0?"":from.substring(dot+1);
@@ -119,6 +121,7 @@ public final class MessageMapper {
    case "item" -> rest.isEmpty()?item:path(item,rest);
    case "index" -> json.getNodeFactory().numberNode(index);
    case "topic" -> captured==null||captured.get(rest)==null?null:json.getNodeFactory().textNode(captured.get(rest));
+   case "slot" -> slots==null?null:slots.get(rest);
    case "body" -> path(body,rest);
    case "payload" -> command==null?null:path(command.payload(),rest);
    case "command" -> command==null?null:switch(rest){

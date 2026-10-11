@@ -17,5 +17,14 @@ public final class VehicleAdapters {
   * See {@code docs/vehicle-tcp-contract.md}.
   */
  public static final String JSON_LINE_V1="JSON_LINE_V1";
+ /** One frame of bytes per command over TCP, laid out by a mapping document. */
+ public static final String PC_FRAME_V1="PC_FRAME_V1";
+ /** A block of PLC holding registers over Modbus TCP, laid out by a mapping document. */
+ public static final String PLC_WORD_V1="PLC_WORD_V1";
+ /**
+  * Adapters a vehicle may be put in use on without a mapping document. The rest -- a frame, a
+  * register block, a broker -- are named by the document that describes them, and configuration
+  * accepts those keys when a document of that name has been read.
+  */
  public static final Set<String> KNOWN=Set.of(JSON_LINE_V1);
 }
