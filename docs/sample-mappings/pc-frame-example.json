@@ -1,0 +1,58 @@
+{
+  "mapping": "PC-FRAME-EXAMPLE",
+  "adapter": "PC_FRAME_V1",
+  "version": 1,
+  "notes": "가상의 PC 프로토콜 예제입니다. 실제 현장 슬롯표가 아니며, 현장 값은 이 파일을 복사해 config/mappings 아래에서 고칩니다. 32바이트 고정 프레임, STX/ETX, 끝에서 두 번째 바이트에 XOR 체크섬.",
+
+  "frame": {
+    "size": 32,
+    "start": "0x02",
+    "end": "0x03",
+    "endian": "big",
+    "checksum": { "type": "xor", "at": 30, "over": [1, 29] }
+  },
+
+  "layout": {
+    "command":   { "at": 1,  "type": "u8" },
+    "sequence":  { "at": 2,  "type": "u16" },
+    "vehicle":   { "at": 4,  "type": "ascii", "length": 8 },
+    "nodeCount": { "at": 12, "type": "u8" },
+    "nodes":     { "at": 13, "type": "u16", "repeat": 6 },
+
+    "statusNow": { "at": 25, "type": "u8" },
+    "nodeNow":   { "at": 26, "type": "u16" },
+    "battery":   { "at": 28, "type": "u16", "scale": 0.1 }
+  },
+
+  "identity": { "fromSlot": "vehicle" },
+
+  "outbound": {
+    "MOVE": { "slots": {
+      "command":   "0x10",
+      "sequence":  { "from": "command.sequence" },
+      "vehicle":   { "from": "command.externalId" },
+      "nodeCount": { "from": "payload.authorizedNodeIds", "op": "count" },
+      "nodes":     { "from": "payload.authorizedNodeIds" }
+    }},
+    "STOP": { "slots": {
+      "command":  "0x11",
+      "sequence": { "from": "command.sequence" },
+      "vehicle":  { "from": "command.externalId" }
+    }}
+  },
+
+  "inbound": [
+    { "when": { "command": "0x90" },
+      "ack": { "sequence": { "from": "slot.sequence" } } },
+
+    { "when": { "command": "0x81" },
+      "report": {
+        "nodeId":     { "from": "slot.nodeNow" },
+        "status":     { "from": "slot.statusNow",
+                        "values": { "0": "IDLE", "1": "MOVING", "2": "LOADING", "3": "UNLOADING", "9": "ERROR" } },
+        "mode":       { "from": "slot.statusNow",
+                        "values": { "0": "REMOTE", "1": "REMOTE", "2": "REMOTE", "3": "REMOTE", "9": "REMOTE" } },
+        "batteryPct": { "from": "slot.battery" }
+      }}
+  ]
+}

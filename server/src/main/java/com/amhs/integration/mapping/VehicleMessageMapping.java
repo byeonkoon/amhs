@@ -22,14 +22,59 @@ import java.util.*;
  * {@code docs/sample-mappings/}.
  */
 public record VehicleMessageMapping(String code,String adapter,int version,String notes,
-                                    Identity identity,Map<String,Outbound> outbound,List<Inbound> inbound){
+                                    Identity identity,Map<String,Outbound> outbound,List<Inbound> inbound,
+                                    Frame frame,Area area,Map<String,Slot> layout,Handshake handshake){
 
  /** How a message says which vehicle it is about. */
- public record Identity(String fromTopic,String fromField){}
+ public record Identity(String fromTopic,String fromField,String fromSlot){}
  /** One command, as the far side expects it: where it goes and what it carries. */
- public record Outbound(String topic,Map<String,Rule> body){}
- /** One kind of message coming back: how to recognise it and what it says. */
- public record Inbound(String whenTopic,Map<String,Rule> report){}
+ public record Outbound(String topic,Map<String,Rule> body,Map<String,Rule> slots){}
+ /**
+  * One kind of message coming back: how to recognise it and what it says.
+  *
+  * <p>Recognised by its topic where messages have topics, and by the value in a slot where they do
+  * not. {@code always} is for a link that has no kinds at all -- a block of registers read round
+  * and round, where every read is the same message and the only question is what is in it now.
+  */
+ public record Inbound(String whenTopic,Map<String,JsonNode> whenSlots,boolean always,
+                       Map<String,Rule> report,Map<String,Rule> ack){}
+
+ /**
+  * A frame of bytes: how long it is, how it begins and ends, and how it is checked.
+  *
+  * <p>A byte protocol has no names in it. Everything is a position, which is why the positions are
+  * written here once and referred to by name everywhere else: the site that changes a vendor's
+  * offset changes one block, not every command.
+  */
+ public record Frame(Integer size,Integer start,Integer end,String endian,Checksum checksum){}
+ public record Checksum(String type,int at,int from,int to){}
+ /**
+  * A block of PLC registers: the words written to, the words read back, and how often they are read.
+  *
+  * <p>A PLC is not a correspondent. Nothing arrives; a block of words is read round and round and
+  * the difference is the news. The poll interval is therefore how fresh any position can be, and
+  * a site whose stale-position limit is shorter than its poll has set itself an impossible rule.
+  */
+ public record Area(String write,String read,int words,String endian,int pollMs){}
+ /**
+  * How a PLC says it has taken a command.
+  *
+  * <p>Writing registers is not telling anybody anything: the value simply sits there. So a command
+  * is the values, then a request bit, and it counts as taken only when the controller raises its
+  * own bit and echoes back the sequence it took. Without the echo, an acknowledgement cannot be
+  * told from the one before it -- and a register, unlike a message, is still there to be acted on,
+  * which is why a repeat that nobody can distinguish is the dangerous case here.
+  */
+ public record Handshake(List<String> write,String thenSet,String acceptedBit,String echoSlot,
+                         String clear,int timeoutMs){}
+ /**
+  * Where one named value sits and what it is.
+  *
+  * <p>{@code at} is a byte offset and {@code word} a 16-bit word (word n is byte 2n), so a frame
+  * protocol and a register block are described the same way. {@code repeat} is a run of the same
+  * type; {@code scale} turns the integer on the wire into the number it stands for.
+  */
+ public record Slot(String name,int at,String type,Integer bit,int length,int repeat,double scale,String area){}
 
  /**
   * One value.
@@ -47,41 +92,118 @@ public record VehicleMessageMapping(String code,String adapter,int version,Strin
 
  /** What a document may ask for, so a typo is refused when it is read rather than ignored when it runs. */
  public static final Set<String> OPS=Set.of("int","number","text","bool","negate","count","notEmpty","first","last");
- public static final Set<String> SOURCES=Set.of("command","payload","body","topic","item","index");
+ public static final Set<String> SOURCES=Set.of("command","payload","body","topic","slot","item","index");
+ /** What a value on a wire may be. Nothing here is guessed from the data: a slot says what it is. */
+ public static final Set<String> TYPES=Set.of("u8","u16","u32","i8","i16","i32","bcd","ascii","bit");
  /** The only names a mapping may produce on a report: this controller's own vocabulary. */
  public static final Set<String> REPORT_FIELDS=
   Set.of("nodeId","nodeCode","mode","status","carrier","batteryPct","destinationChangeEnabled","online");
+
+ /** Adapters that address values by name in a structure. */
+ public static final Set<String> NAMED=Set.of("JSON_LINE_V1","MQTT_JSON_V1");
+ /** Adapters that address values by position in bytes. */
+ public static final Set<String> POSITIONAL=Set.of("PC_FRAME_V1","PLC_WORD_V1");
 
  public static VehicleMessageMapping read(ObjectMapper json,String document) throws IOException {
   var root=json.readTree(document);
   var mapping=new VehicleMessageMapping(
    text(root,"mapping"),text(root,"adapter"),root.path("version").asInt(1),text(root,"notes"),
-   identity(root.path("identity")),outbound(root.path("outbound")),inbound(root.path("inbound")));
+   identity(root.path("identity")),outbound(root.path("outbound")),inbound(root.path("inbound")),
+   frame(root.path("frame")),area(root.path("area")),layout(root.path("layout")),
+   handshake(root.path("handshake")));
   mapping.validate();
   return mapping;
  }
 
- /** Everything wrong with the document, at once: a mapping is edited by hand and fixed by hand. */
+ /**
+  * Everything wrong with the document, at once: a mapping is edited by hand and fixed by hand.
+  *
+  * <p>What a document must have, and must not have, follows from its adapter. A block that adapter
+  * has no use for is refused rather than ignored -- a topic in a register mapping is somebody
+  * believing their vehicle is addressed by one, and finding out later costs a day on a floor.
+  */
  public void validate(){
   var wrong=new ArrayList<String>();
   if(code==null||code.isBlank()) wrong.add("mapping: 이름이 없습니다");
-  if(adapter==null||adapter.isBlank()) wrong.add("adapter: 어떤 어댑터가 읽는 문서인지 없습니다");
-  if(identity==null||(identity.fromTopic()==null&&identity.fromField()==null))
+  if(adapter==null||adapter.isBlank()){
+   wrong.add("adapter: 어떤 어댑터가 읽는 문서인지 없습니다");
+   throw new MappingRejected(wrong);     // without it, nothing else can be judged
+  }
+  boolean named=NAMED.contains(adapter), positional=POSITIONAL.contains(adapter), plc="PLC_WORD_V1".equals(adapter);
+  if(!named&&!positional) wrong.add("adapter: "+adapter+"를 읽는 어댑터가 없습니다 "+union(NAMED,POSITIONAL));
+
+  if(identity==null||(identity.fromTopic()==null&&identity.fromField()==null&&identity.fromSlot()==null))
    wrong.add("identity: 메시지가 어느 차량의 것인지 알 길이 없습니다");
-  outbound.forEach((command,out)->{
-   if(out.topic()==null||out.topic().isBlank()) wrong.add("outbound."+command+": topic이 없습니다");
-   out.body().forEach((field,rule)->check(wrong,"outbound."+command+"."+field,rule));
+  if(positional&&identity!=null&&identity.fromTopic()!=null)
+   wrong.add("identity.fromTopic: "+adapter+"에는 토픽이 없습니다 (fromSlot을 씁니다)");
+
+  if(positional&&layout.isEmpty()) wrong.add("layout: "+adapter+"는 값이 어디에 있는지 적어야 합니다");
+  if(named&&!layout.isEmpty()) wrong.add("layout: "+adapter+"는 이름으로 찾으므로 자리를 적지 않습니다");
+  if("PC_FRAME_V1".equals(adapter)&&frame==null) wrong.add("frame: PC_FRAME_V1은 프레임 길이·검사를 적어야 합니다");
+  if(plc&&area==null) wrong.add("area: PLC_WORD_V1은 읽고 쓸 레지스터 블록을 적어야 합니다");
+  // A register keeps the value that was written to it. Without a handshake nobody can say whether
+  // the controller has taken a command or is about to take it again, and a repeat is a second move.
+  if(plc&&handshake==null) wrong.add("handshake: PLC_WORD_V1은 수락 확인이 필수입니다 (레지스터는 값이 남습니다)");
+  if(!plc&&handshake!=null) wrong.add("handshake: "+adapter+"는 핸드셰이크를 쓰지 않습니다");
+  if(plc&&area!=null&&area.pollMs()<=0) wrong.add("area.poll-ms: 읽는 주기가 없으면 보고가 오지 않습니다");
+
+  layout.forEach((name,slot)->{
+   if(!TYPES.contains(slot.type())) wrong.add("layout."+name+": type "+slot.type()+"는 없습니다 "+TYPES);
+   if("bit".equals(slot.type())&&(slot.bit()==null||slot.bit()<0||slot.bit()>15))
+    wrong.add("layout."+name+": bit 슬롯은 0~15의 bit를 적어야 합니다");
+   if(("ascii".equals(slot.type())||"bcd".equals(slot.type()))&&slot.length()<=0)
+    wrong.add("layout."+name+": "+slot.type()+"는 length가 있어야 합니다");
+   if(slot.at()<0) wrong.add("layout."+name+": at·word는 0 이상이어야 합니다");
   });
+
+  outbound.forEach((command,out)->{
+   if(named){
+    if(out.topic()==null||out.topic().isBlank()) wrong.add("outbound."+command+": topic이 없습니다");
+    if(!out.slots().isEmpty()) wrong.add("outbound."+command+".slots: "+adapter+"는 body를 씁니다");
+    out.body().forEach((field,rule)->check(wrong,"outbound."+command+"."+field,rule));
+   }else{
+    if(out.topic()!=null) wrong.add("outbound."+command+".topic: "+adapter+"에는 토픽이 없습니다");
+    if(out.slots().isEmpty()) wrong.add("outbound."+command+": slots가 없습니다");
+    out.slots().forEach((name,rule)->{
+     if(!layout.containsKey(name)) wrong.add("outbound."+command+"."+name+": layout에 없는 슬롯입니다");
+     check(wrong,"outbound."+command+"."+name,rule);
+    });
+   }
+  });
+
   for(int i=0;i<inbound.size();i++){
    var in=inbound.get(i);
-   if(in.whenTopic()==null||in.whenTopic().isBlank()) wrong.add("inbound["+i+"]: when.topic이 없습니다");
    int at=i;
+   if(named&&(in.whenTopic()==null||in.whenTopic().isBlank())) wrong.add("inbound["+i+"]: when.topic이 없습니다");
+   if(positional){
+    if(in.whenTopic()!=null) wrong.add("inbound["+i+"].when.topic: "+adapter+"에는 토픽이 없습니다");
+    if(in.whenSlots().isEmpty()&&!in.always())
+     wrong.add("inbound["+i+"]: when에 슬롯 값이나 always가 있어야 합니다");
+    in.whenSlots().keySet().forEach(name->{
+     if(!layout.containsKey(name)) wrong.add("inbound["+at+"].when."+name+": layout에 없는 슬롯입니다");
+    });
+   }
    in.report().forEach((field,rule)->{
     if(!REPORT_FIELDS.contains(field)) wrong.add("inbound["+at+"]."+field+": 이 관제가 아는 보고 항목이 아닙니다 "+REPORT_FIELDS);
     check(wrong,"inbound["+at+"]."+field,rule);
    });
+   in.ack().forEach((field,rule)->check(wrong,"inbound["+at+"].ack."+field,rule));
+  }
+
+  if(handshake!=null){
+   handshake.write().forEach(name->{
+    if(!layout.containsKey(name)) wrong.add("handshake.write: layout에 없는 슬롯입니다 ("+name+")");
+   });
+   for(var named_:List.of(handshake.thenSet(),handshake.acceptedBit(),handshake.clear()))
+    if(named_!=null&&!layout.containsKey(named_)) wrong.add("handshake: layout에 없는 슬롯입니다 ("+named_+")");
+   if(handshake.acceptedBit()==null) wrong.add("handshake.accepted-bit: 무엇이 수락인지 적어야 합니다");
+   if(handshake.echoSlot()==null)
+    wrong.add("handshake.echo-slot: 수락이 어느 명령에 대한 것인지 가릴 수 없습니다 (시퀀스 에코가 필요합니다)");
   }
   if(!wrong.isEmpty()) throw new MappingRejected(wrong);
+ }
+ private static Set<String> union(Set<String> a,Set<String> b){
+  var all=new java.util.TreeSet<>(a); all.addAll(b); return all;
  }
 
  private static void check(List<String> wrong,String where,Rule rule){
@@ -95,17 +217,68 @@ public record VehicleMessageMapping(String code,String adapter,int version,Strin
 
  private static Identity identity(JsonNode node){
   if(node.isMissingNode()) return null;
-  return new Identity(text(node,"fromTopic"),text(node,"fromField"));
+  return new Identity(text(node,"fromTopic"),text(node,"fromField"),text(node,"fromSlot"));
  }
  private static Map<String,Outbound> outbound(JsonNode node){
   var out=new LinkedHashMap<String,Outbound>();
-  node.fields().forEachRemaining(e->out.put(e.getKey(),new Outbound(text(e.getValue(),"topic"),rules(e.getValue().path("body")))));
+  node.fields().forEachRemaining(e->out.put(e.getKey(),
+   new Outbound(text(e.getValue(),"topic"),rules(e.getValue().path("body")),rules(e.getValue().path("slots")))));
   return Collections.unmodifiableMap(out);
  }
  private static List<Inbound> inbound(JsonNode node){
   var out=new ArrayList<Inbound>();
-  node.forEach(rule->out.add(new Inbound(text(rule.path("when"),"topic"),rules(rule.path("report")))));
+  node.forEach(rule->{
+   var when=rule.path("when");
+   var slots=new LinkedHashMap<String,JsonNode>();
+   when.fields().forEachRemaining(e->{ if(!e.getKey().equals("topic")&&!e.getKey().equals("always")) slots.put(e.getKey(),e.getValue()); });
+   out.add(new Inbound(text(when,"topic"),Collections.unmodifiableMap(slots),when.path("always").asBoolean(false),
+    rules(rule.path("report")),rules(rule.path("ack"))));
+  });
   return Collections.unmodifiableList(out);
+ }
+ private static Frame frame(JsonNode node){
+  if(node.isMissingNode()) return null;
+  var check=node.path("checksum");
+  return new Frame(node.has("size")?node.get("size").asInt():null,number(node,"start"),number(node,"end"),
+   text(node,"endian"),check.isMissingNode()?null
+    :new Checksum(text(check,"type"),check.path("at").asInt(),check.path("over").path(0).asInt(),
+      check.path("over").path(1).asInt()));
+ }
+ private static Area area(JsonNode node){
+  if(node.isMissingNode()) return null;
+  return new Area(text(node,"write"),text(node,"read"),node.path("words").asInt(0),text(node,"endian"),
+   node.path("poll-ms").asInt(0));
+ }
+ private static Handshake handshake(JsonNode node){
+  if(node.isMissingNode()) return null;
+  var write=new ArrayList<String>();
+  node.path("write").forEach(name->write.add(name.asText()));
+  return new Handshake(List.copyOf(write),text(node,"then-set"),text(node,"accepted-bit"),text(node,"echo-slot"),
+   text(node,"clear"),node.path("timeout-ms").asInt(2000));
+ }
+ /**
+  * The layout, by name. {@code word} is the same thing as {@code at} two bytes at a time, which is
+  * how a register block and a byte frame come to be described in one vocabulary.
+  */
+ private static Map<String,Slot> layout(JsonNode node){
+  var out=new LinkedHashMap<String,Slot>();
+  node.fields().forEachRemaining(e->{
+   var slot=e.getValue();
+   int at=slot.has("word")?slot.get("word").asInt()*2:slot.path("at").asInt(-1);
+   out.put(e.getKey(),new Slot(e.getKey(),at,slot.path("type").asText(slot.has("bit")?"bit":"u16"),
+    slot.has("bit")?slot.get("bit").asInt():null,slot.path("length").asInt(0),
+    Math.max(1,slot.path("repeat").asInt(1)),slot.path("scale").asDouble(1.0),
+    slot.path("area").asText("write")));
+  });
+  return Collections.unmodifiableMap(out);
+ }
+ /** A number written as a number or as "0x1F", because a byte protocol is read in hexadecimal. */
+ private static Integer number(JsonNode node,String field){
+  var value=node.path(field);
+  if(value.isMissingNode()||value.isNull()) return null;
+  if(value.isNumber()) return value.asInt();
+  var text=value.asText().trim();
+  return text.startsWith("0x")||text.startsWith("0X")?Integer.parseInt(text.substring(2),16):Integer.parseInt(text);
  }
  private static Map<String,Rule> rules(JsonNode node){
   var out=new LinkedHashMap<String,Rule>();

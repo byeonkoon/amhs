@@ -1,0 +1,64 @@
+{
+  "mapping": "PLC-WORD-EXAMPLE",
+  "adapter": "PLC_WORD_V1",
+  "version": 1,
+  "notes": "가상의 PLC 레지스터 배치 예제입니다. 실제 현장 주소표가 아닙니다. Modbus TCP 기준으로 쓰기 블록은 40100부터, 읽기 블록은 40200부터 각 16워드.",
+
+  "area": {
+    "write": "40100",
+    "read":  "40200",
+    "words": 16,
+    "endian": "big",
+    "poll-ms": 300
+  },
+
+  "layout": {
+    "command":   { "word": 0, "type": "u16" },
+    "sequence":  { "word": 1, "type": "u16" },
+    "nodes":     { "word": 2, "type": "u16", "repeat": 8 },
+    "request":   { "word": 10, "bit": 0 },
+
+    "accepted":  { "word": 0,  "bit": 0, "area": "read" },
+    "seqEcho":   { "word": 1,  "type": "u16", "area": "read" },
+    "statusNow": { "word": 2,  "type": "u16", "area": "read" },
+    "nodeNow":   { "word": 3,  "type": "u16", "area": "read" },
+    "battery":   { "word": 4,  "type": "u16", "scale": 0.1, "area": "read" },
+    "carrier":   { "word": 5,  "bit": 0, "area": "read" }
+  },
+
+  "identity": { "fromSlot": "sequence" },
+
+  "handshake": {
+    "write": ["command", "sequence", "nodes"],
+    "then-set": "request",
+    "accepted-bit": "accepted",
+    "echo-slot": "seqEcho",
+    "clear": "request",
+    "timeout-ms": 2000
+  },
+
+  "outbound": {
+    "MOVE": { "slots": {
+      "command":  16,
+      "sequence": { "from": "command.sequence" },
+      "nodes":    { "from": "payload.authorizedNodeIds" }
+    }},
+    "STOP": { "slots": {
+      "command":  17,
+      "sequence": { "from": "command.sequence" }
+    }}
+  },
+
+  "inbound": [
+    { "when": { "always": true },
+      "report": {
+        "nodeId":     { "from": "slot.nodeNow" },
+        "status":     { "from": "slot.statusNow",
+                        "values": { "0": "IDLE", "1": "MOVING", "2": "LOADING", "3": "UNLOADING", "9": "ERROR" } },
+        "mode":       { "from": "slot.statusNow",
+                        "values": { "0": "REMOTE", "1": "REMOTE", "2": "REMOTE", "3": "REMOTE", "9": "REMOTE" } },
+        "carrier":    { "from": "slot.carrier" },
+        "batteryPct": { "from": "slot.battery" }
+      }}
+  ]
+}

@@ -131,7 +131,10 @@ class VehicleLinkSqlTest {
    link.send(command("MOVE","{}"));
    far.say("{\"type\":\"report\",\"vehicle\":\"V-01\",\"nodeId\":207,\"mode\":\"REMOTE\",\"status\":\"MOVING\","
     +"\"carrier\":true,\"batteryPct\":61.5}");
-   var seen=waitFor(()->fleet.find(SITE,REVISION,AGV1).filter(v->Long.valueOf(207L).equals(v.nodeId())).isPresent());
+   // Position and charge are two writes; waiting for the first and reading the second is a race
+   // that only shows when the row starts empty, which is what the cleanup now makes it do.
+   var seen=waitFor(()->fleet.find(SITE,REVISION,AGV1)
+    .filter(v->Long.valueOf(207L).equals(v.nodeId())&&v.batteryPct()!=null).isPresent());
    assertThat(seen).as("the report reached the fleet").isTrue();
    var v=fleet.find(SITE,REVISION,AGV1).orElseThrow();
    assertThat(v.effectiveStatus()).isEqualTo("MOVING");
