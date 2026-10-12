@@ -62,7 +62,7 @@ class MqttVehicleLinks implements DeviceChannel {
   if(command.vehicleId()==null) return Verdict.notDelivered("COMMAND_NAMES_NO_VEHICLE");
   var wired=wiring(command.siteId(),command.vehicleId());
   if(wired==null) return Verdict.notDelivered("ADAPTER_NOT_CONFIGURED");
-  var mapping=mappings.byCode(wired.mappingCode()).orElse(null);
+  var mapping=mappings.byCode(wired.siteId(),wired.mappingCode()).orElse(null);
   // Configuration let the vehicle be switched on against a document that is now unreadable or gone.
   // Nothing was written, so the command waits rather than being counted as lost.
   if(mapping==null) return Verdict.notDelivered("MAPPING_NOT_IN_USE");

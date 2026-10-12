@@ -1,8 +1,8 @@
 import React from 'react';
 import {
-  ApiError, cfgApi, get, getAs, opsApi, send, ROLE_LABEL,
-  type Cfg, type ConnectionSettings, type EquipmentSettings, type MapData, type MapRevision, type OperationOptions,
-  type PortSettings, type ProtocolSettings,
+  ApiError, cfgApi, get, getAs, opsApi, send, sendText, ROLE_LABEL,
+  type Cfg, type ConnectionSettings, type EquipmentSettings, type InstalledMapping, type MapData, type MapRevision,
+  type OperationOptions, type PortSettings, type ProtocolSettings,
   type Session, type VdaProfileSettings, type VehicleSettings,
 } from '../../api';
 import { Chip, Empty, Failed, Loading } from '../../shell/States';
@@ -20,13 +20,14 @@ import {
  * vehicle and every command rather than to one of these, so they sit behind the account menu
  * where changing them needs the authority that reach deserves.
  */
-type Tab = "revisions" | "vehicles" | "vda" | "ports" | "nodes" | "segments" | "connections" | "protocols";
+type Tab = "revisions" | "vehicles" | "vda" | "ports" | "nodes" | "segments" | "connections" | "protocols" | "mappings";
 const TABS: { key: Tab; label: string }[] = [
   { key: 'revisions', label: '지도 버전' },
   { key: 'vehicles', label: '차량' }, { key: 'vda', label: 'VDA 프로파일' },
   { key: 'ports', label: '포트' },
   { key: 'nodes', label: '노드' }, { key: 'segments', label: '구간' },
   { key: 'connections', label: '연결' }, { key: 'protocols', label: '프로토콜' },
+  { key: 'mappings', label: '매핑 문서' },
 ];
 
 export function ConfigurationScreen({ map, session, revisions, onChanged }: {
@@ -65,6 +66,7 @@ export function ConfigurationScreen({ map, session, revisions, onChanged }: {
           {tab === 'ports' && <PortTab map={map} canWrite={canWrite} />}
           {tab === 'connections' && <ConnectionTab canWrite={canWrite} />}
           {tab === 'protocols' && <ProtocolTab canWrite={canWrite} />}
+          {tab === 'mappings' && <MappingTab canWrite={canWrite} />}
         </div>
       </div>
     </>
@@ -780,6 +782,147 @@ function VdaProfileTab({ canWrite }: { canWrite: boolean }) {
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * The dialects this site speaks.
+ *
+ * <p>A mapping document says how a command leaves this controller for one family of vehicles and
+ * how what comes back is read. It was the one piece of configuration that lived only as a file on
+ * the server's disk: no screen could change it, no version could be compared, and nothing recorded
+ * who had put it there. It is kept with the rest now.
+ *
+ * <p>The documents shipped with the server stay underneath as the built-in set. A site's own
+ * document of the same name wins, and removing it brings the shipped one back -- which is why the
+ * listing names where each one in use comes from rather than only what is installed.
+ */
+function MappingTab({ canWrite }: { canWrite: boolean }) {
+  const [items, setItems] = React.useState<InstalledMapping[] | null>(null);
+  const [available, setAvailable] = React.useState<Record<string, string>>({});
+  const [error, setError] = React.useState<unknown>(null);
+  const [chosen, setChosen] = React.useState<string | null>(null);
+  const [busy, setBusy] = React.useState(false);
+  const [message, setMessage] = React.useState<{ tone: string; text: string } | null>(null);
+  const [tick, setTick] = React.useState(0);
+  const reload = () => setTick(t => t + 1);
+  React.useEffect(() => {
+    const ac = new AbortController();
+    setError(null);
+    Promise.all([
+      get<InstalledMapping[]>(cfgApi.mappings(), ac.signal),
+      get<Record<string, string>>(cfgApi.mappingsAvailable(), ac.signal),
+    ]).then(([list, names]) => { setItems(list); setAvailable(names); })
+      .catch(cause => { if ((cause as Error).name !== 'AbortError') setError(cause); });
+    return () => ac.abort();
+  }, [tick]);
+
+  // A refusal carries what is wrong with the document, which is the only useful part of it.
+  const explain = (cause: unknown) => {
+    if (!(cause instanceof ApiError)) return cause instanceof SyntaxError ? 'JSON 형식이 아닙니다.' : '처리하지 못했습니다.';
+    const code = cause.message;
+    return code.startsWith('MAPPING_REJECTED:') ? `문서를 받아들이지 않았습니다 — ${code.slice('MAPPING_REJECTED:'.length).trim()}`
+      : explainCode(code);
+  };
+
+  async function upload(file: File) {
+    setBusy(true); setMessage(null);
+    try {
+      // Sent as written: the server keeps the document verbatim, so reformatting it here would
+      // hand back a file that no longer matches the one on somebody's disk.
+      const saved = await sendText<InstalledMapping>(cfgApi.mappings(), 'POST', await file.text(),
+        `매핑 문서 올리기 (${file.name})`);
+      setMessage({
+        tone: 'ok',
+        text: `${saved.code}을(를) ${saved.version === 0 ? '등록했습니다' : `고쳤습니다 (rev${saved.version})`}`
+          + ` — ${saved.adapter}, 명령 ${saved.commands}종, 수신 규칙 ${saved.inboundRules}개.`
+          + ' 이 이름을 어댑터 키로 쓰는 프로토콜 프로파일에 바로 적용됩니다.',
+      });
+      setChosen(saved.code); reload();
+    } catch (cause) {
+      setMessage({ tone: 'er', text: explain(cause) });
+    } finally { setBusy(false); }
+  }
+  async function remove(m: InstalledMapping) {
+    if (!window.confirm(`매핑 문서 ${m.code}을(를) 내립니다. 같은 이름이 서버에 기본으로 들어 있으면 그것이 다시 쓰입니다. 진행할까요?`)) return;
+    setBusy(true); setMessage(null);
+    try {
+      await send(cfgApi.mapping(m.code), 'DELETE', undefined, `매핑 문서 ${m.code} 내리기`);
+      setMessage({ tone: 'ok', text: `${m.code}을(를) 내렸습니다.` });
+      setChosen(null); reload();
+    } catch (cause) {
+      setMessage({ tone: 'er', text: explain(cause) });
+    } finally { setBusy(false); }
+  }
+  function download(m: InstalledMapping) {
+    const url = URL.createObjectURL(new Blob([m.document], { type: 'application/json' }));
+    const link = window.document.createElement('a');
+    link.href = url; link.download = `${m.code}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  if (error) return <Failed error={error} onRetry={reload} />;
+  if (!items) return <Loading what="매핑 문서" />;
+  const selected = items.find(m => m.code === chosen) ?? null;
+  const shipped = Object.keys(available).filter(code => !items.some(m => m.code === code));
+  return (
+    <div>
+      {message && <p style={{ margin: '0 0 9px', fontSize: 12 }}>
+        <Chip tone={message.tone}>{message.tone === 'er' ? '거부' : '완료'}</Chip> {message.text}
+      </p>}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+        <label style={{ ...btn, cursor: canWrite && !busy ? 'pointer' : 'default', opacity: canWrite ? 1 : 0.6 }}>
+          문서 올리기
+          <input type="file" accept="application/json,.json" disabled={!canWrite || busy} style={{ display: 'none' }}
+            onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) void upload(f); }} />
+        </label>
+        <span className="hint" style={{ margin: 0 }}>
+          문서 안의 <span className="mono">mapping</span> 값이 이름입니다. 같은 이름을 다시 올리면 그 문서를 고치는 것이 됩니다.
+        </span>
+      </div>
+      {items.length === 0
+        ? <p className="hint" style={{ margin: '0 0 10px' }}>이 사이트가 올린 매핑 문서는 아직 없습니다. 아래는 서버에 기본으로 들어 있는 문서입니다.</p>
+        : (
+          <Grid cols="160px 130px 96px 1fr 130px 172px"
+            head={['이름', '어댑터', '명령·수신', '설명', '수정', '']}>
+            {items.map(m => (
+              <Row key={m.id} selected={m.code === chosen}>
+                <span className="mono">{m.code}</span>
+                <span className="mono">{m.adapter}</span>
+                <span className="mono" title="보낼 수 있는 명령 종류 · 읽을 수 있는 수신 규칙">{m.commands} · {m.inboundRules}</span>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.notes ?? ''}</span>
+                <span className="mono">{m.updatedBy ?? ''} · rev{m.version}</span>
+                <span style={{ display: 'flex', gap: 6 }}>
+                  <button type="button" onClick={() => setChosen(m.code === chosen ? null : m.code)}
+                    style={{ ...btn, padding: '3px 9px' }}>{m.code === chosen ? '닫기' : '보기'}</button>
+                  <button type="button" disabled={busy} onClick={() => download(m)}
+                    style={{ ...btn, padding: '3px 9px' }}>받기</button>
+                  <button type="button" disabled={!canWrite || busy} onClick={() => void remove(m)}
+                    title="이 이름을 어댑터 키로 쓰는 프로파일을 가리키는 차량이 있으면 거부됩니다."
+                    style={{
+                      ...btn, padding: '3px 9px', borderColor: 'var(--crit)', color: 'var(--crit)',
+                      cursor: canWrite && !busy ? 'pointer' : 'default',
+                    }}>내리기</button>
+                </span>
+              </Row>
+            ))}
+          </Grid>
+        )}
+      {shipped.length > 0 && (
+        <p className="hint" style={{ marginTop: 10 }}>
+          서버 기본 문서: {shipped.map(code => `${code} (${available[code]})`).join(', ')}.
+          같은 이름으로 올리면 이 사이트에서는 올린 쪽이 쓰입니다.
+        </p>
+      )}
+      {selected && (
+        <div style={{ marginTop: 12 }}>
+          <div className="hint" style={{ marginBottom: 6 }}>{selected.code} — 저장된 그대로입니다. 고칠 때는 내려받아 고친 뒤 다시 올립니다.</div>
+          <textarea readOnly value={selected.document} spellCheck={false}
+            style={{ ...field, height: 320, fontFamily: 'var(--mono, monospace)', fontSize: 11, lineHeight: 1.5 }} />
+        </div>
+      )}
     </div>
   );
 }

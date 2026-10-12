@@ -25,4 +25,6 @@ if($Test -or $SqlTest){
  } finally { $env:AMHS_SQL_TEST=$previousSqlTest }
  exit $testExit
 }
-& $java -jar "$projectRoot/server/target/amhs-server-0.1.0.jar"
+# The example mapping documents live with the docs, so the dev app shows the shipped set the same
+# way a deployment shows the contents of its own config/mappings directory.
+& $java "-Damhs.device.mappings=$projectRoot/docs/sample-mappings" -jar "$projectRoot/server/target/amhs-server-0.1.0.jar"

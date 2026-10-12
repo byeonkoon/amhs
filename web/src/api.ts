@@ -187,8 +187,25 @@ export const cfgApi = {
   exportMap: (revisionId: number) =>
     `/api/v1/sites/${SITE_ID}/configuration/topology/${revisionId}/export`,
   vdaProfiles: () => `/api/v1/sites/${SITE_ID}/configuration/vda-profiles`,
+  /** The dialects this site has installed: how a command is written for a family of vehicles. */
+  mappings: () => `/api/v1/sites/${SITE_ID}/configuration/mappings`,
+  /** Every name a protocol profile may point at here, the site's own and the server's. */
+  mappingsAvailable: () => `/api/v1/sites/${SITE_ID}/configuration/mappings/available`,
+  mapping: (code: string) => `/api/v1/sites/${SITE_ID}/configuration/mappings/${encodeURIComponent(code)}`,
   /** Who may do what. ADMIN only; a password goes in here and never comes back out. */
   accounts: () => `/api/v1/sites/${SITE_ID}/configuration/accounts`,
+};
+
+/**
+ * A mapping document the site has installed, as the listing shows it.
+ *
+ * <p>`commands` and `inboundRules` are counted from the document itself rather than stored beside
+ * it: they are what it does, and a number that can disagree with the document is worse than none.
+ */
+export type InstalledMapping = {
+  id: number; code: string; adapter: string; notes: string | null;
+  commands: number; inboundRules: number;
+  updatedBy: string | null; updatedAt: string; version: number; document: string;
 };
 
 /**
@@ -218,6 +235,23 @@ export const canOperate = () => writeToken !== null && sessionLevel >= 2;
 
 export async function send<T>(url: string, method: 'POST' | 'PUT' | 'DELETE', body: unknown, reason?: string,
   extraHeaders?: Record<string, string>): Promise<T> {
+  return sendBody(url, method, JSON.stringify(body), reason, extraHeaders);
+}
+
+/**
+ * Sends a document the way it was written rather than the way this screen would write it.
+ *
+ * <p>For something a person edits in a file and the server keeps verbatim -- a mapping document --
+ * reading it, parsing it and serialising it again would quietly reformat what they wrote and hand
+ * back a file that no longer matches theirs.
+ */
+export async function sendText<T>(url: string, method: 'POST' | 'PUT' | 'DELETE', text: string,
+  reason?: string): Promise<T> {
+  return sendBody(url, method, text, reason);
+}
+
+async function sendBody<T>(url: string, method: 'POST' | 'PUT' | 'DELETE', body: string | undefined,
+  reason?: string, extraHeaders?: Record<string, string>): Promise<T> {
   if (!writeToken) throw new ApiError(401, url, '로그인이 필요합니다. 오른쪽 위 계정 메뉴에서 로그인해 주세요.');
   const res = await fetch(url, {
     method,
@@ -228,7 +262,7 @@ export async function send<T>(url: string, method: 'POST' | 'PUT' | 'DELETE', bo
       ...(reason ? { 'X-Amhs-Reason': encodeURIComponent(reason) } : {}),
       ...(extraHeaders ?? {}),
     },
-    body: JSON.stringify(body),
+    body,
   });
   if (!res.ok) {
     let code = '';

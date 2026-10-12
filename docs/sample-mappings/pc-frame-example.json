@@ -2,7 +2,7 @@
   "mapping": "PC-FRAME-EXAMPLE",
   "adapter": "PC_FRAME_V1",
   "version": 1,
-  "notes": "가상의 PC 프로토콜 예제입니다. 실제 현장 슬롯표가 아니며, 현장 값은 이 파일을 복사해 config/mappings 아래에서 고칩니다. 32바이트 고정 프레임, STX/ETX, 끝에서 두 번째 바이트에 XOR 체크섬.",
+  "notes": "가상의 PC 프로토콜 예제입니다. 실제 현장 슬롯표가 아니며, 현장 값은 이 파일을 복사해 고친 뒤 설정 화면에서 올립니다. 32바이트 고정 프레임, STX/ETX, 끝에서 두 번째 바이트에 XOR 체크섬.",
 
   "frame": {
     "size": 32,

@@ -108,7 +108,7 @@ class JsonLineVehicleLinks implements DeviceChannel {
   */
  private String dialect(Target target){
   if(JSON.equals(target.adapterKey())) return JSON;
-  var mapping=mappings.byCode(target.adapterKey()).orElse(null);
+  var mapping=mappings.byCode(target.siteId(),target.adapterKey()).orElse(null);
   return mapping!=null&&FRAME.equals(mapping.adapter())?FRAME:null;
  }
 
@@ -161,7 +161,7 @@ class JsonLineVehicleLinks implements DeviceChannel {
     // A byte protocol has no room for a command id, so what comes back is matched on the sequence
     // the frame carried. The outbox's attempt number is that sequence: it is already the thing
     // that tells one attempt from another.
-    var mapping=mappings.byCode(target.mappingCode()).orElse(null);
+    var mapping=mappings.byCode(target.siteId(),target.mappingCode()).orElse(null);
     if(mapping==null) return Verdict.notDelivered("MAPPING_NOT_IN_USE");
     try{
      var built=frames.toFrame(mapping,view(target,command));
@@ -256,7 +256,7 @@ class JsonLineVehicleLinks implements DeviceChannel {
    * is the link ending, and the frame it was carrying is simply not there.
    */
   private void readFrames(long siteId,long profileId,Socket s){
-   var mapping=mappings.byCode(mappingCode).orElse(null);
+   var mapping=mappings.byCode(siteId,mappingCode).orElse(null);
    int size=mapping==null||mapping.frame()==null||mapping.frame().size()==null?0:mapping.frame().size();
    if(size<=0){ drop("the mapping does not say how long a frame is"); return; }
    var buffer=new byte[size];

@@ -171,6 +171,10 @@ export function explainCode(code: string): string {
     INVALID_HOME_RETURN_SECONDS: '홈 복귀 대기 시간은 0~3600초여야 합니다.',
     INVALID_CHARGE_LEVELS: '충전 기준은 위험 < 요청 < 해제 ≤ 100 이어야 합니다.',
     INVALID_RUN_MODE: '운전 모드는 SIMULATION 또는 OPERATION입니다.',
+    // A mapping document: the dialect one family of vehicles is spoken to in.
+    MAPPING_NOT_JSON: 'JSON 형식이 아닙니다. 파일 내용을 확인해 주세요.',
+    MAPPING_NOT_FOUND: '이 사이트에 그런 매핑 문서가 없습니다.',
+    MAPPING_IN_USE: '이 매핑을 쓰는 차량이 있습니다. 그 차량의 통신 설정이 다른 프로토콜 프로파일을 가리키게 먼저 바꾸세요.',
   };
   return map[code] ?? code;
 }

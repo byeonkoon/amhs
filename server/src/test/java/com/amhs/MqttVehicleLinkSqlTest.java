@@ -114,7 +114,10 @@ class MqttVehicleLinkSqlTest {
    vehicle.client().publish("uagv/v3/ACME/AGV-7/state",
     ("{\"lastNodeId\":\"AGV-M-007\",\"operatingMode\":\"AUTOMATIC\",\"driving\":true,"
      +"\"loads\":[{\"loadId\":\"C1\"}],\"batteryState\":{\"batteryCharge\":61.5}}").getBytes(StandardCharsets.UTF_8),1,false);
-   var arrived=waitFor(()->fleet.find(SITE,REVISION,AGV1).filter(v->"DEVICE".equals(v.source())).isPresent());
+   // One state message lands as two writes -- the row, then the battery -- so waiting on the row
+   // alone can see it half applied. Waiting for the last of them is waiting for the report.
+   var arrived=waitFor(()->fleet.find(SITE,REVISION,AGV1)
+    .filter(v->"DEVICE".equals(v.source())&&v.batteryPct()!=null).isPresent());
    assertThat(arrived).as("the state message reached the fleet").isTrue();
    var v=fleet.find(SITE,REVISION,AGV1).orElseThrow();
    // AUTOMATIC is the maker's word; REMOTE is this controller's, and the document is what joins them.

@@ -62,7 +62,7 @@ class PlcVehicleLinks implements DeviceChannel {
   if(command.vehicleId()==null) return Verdict.notDelivered("COMMAND_NAMES_NO_VEHICLE");
   var wired=wiring(command.siteId(),command.vehicleId());
   if(wired==null) return Verdict.notDelivered("ADAPTER_NOT_CONFIGURED");
-  var mapping=mappings.byCode(wired.mappingCode()).orElse(null);
+  var mapping=mappings.byCode(wired.siteId(),wired.mappingCode()).orElse(null);
   if(mapping==null) return Verdict.notDelivered("MAPPING_NOT_IN_USE");
   // Another adapter's document on this link is not this adapter's to act on.
   if(!com.amhs.integration.VehicleAdapters.PLC_WORD_V1.equals(mapping.adapter()))
