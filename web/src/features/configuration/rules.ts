@@ -98,7 +98,8 @@ export function protocolIssues(p: ProtocolSettings): string[] {
  * Enabling a profile would start a device adapter, and none are implemented yet.
  * The server rejects it, so the toggle stays off with the reason shown.
  */
-export const ADAPTER_DISABLED_REASON = '장비 어댑터가 아직 구현되지 않아 활성화할 수 없습니다. 어댑터 연결 작업 이후에 열립니다.';
+/** Said when a connection is switched on for a kind of link this build cannot open. */
+export const ADAPTER_DISABLED_REASON = '이 조합으로는 열 수 있는 장비 어댑터가 없습니다. TCP(CLIENT·SERVER)와 MQTT(BROKER)만 사용으로 둘 수 있습니다.';
 
 /** Server rejection codes rendered as sentences the operator can act on. */
 export function explainCode(code: string): string {
@@ -108,6 +109,7 @@ export function explainCode(code: string): string {
     INVALID_CONNECTION_ROLE: '선택한 통신 방식에 맞지 않는 역할입니다.',
     UNSUPPORTED_VDA_VERSION: '지원하지 않는 VDA5050 버전입니다.',
     ADAPTER_NOT_IMPLEMENTED: ADAPTER_DISABLED_REASON,
+    CONNECTION_NOT_IN_USE: '연결 프로파일이 사용으로 되어 있지 않거나, 열 수 있는 종류가 아닙니다. 연결 탭에서 먼저 사용으로 두세요.',
     CONFIGURATION_WRITES_DISABLED: '서버에서 설정 변경이 비활성화되어 있습니다.',
     PRINCIPAL_REQUIRED: '설정 변경 토큰이 필요합니다.',
     ROLE_ADMIN_REQUIRED: '설정 변경은 관리자 권한이 필요합니다.',

@@ -6,11 +6,11 @@ public record ConnectionSettings(String commType,String role,String host,int por
   ConfigurationInput.text(host,255,"HOST");
   ConfigurationException.require(host.matches("[a-zA-Z0-9.:%_-]+"),"INVALID_HOST");
   ConfigurationException.require(port>=1&&port<=65535,"INVALID_PORT");
+  // The kinds of link that exist, which are now exactly the kinds this build can open: TCP either
+  // way round -- dialling out to a controller, or holding a port open for a gateway that dials in
+  // -- and an MQTT broker. There is no second check that a profile may only be switched on where
+  // an adapter exists, because there is no longer a combination this accepts and nothing can open.
   ConfigurationException.require(("TCP".equals(commType)&&Set.of("CLIENT","SERVER").contains(role==null?"":role))
     ||("MQTT".equals(commType)&&"BROKER".equals(role)),"INVALID_CONNECTION_ROLE");
-  // Only the kind of link this build can actually open may be switched on: dialling out over TCP,
-  // and an MQTT broker. Listening for a vehicle that dials in is not implemented, and a profile
-  // that claims to be in use when nothing can open it is a site that looks connected.
-  ConfigurationException.require(!enabled||("TCP".equals(commType)&&"CLIENT".equals(role))||("MQTT".equals(commType)&&"BROKER".equals(role)),"ADAPTER_NOT_IMPLEMENTED");
  }
 }

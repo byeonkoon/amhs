@@ -35,8 +35,15 @@ import java.util.concurrent.locks.ReentrantLock;
  * ADAPTER_NOT_IMPLEMENTED. This is the first adapter that answers. It speaks this system's own
  * contract ({@code docs/vehicle-tcp-contract.md}) rather than any one vehicle's protocol: a
  * controller or gateway in front of a line translates. Which vehicles use it is configuration --
- * a connection profile (TCP, CLIENT, enabled) and, per vehicle, a communication row naming the
- * identifier the far side knows it by.
+ * a connection profile (TCP, enabled) and, per vehicle, a communication row naming the identifier
+ * the far side knows it by.
+ *
+ * <p>The connection profile's role says which end dials. <b>CLIENT</b> is this controller dialling
+ * out to an address it was given. <b>SERVER</b> is a gateway dialling in, which is the ordinary
+ * arrangement where the line sits behind a firewall or has no fixed address: a port is opened and
+ * whoever arrives must say which vehicle they speak for before anything is sent to them. Both ends
+ * speak the same two dialects once the socket exists, and everything after that -- acknowledgement,
+ * reports, what a send may claim -- is the same.
  *
  * <p>What a send is allowed to claim is the whole of the contract the gateway settles on:
  * <ul>
@@ -53,7 +60,7 @@ import java.util.concurrent.locks.ReentrantLock;
  * position, traffic, dispatch -- behaves the same whether the vehicle is real or simulated.
  */
 @Component
-class JsonLineVehicleLinks implements DeviceChannel {
+class JsonLineVehicleLinks implements DeviceChannel,com.amhs.integration.VehicleListening {
  private static final String JSON=com.amhs.integration.VehicleAdapters.JSON_LINE_V1;
  private static final String FRAME=com.amhs.integration.VehicleAdapters.PC_FRAME_V1;
  private static final Logger log=LoggerFactory.getLogger(JsonLineVehicleLinks.class);
@@ -62,22 +69,36 @@ class JsonLineVehicleLinks implements DeviceChannel {
  private final JdbcTemplate jdbc; private final FleetState fleet; private final MappingLibrary mappings;
  private final ObjectMapper json=new ObjectMapper();
  private final FrameMapper frames=new FrameMapper(json,new MessageMapper(json),new SlotCodec(json));
+ /** Links this controller dialled, one per connection profile. */
  private final Map<Long,Link> links=new ConcurrentHashMap<>();
- private final int connectTimeoutMs,ackTimeoutMs,retryAfterMs;
+ /** Ports held open for gateways to dial in to, one per connection profile. */
+ private final Map<Long,Listener> listeners=new ConcurrentHashMap<>();
+ /**
+  * Which arrived connection speaks for which vehicle, by the profile it came in on and the name
+  * the far side calls that vehicle. A connection may claim several, and a name belongs to one
+  * connection at a time.
+  */
+ private final Map<String,Link> arrived=new ConcurrentHashMap<>();
+ private final int connectTimeoutMs,ackTimeoutMs,retryAfterMs,identifyTimeoutMs;
 
  JsonLineVehicleLinks(JdbcTemplate jdbc,FleetState fleet,MappingLibrary mappings,
                       @Value("${amhs.device.tcp.connect-timeout-ms:2000}") int connectTimeoutMs,
                       @Value("${amhs.device.tcp.ack-timeout-ms:3000}") int ackTimeoutMs,
-                      @Value("${amhs.device.tcp.retry-after-ms:1000}") int retryAfterMs){
+                      @Value("${amhs.device.tcp.retry-after-ms:1000}") int retryAfterMs,
+                      @Value("${amhs.device.tcp.identify-timeout-ms:10000}") int identifyTimeoutMs){
   this.jdbc=jdbc; this.fleet=fleet; this.mappings=mappings;
   this.connectTimeoutMs=connectTimeoutMs; this.ackTimeoutMs=ackTimeoutMs; this.retryAfterMs=retryAfterMs;
+  this.identifyTimeoutMs=identifyTimeoutMs;
  }
 
- /** One vehicle as the far side knows it, and where to reach it. */
- private record Target(long siteId,long profileId,String host,int port,String externalId,String adapterKey){
+ /** One vehicle as the far side knows it, and how its connection is made. */
+ private record Target(long siteId,long profileId,String host,int port,String role,String externalId,String adapterKey){
   /** The document this vehicle is described by, where it is described by one. */
   String mappingCode(){ return adapterKey; }
+  /** Whether this controller makes the connection, or waits for it. */
+  boolean dialsOut(){ return !"SERVER".equals(role); }
  }
+ private static String claimKey(long profileId,String externalId){ return profileId+"/"+externalId; }
 
  @Override public Verdict send(DeviceCommand command){
   if(command.vehicleId()==null) return Verdict.notDelivered("COMMAND_NAMES_NO_VEHICLE");
@@ -85,16 +106,24 @@ class JsonLineVehicleLinks implements DeviceChannel {
   // Not an error: a vehicle nobody has wired to this adapter is simply not ours to send to, and
   // saying so as "nothing left here" keeps the command repeatable once somebody does wire it.
   if(target==null||dialect(target)==null) return Verdict.notDelivered("ADAPTER_NOT_CONFIGURED");
-  // Kept by profile, but only while it is still the address that profile names: an operator who
-  // repoints a controller has repointed it, and a link held open to where it used to be would send
-  // commands to a machine nobody is talking about any more.
-  var link=links.compute(target.profileId(),(id,open)->{
-   if(open!=null&&open.reaches(target.host(),target.port())) return open;
-   if(open!=null) open.close();
-   var fresh=new Link(target.host(),target.port(),FRAME.equals(dialect(target)));
-   fresh.mappingCode=target.mappingCode();
-   return fresh;
-  });
+  Link link;
+  if(target.dialsOut())
+   // Kept by profile, but only while it is still the address that profile names: an operator who
+   // repoints a controller has repointed it, and a link held open to where it used to be would send
+   // commands to a machine nobody is talking about any more.
+   link=links.compute(target.profileId(),(id,open)->{
+    if(open!=null&&open.reaches(target.host(),target.port())) return open;
+    if(open!=null) open.close();
+    var fresh=new Link(target.host(),target.port(),FRAME.equals(dialect(target)),true);
+    fresh.mappingCode=target.mappingCode();
+    return fresh;
+   });
+  else{
+   link=arrived.get(claimKey(target.profileId(),target.externalId()));
+   // Nobody has dialled in for this vehicle, so nothing was written and nothing can have reached
+   // it. Sending it again once the gateway arrives cannot duplicate anything.
+   if(link==null) return Verdict.notDelivered("VEHICLE_NOT_CONNECTED");
+  }
   return link.send(target,command);
  }
 
@@ -118,12 +147,12 @@ class JsonLineVehicleLinks implements DeviceChannel {
   * worse than a command delayed by one query.
   */
  private Target targetOf(long siteId,long vehicleId){
-  return jdbc.query("SELECT c.id,c.host,c.port,v.external_vehicle_id,p.adapter_key FROM integration.vehicle_communication v"
+  return jdbc.query("SELECT c.id,c.host,c.port,c.role,v.external_vehicle_id,p.adapter_key FROM integration.vehicle_communication v"
    +" JOIN integration.connection_profile c ON c.site_id=v.site_id AND c.id=v.connection_profile_id"
    +" JOIN integration.protocol_profile p ON p.site_id=v.site_id AND p.id=v.protocol_profile_id"
-   +" WHERE v.site_id=? AND v.vehicle_id=? AND v.enabled AND c.enabled AND c.comm_type='TCP' AND c.role='CLIENT'"
-   +"",
-   (r,n)->new Target(siteId,r.getLong(1),r.getString(2),r.getInt(3),r.getString(4),r.getString(5)),
+   +" WHERE v.site_id=? AND v.vehicle_id=? AND v.enabled AND c.enabled AND c.comm_type='TCP'"
+   +" AND c.role IN ('CLIENT','SERVER')",
+   (r,n)->new Target(siteId,r.getLong(1),r.getString(2),r.getInt(3),r.getString(4),r.getString(5),r.getString(6)),
    siteId,vehicleId).stream().findFirst().orElse(null);
  }
 
@@ -146,14 +175,65 @@ class JsonLineVehicleLinks implements DeviceChannel {
   * costs one attempt rather than one per command.
   */
  private final class Link {
-  private final String host; private final int port; private final boolean framed; private volatile String mappingCode;
+  private final String host; private final int port; private final boolean framed; private final boolean dialsOut;
+  private volatile String mappingCode;
   private final ReentrantLock write=new ReentrantLock();
   private final Map<String,CompletableFuture<Void>> awaiting=new ConcurrentHashMap<>();
+  /** The names this connection has said it speaks for, so dropping it gives every one of them up. */
+  private final java.util.Set<String> claims=ConcurrentHashMap.newKeySet();
   private volatile Socket socket; private volatile OutputStream out; private volatile Thread reader;
   private volatile long nextAttemptAt;
 
-  Link(String host,int port,boolean framed){ this.host=host; this.port=port; this.framed=framed; }
+  Link(String host,int port,boolean framed,boolean dialsOut){
+   this.host=host; this.port=port; this.framed=framed; this.dialsOut=dialsOut;
+  }
   boolean reaches(String otherHost,int otherPort){ return host.equals(otherHost)&&port==otherPort; }
+
+  /**
+   * Takes over a connection somebody made to us and starts reading it.
+   *
+   * <p>It speaks for nothing yet. Until a frame names a vehicle this site uses, there is no vehicle
+   * whose commands may go down it -- a socket that has not said who it is is just a socket.
+   */
+  void adopt(long siteId,long profileId,Socket s) throws IOException {
+   s.setTcpNoDelay(true);
+   // Say who you are, or go. A connection that never identifies itself cannot be sent to and
+   // cannot be accounted for, and holding it open only hides that nothing is connected.
+   s.setSoTimeout(identifyTimeoutMs);
+   socket=s; out=s.getOutputStream();
+   reader=Thread.ofVirtual().name("vehicle-dial-in-"+host+":"+port)
+    .start(()->read(siteId,profileId,s));
+  }
+
+  /**
+   * The far side has named a vehicle, so this connection is that vehicle's until it goes.
+   *
+   * <p>A second connection naming a vehicle the first one claimed takes it: a gateway that
+   * restarted is on the new socket, and the old one is a line nobody is at the other end of.
+   * Refusing the new one would leave that vehicle unreachable for as long as the dead socket
+   * stays open, which is the wrong way round.
+   */
+  private void claim(long siteId,long profileId,String externalId){
+   if(dialsOut||externalId==null||externalId.isBlank()) return;
+   var key=claimKey(profileId,externalId);
+   if(claims.contains(key)) return;
+   if(vehicleOf(siteId,profileId,externalId)==null){
+    // Not a vehicle of this profile. Nothing it says may be written against a row, and a
+    // connection that cannot be placed is not one to keep.
+    log.warn("dial-in on {}:{} names vehicle {}, which this profile does not use",host,port,externalId);
+    drop("named a vehicle this profile does not use");
+    return;
+   }
+   claims.add(key);
+   var previous=arrived.put(key,this);
+   if(previous!=null&&previous!=this){
+    previous.claims.remove(key);
+    log.info("vehicle {} is now on the connection from {}:{}",externalId,host,port);
+    if(previous.claims.isEmpty()) previous.drop("another connection speaks for its vehicles now");
+   }
+   try{ if(socket!=null) socket.setSoTimeout(0); }
+   catch(IOException ignored){ /* identified already; the timeout only mattered before that */ }
+  }
 
   Verdict send(Target target,DeviceCommand command){
    byte[] line; String awaitKey=command.commandId();
@@ -219,6 +299,8 @@ class JsonLineVehicleLinks implements DeviceChannel {
   /** Null when the link is open; otherwise why it is not, as a reason nothing was written. */
   private String connect(Target target){
    if(socket!=null&&socket.isConnected()&&!socket.isClosed()) return null;
+   // Nothing to dial: this connection was made by the far side, and it has gone.
+   if(!dialsOut) return "VEHICLE_NOT_CONNECTED";
    if(System.currentTimeMillis()<nextAttemptAt) return "LINK_DOWN";
    nextAttemptAt=System.currentTimeMillis()+retryAfterMs;
    try{
@@ -266,6 +348,9 @@ class JsonLineVehicleLinks implements DeviceChannel {
      try{
       var decoded=frames.fromFrame(mapping,buffer.clone());
       decoded.ifPresent(said->{
+       // The slot the document calls the identity is how a dialled-in gateway says which vehicle
+       // this frame is about, and so which vehicle this connection speaks for.
+       claim(siteId,profileId,said.externalVehicleId());
        if(said.ackOf()!=null){
         var waiting=awaiting.get(said.ackOf());
         if(waiting!=null) waiting.complete(null);
@@ -303,6 +388,10 @@ class JsonLineVehicleLinks implements DeviceChannel {
 
   private void handle(long siteId,long profileId,JsonNode frame) throws IOException {
    String type=frame.path("type").asText("");
+   // Every frame of this contract that is about a vehicle names it, so a dialled-in gateway says
+   // which vehicles it speaks for simply by speaking about them. `hello` is the frame for saying
+   // so with nothing else to report, which is what a gateway sends when it has just connected.
+   if(frame.hasNonNull("vehicle")) claim(siteId,profileId,frame.get("vehicle").asText());
    switch(type){
     case "ack" -> {
      var waiting=awaiting.get(frame.path("commandId").asText(""));
@@ -351,12 +440,136 @@ class JsonLineVehicleLinks implements DeviceChannel {
   private void drop(String why){
    var s=socket;
    socket=null; out=null;
+   // Give up the vehicles this connection spoke for, but only where it is still the one on record:
+   // a connection replaced by a newer one must not take that vehicle away from its successor.
+   claims.forEach(key->arrived.remove(key,this));
+   claims.clear();
    if(s!=null){ log.warn("vehicle link to {}:{} closed: {}",host,port,why); try{ s.close(); }catch(IOException ignored){ } }
    awaiting.values().forEach(f->f.completeExceptionally(new IOException(why)));
   }
   void close(){ drop("server stopping"); }
  }
 
- @PreDestroy void closeAll(){ links.values().forEach(Link::close); links.clear(); }
+ /**
+  * A port held open for gateways to dial in to, one per connection profile.
+  *
+  * <p>One listener speaks one dialect, because a frame arriving on it has to be read as something
+  * before anything about it can be known. Where the vehicles behind a profile do not agree on the
+  * dialect, the port is not opened and the disagreement is said: guessing per connection would mean
+  * reading a vehicle's position out of bytes that are not a position.
+  */
+ private final class Listener {
+  private final long siteId,profileId; private final String bind; private final int port;
+  private final boolean framed; private final String mappingCode;
+  private volatile java.net.ServerSocket server; private volatile Thread accepting;
+  private final java.util.List<Link> accepted=new java.util.concurrent.CopyOnWriteArrayList<>();
+
+  Listener(long siteId,long profileId,String bind,int port,boolean framed,String mappingCode){
+   this.siteId=siteId; this.profileId=profileId; this.bind=bind; this.port=port;
+   this.framed=framed; this.mappingCode=mappingCode;
+  }
+  boolean matches(String otherBind,int otherPort,boolean otherFramed,String otherMapping){
+   return bind.equals(otherBind)&&port==otherPort&&framed==otherFramed
+    &&java.util.Objects.equals(mappingCode,otherMapping);
+  }
+
+  /** Opens the port. Returns false when it could not be had, which is said and then left alone. */
+  boolean open(){
+   try{
+    var s=new java.net.ServerSocket();
+    s.setReuseAddress(true);
+    s.bind(new InetSocketAddress(bind,port));
+    server=s;
+    accepting=Thread.ofVirtual().name("vehicle-listener-"+bind+":"+port).start(this::accept);
+    log.info("listening for vehicle connections on {}:{} ({})",bind,port,framed?FRAME:JSON);
+    return true;
+   }catch(IOException e){
+    log.error("cannot listen for vehicles on {}:{}: {}",bind,port,e.getMessage());
+    return false;
+   }
+  }
+
+  private void accept(){
+   var s=server;
+   while(s!=null&&!s.isClosed()){
+    try{
+     var socket=s.accept();
+     var link=new Link(socket.getInetAddress().getHostAddress(),socket.getPort(),framed,false);
+     link.mappingCode=mappingCode;
+     accepted.add(link);
+     link.adopt(siteId,profileId,socket);
+     log.info("vehicle connection from {}:{} on profile {}",socket.getInetAddress().getHostAddress(),socket.getPort(),profileId);
+    }catch(IOException e){
+     if(server!=null&&!server.isClosed()) log.warn("accept on {}:{} failed: {}",bind,port,e.getMessage());
+     return;
+    }
+   }
+  }
+
+  /** Closes the port and everything that came in on it. */
+  void close(){
+   var s=server; server=null;
+   if(s!=null){ try{ s.close(); }catch(IOException ignored){ } }
+   accepted.forEach(Link::close); accepted.clear();
+   log.info("stopped listening on {}:{}",bind,port);
+  }
+  /** Forgets connections that have gone, so a long-running listener does not accumulate them. */
+  void sweep(){ accepted.removeIf(link->link.socket==null); }
+ }
+
+ /**
+  * Brings the open ports in line with the configuration, which is how a change to it takes effect.
+  *
+  * <p>Read rather than remembered: opening a port is the one thing here that an operator cannot
+  * undo by editing a row, so the rows are what decides, every time.
+  */
+ @Override
+ @org.springframework.scheduling.annotation.Scheduled(
+  fixedDelayString="${amhs.device.tcp.listen-refresh-ms:5000}")
+ public void listen(){
+  var wanted=new java.util.HashMap<Long,Listener>();
+  try{
+   jdbc.query("SELECT c.id,c.site_id,c.host,c.port,min(p.adapter_key) AS one,max(p.adapter_key) AS other"
+    +" FROM integration.connection_profile c"
+    +" JOIN integration.vehicle_communication v ON v.site_id=c.site_id AND v.connection_profile_id=c.id AND v.enabled"
+    +" JOIN integration.protocol_profile p ON p.site_id=v.site_id AND p.id=v.protocol_profile_id"
+    +" WHERE c.enabled AND c.comm_type='TCP' AND c.role='SERVER'"
+    +" GROUP BY c.id,c.site_id,c.host,c.port",(r,n)->{
+     long profileId=r.getLong(1),siteId=r.getLong(2);
+     String one=r.getString(5),other=r.getString(6);
+     if(!one.equals(other)){
+      log.error("vehicles on connection profile {} do not agree on a dialect ({} and {}); not listening",
+       profileId,one,other);
+      return null;
+     }
+     String spoken=JSON.equals(one)?JSON
+      :mappings.byCode(siteId,one).filter(m->FRAME.equals(m.adapter())).map(m->FRAME).orElse(null);
+     if(spoken==null) return null;     // another adapter's key, or a document nobody could read
+     wanted.put(profileId,new Listener(siteId,profileId,r.getString(3),r.getInt(4),FRAME.equals(spoken),one));
+     return null;
+    });
+  }catch(RuntimeException e){
+   // The database is not answering. Keeping what is open is the safer half of being wrong: a
+   // gateway stays connected, where closing would drop vehicles over a query that failed once.
+   log.warn("could not read which ports to listen on: {}",e.getMessage());
+   return;
+  }
+  listeners.entrySet().removeIf(open->{
+   var want=wanted.get(open.getKey());
+   if(want!=null&&open.getValue().matches(want.bind,want.port,want.framed,want.mappingCode)) return false;
+   open.getValue().close();
+   return true;
+  });
+  // A port that could not be had puts nothing in the map, so the next sweep tries it again --
+  // which is what somebody freeing that port expects to happen.
+  wanted.forEach((profileId,want)->listeners.computeIfAbsent(profileId,id->want.open()?want:null));
+  listeners.values().forEach(Listener::sweep);
+ }
+
+ @PreDestroy void closeAll(){
+  links.values().forEach(Link::close); links.clear();
+  listeners.values().forEach(Listener::close); listeners.clear();
+  arrived.clear();
+ }
 
 }

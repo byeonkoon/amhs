@@ -10,7 +10,7 @@ import { Grid, Row } from '../../shell/Panel';
 import { NodeTab, SegmentTab } from './TopologyTabs';
 import { layerOfNode } from '../map/MapView';
 import {
-  ADAPTER_DISABLED_REASON, BCR_POLICY, CONTROL_AUTHORITY, chargeNodeRequired, chargingPolicyOptions,
+  BCR_POLICY, CONTROL_AUTHORITY, chargeNodeRequired, chargingPolicyOptions,
   connectionIssues, explainCode, protocolIssues, PROTO_TYPES, roleOptions, vdaProfileIssues,
   vehicleIssues, vehicleVdaIssues, versionOptions,
 } from './rules';
@@ -631,15 +631,27 @@ function ConnectionTab({ canWrite }: { canWrite: boolean }) {
                 <span className="hint">{s.commType === 'TCP' ? '차량에 접속하거나(CLIENT) 접속을 받습니다(SERVER).' : 'MQTT는 broker 주소만 지정합니다.'}</span>
               </div>
             </div>
-            <div style={row}><label htmlFor="c-host">호스트</label><input id="c-host" style={field} value={s.host} onChange={e => set({ host: e.target.value })} /></div>
+            <div style={row}>
+              <label htmlFor="c-host">호스트</label>
+              <div>
+                <input id="c-host" style={field} value={s.host} onChange={e => set({ host: e.target.value })} />
+                {/* The same field means two things, and which one it means is the role. */}
+                <span className="hint">{s.role === 'SERVER'
+                  ? '접속을 받을 주소입니다. 이 서버의 주소이며, 0.0.0.0은 모든 경로에서 받습니다.'
+                  : '접속할 상대의 주소입니다.'}</span>
+              </div>
+            </div>
             <div style={row}><label htmlFor="c-port">포트</label><input id="c-port" type="number" style={field} value={s.port} onChange={e => set({ port: Number(e.target.value) })} /></div>
             <div style={row}>
               <label>활성화</label>
               <div>
-                <label style={{ fontSize: 12, color: 'var(--mut)' }}>
-                  <input type="checkbox" checked={false} disabled /> 사용
+                <label style={{ fontSize: 12, color: canWrite ? 'var(--ink2)' : 'var(--mut)' }}>
+                  <input type="checkbox" checked={s.enabled} disabled={!canWrite}
+                    onChange={e => set({ enabled: e.target.checked })} /> 사용
                 </label>
-                <span className="hint">{ADAPTER_DISABLED_REASON}</span>
+                <span className="hint">{s.role === 'SERVER'
+                  ? '사용으로 두면 이 포트를 열고 게이트웨이의 접속을 기다립니다. 접속해 온 쪽은 어느 차량인지 먼저 말해야 합니다.'
+                  : '사용으로 두면 보낼 것이 생길 때 이 주소로 접속합니다.'}</span>
               </div>
             </div>
             <SaveBar issues={connectionIssues(s)} canWrite={canWrite} busy={busy} message={message} onSave={save} />

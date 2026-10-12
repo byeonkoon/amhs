@@ -136,7 +136,11 @@ class ConfigurationSqlTest {
   rejected(()->communications.create(999,binding(ids,"OTHER")),404,"VEHICLE_NOT_FOUND");
  }
  @Test void unimplementedAdaptersCannotBeEnabledAndOhtCannotCharge(){
-  rejected(()->connections.create(1,new ConnectionSettings("TCP","SERVER","127.0.0.1",1234,true)),422,"ADAPTER_NOT_IMPLEMENTED");
+  // Waiting for a gateway to dial in is a link this build opens, so it may be switched on. What
+  // cannot be is a role that does not go with the kind of link.
+  assertThat(connections.create(1,new ConnectionSettings("TCP","SERVER","127.0.0.1",1234,true))
+   .settings().enabled()).isTrue();
+  rejected(()->connections.create(1,new ConnectionSettings("MQTT","CLIENT","127.0.0.1",1883,true)),422,"INVALID_CONNECTION_ROLE");
   var ids=vda("DISABLED");
   rejected(()->communications.create(1,new CommunicationSettings(ids[0],ids[1],ids[2],"M","E","S","vda5050",true)),422,"ADAPTER_NOT_IMPLEMENTED");
   rejected(()->vehicles.create(1,new VehicleSettings(1,"OHT-C","OHT-C",VehicleType.OHT,1,1,1,101,null,102L,true,false,"CONTROLLER_MANAGED","DISABLED","HOME",null)),422,"OHT_CHARGING_NOT_SUPPORTED");

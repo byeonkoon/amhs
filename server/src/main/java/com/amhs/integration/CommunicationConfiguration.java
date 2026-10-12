@@ -29,7 +29,7 @@ public class CommunicationConfiguration {
   // without a release.
   ConfigurationException.require(VehicleAdapters.KNOWN.contains(p.adapterKey())||mappings.has(site,p.adapterKey()),
    "ADAPTER_NOT_IMPLEMENTED");
-  ConfigurationException.require(c.enabled()&&(("TCP".equals(c.commType())&&"CLIENT".equals(c.role()))
+  ConfigurationException.require(c.enabled()&&("TCP".equals(c.commType())
    ||("MQTT".equals(c.commType())&&"BROKER".equals(c.role()))),"CONNECTION_NOT_IN_USE");
  }
  if("VDA5050".equals(p.protoType()))ConfigurationException.require(s.serialNumber()!=null&&s.interfaceName()!=null,"VDA_IDENTITY_REQUIRED");
