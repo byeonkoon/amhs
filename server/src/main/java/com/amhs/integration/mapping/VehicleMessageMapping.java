@@ -54,8 +54,13 @@ public record VehicleMessageMapping(String code,String adapter,int version,Strin
   * <p>A PLC is not a correspondent. Nothing arrives; a block of words is read round and round and
   * the difference is the news. The poll interval is therefore how fresh any position can be, and
   * a site whose stale-position limit is shorter than its poll has set itself an impossible rule.
+  *
+  * <p>{@code driver} is which wire carries the block, and it belongs here rather than in a second
+  * adapter because everything else about the document is the same either way: the same layout, the
+  * same handshake, the same rules. Only how a word is asked for differs, and how an address is
+  * written -- {@code 40100} on Modbus, {@code D100} on MELSEC -- which is the driver's to read.
   */
- public record Area(String write,String read,int words,String endian,int pollMs){}
+ public record Area(String write,String read,int words,String endian,int pollMs,String driver){}
  /**
   * How a PLC says it has taken a command.
   *
@@ -96,14 +101,28 @@ public record VehicleMessageMapping(String code,String adapter,int version,Strin
  public static final Set<String> SOURCES=Set.of("command","payload","body","topic","slot","item","index");
  /** What a value on a wire may be. Nothing here is guessed from the data: a slot says what it is. */
  public static final Set<String> TYPES=Set.of("u8","u16","u32","i8","i16","i32","bcd","ascii","bit");
- /** The only names a mapping may produce on a report: this controller's own vocabulary. */
+ /** Modbus TCP holding registers, written {@code 40100} or as the wire address itself. */
+ public static final String MODBUS="modbus";
+ /** MELSEC communication protocol, 3E binary. Addresses are written {@code D100}, {@code W1A0}. */
+ public static final String MC="mc";
+ /** The wires a block of words can be carried on. Which one is the block's own property. */
+ public static final Set<String> DRIVERS=Set.of(MODBUS,MC);
+ /** The only names a mapping may produce on a vehicle's report: this controller's own vocabulary. */
  public static final Set<String> REPORT_FIELDS=
   Set.of("nodeId","nodeCode","mode","status","carrier","batteryPct","destinationChangeEnabled","online");
+ /**
+  * The same, for a piece of equipment, which is a different vocabulary because it is a different
+  * thing: a stocker has no node and no battery. It has whether it is able at all, whether it will
+  * take a call now, what it is doing, and whether anybody has heard from it.
+  */
+ public static final Set<String> EQUIPMENT_FIELDS=Set.of("status","available","callEnabled","online");
 
  /** Adapters that address values by name in a structure. */
  public static final Set<String> NAMED=Set.of("JSON_LINE_V1","MQTT_JSON_V1");
  /** Adapters that address values by position in bytes. */
- public static final Set<String> POSITIONAL=Set.of("PC_FRAME_V1","PLC_WORD_V1");
+ public static final Set<String> POSITIONAL=Set.of("PC_FRAME_V1","PLC_WORD_V1","EQUIPMENT_WORD_V1");
+ /** Adapters that work a block of words: the same arrangement, a vehicle behind it or a machine. */
+ public static final Set<String> WORD_BLOCK=Set.of("PLC_WORD_V1","EQUIPMENT_WORD_V1");
 
  public static VehicleMessageMapping read(ObjectMapper json,String document) throws IOException {
   var root=json.readTree(document);
@@ -130,23 +149,32 @@ public record VehicleMessageMapping(String code,String adapter,int version,Strin
    wrong.add("adapter: 어떤 어댑터가 읽는 문서인지 없습니다");
    throw new MappingRejected(wrong);     // without it, nothing else can be judged
   }
-  boolean named=NAMED.contains(adapter), positional=POSITIONAL.contains(adapter), plc="PLC_WORD_V1".equals(adapter);
+  boolean named=NAMED.contains(adapter), positional=POSITIONAL.contains(adapter);
+  boolean words=WORD_BLOCK.contains(adapter), equipment="EQUIPMENT_WORD_V1".equals(adapter);
   if(!named&&!positional) wrong.add("adapter: "+adapter+"를 읽는 어댑터가 없습니다 "+union(NAMED,POSITIONAL));
 
   if(identity==null||(identity.fromTopic()==null&&identity.fromField()==null&&identity.fromSlot()==null))
-   wrong.add("identity: 메시지가 어느 차량의 것인지 알 길이 없습니다");
+   wrong.add("identity: 메시지가 어느 "+(equipment?"설비":"차량")+"의 것인지 알 길이 없습니다");
   if(positional&&identity!=null&&identity.fromTopic()!=null)
    wrong.add("identity.fromTopic: "+adapter+"에는 토픽이 없습니다 (fromSlot을 씁니다)");
 
   if(positional&&layout.isEmpty()) wrong.add("layout: "+adapter+"는 값이 어디에 있는지 적어야 합니다");
   if(named&&!layout.isEmpty()) wrong.add("layout: "+adapter+"는 이름으로 찾으므로 자리를 적지 않습니다");
   if("PC_FRAME_V1".equals(adapter)&&frame==null) wrong.add("frame: PC_FRAME_V1은 프레임 길이·검사를 적어야 합니다");
-  if(plc&&area==null) wrong.add("area: PLC_WORD_V1은 읽고 쓸 레지스터 블록을 적어야 합니다");
+  if(words&&area==null) wrong.add("area: "+adapter+"는 읽고 쓸 레지스터 블록을 적어야 합니다");
   // A register keeps the value that was written to it. Without a handshake nobody can say whether
   // the controller has taken a command or is about to take it again, and a repeat is a second move.
-  if(plc&&handshake==null) wrong.add("handshake: PLC_WORD_V1은 수락 확인이 필수입니다 (레지스터는 값이 남습니다)");
-  if(!plc&&handshake!=null) wrong.add("handshake: "+adapter+"는 핸드셰이크를 쓰지 않습니다");
-  if(plc&&area!=null&&area.pollMs()<=0) wrong.add("area.poll-ms: 읽는 주기가 없으면 보고가 오지 않습니다");
+  // Equipment that is only read has nothing to acknowledge, so it needs one only if it is written.
+  if(words&&handshake==null&&(!equipment||!outbound.isEmpty()))
+   wrong.add("handshake: "+adapter+"는 "+(equipment?"명령을 적었으면 ":"")+"수락 확인이 필수입니다 (레지스터는 값이 남습니다)");
+  if(!words&&handshake!=null) wrong.add("handshake: "+adapter+"는 핸드셰이크를 쓰지 않습니다");
+  if(words&&area!=null&&area.pollMs()<=0) wrong.add("area.poll-ms: 읽는 주기가 없으면 보고가 오지 않습니다");
+  if(words&&area!=null&&!DRIVERS.contains(area.driver()))
+   wrong.add("area.driver: "+area.driver()+"로 말하는 선은 없습니다 "+DRIVERS);
+  // Equipment is read. Where a document says nothing is read, there is nothing it can ever say.
+  if(equipment&&inbound.isEmpty()) wrong.add("inbound: EQUIPMENT_WORD_V1은 설비가 무엇을 말하는지 적어야 합니다");
+  if(equipment&&area!=null&&(area.read()==null||area.read().isBlank()))
+   wrong.add("area.read: 설비는 읽어서 알 수 있을 뿐이므로 읽을 블록이 있어야 합니다");
 
   layout.forEach((name,slot)->{
    if(!TYPES.contains(slot.type())) wrong.add("layout."+name+": type "+slot.type()+"는 없습니다 "+TYPES);
@@ -184,8 +212,9 @@ public record VehicleMessageMapping(String code,String adapter,int version,Strin
      if(!layout.containsKey(name)) wrong.add("inbound["+at+"].when."+name+": layout에 없는 슬롯입니다");
     });
    }
+   var allowed=equipment?EQUIPMENT_FIELDS:REPORT_FIELDS;
    in.report().forEach((field,rule)->{
-    if(!REPORT_FIELDS.contains(field)) wrong.add("inbound["+at+"]."+field+": 이 관제가 아는 보고 항목이 아닙니다 "+REPORT_FIELDS);
+    if(!allowed.contains(field)) wrong.add("inbound["+at+"]."+field+": 이 관제가 아는 보고 항목이 아닙니다 "+allowed);
     check(wrong,"inbound["+at+"]."+field,rule);
    });
    in.ack().forEach((field,rule)->check(wrong,"inbound["+at+"].ack."+field,rule));
@@ -247,8 +276,11 @@ public record VehicleMessageMapping(String code,String adapter,int version,Strin
  }
  private static Area area(JsonNode node){
   if(node.isMissingNode()) return null;
+  // Modbus when the document does not say, because that is what every document written before
+  // there was a choice meant.
+  var driver=text(node,"driver");
   return new Area(text(node,"write"),text(node,"read"),node.path("words").asInt(0),text(node,"endian"),
-   node.path("poll-ms").asInt(0));
+   node.path("poll-ms").asInt(0),driver==null?MODBUS:driver.toLowerCase(java.util.Locale.ROOT));
  }
  private static Handshake handshake(JsonNode node){
   if(node.isMissingNode()) return null;

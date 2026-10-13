@@ -128,7 +128,8 @@ public class EquipmentConfiguration {
    Integer.class,site,revisionId);
   if(known==0) throw new ConfigurationException(422,"REVISION_NOT_FOUND");
  }
- private ConfigurationRecord<EquipmentSettings> unit(long site,long id){
+ /** One unit of this site, or a refusal saying there is no such thing. */
+ public ConfigurationRecord<EquipmentSettings> unit(long site,long id){
   var rows=jdbc.query("SELECT id,version,revision_id,code,name,kind,enabled FROM equipment.unit"
    +" WHERE site_id=? AND id=?",UNIT,site,id);
   if(rows.isEmpty())throw new ConfigurationException(404,"EQUIPMENT_NOT_FOUND");

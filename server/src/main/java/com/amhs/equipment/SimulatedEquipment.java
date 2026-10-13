@@ -52,22 +52,52 @@ public class SimulatedEquipment {
  }
 
  /** Called inside intake/assignment transactions; a prohibition edit takes the same unit lock. */
+ /**
+  * Whether the equipment behind these ports will take what is about to be sent to it.
+  *
+  * <p>Which answer counts depends on where the state honestly comes from. In SIMULATION it is what
+  * somebody set, to try something out. In OPERATION it is what the machine said down its link --
+  * and a machine that is wired but has not been heard from is refused, because a stocker nobody
+  * has heard from is exactly the one not to send a carrier to.
+  *
+  * <p>A unit nobody has wired at all is not refused. It is a site that has not described its
+  * equipment to this controller yet, which is how every site starts, and refusing on that would
+  * stop work over a fact nobody has stated either way.
+  */
  @Transactional
  public void requireAvailable(long site,long... ports){
-  if(!options.get(site).settings().simulated()) return;
+  boolean simulated=options.get(site).settings().simulated();
   var ids=new java.util.TreeSet<Long>();
   for(long port:ports) ids.addAll(jdbc.queryForList("SELECT equipment_unit_id FROM topology.port"
    +" WHERE site_id=? AND id=? AND equipment_unit_id IS NOT NULL",Long.class,site,port));
   for(long unit:ids){
    var enabled=jdbc.queryForList("SELECT enabled FROM equipment.unit WHERE site_id=? AND id=? FOR UPDATE",Boolean.class,site,unit);
    if(enabled.isEmpty()||!enabled.getFirst()) throw new Prohibited("EQUIPMENT_DISABLED");
-   var state=jdbc.query("SELECT enabled,call_enabled FROM equipment.simulation_state WHERE unit_id=?",
-    (r,n)->new boolean[]{r.getBoolean(1),r.getBoolean(2)},unit);
-   if(!state.isEmpty()){
-    if(!state.getFirst()[0]) throw new Prohibited("EQUIPMENT_DISABLED");
-    if(!state.getFirst()[1]) throw new Prohibited("EQUIPMENT_CALL_DISABLED");
-   }
+   if(simulated){
+    var state=jdbc.query("SELECT enabled,call_enabled FROM equipment.simulation_state WHERE unit_id=?",
+     (r,n)->new boolean[]{r.getBoolean(1),r.getBoolean(2)},unit);
+    if(!state.isEmpty()){
+     if(!state.getFirst()[0]) throw new Prohibited("EQUIPMENT_DISABLED");
+     if(!state.getFirst()[1]) throw new Prohibited("EQUIPMENT_CALL_DISABLED");
+    }
+   }else requireTheMachineSaidSo(site,unit);
   }
+ }
+
+ /** What the machine itself last said, for a unit somebody has wired to one. */
+ private void requireTheMachineSaidSo(long site,long unit){
+  var wired=jdbc.queryForObject("SELECT count(*) FROM equipment.communication"
+   +" WHERE site_id=? AND unit_id=? AND enabled",Integer.class,site,unit);
+  if(wired==null||wired==0) return;             // not described to this controller; not a refusal
+  var state=jdbc.query("SELECT online,available,call_enabled,status FROM equipment.device_state WHERE unit_id=?",
+   (r,n)->new Object[]{r.getBoolean(1),r.getObject(2),r.getObject(3),r.getString(4)},unit);
+  // Wired and never heard from is not "fine so far". Nothing is known, and acting on nothing is
+  // how a carrier ends up in front of a machine that has been in fault since before the shift.
+  if(state.isEmpty()||!(Boolean)state.getFirst()[0]) throw new Prohibited("EQUIPMENT_OFFLINE");
+  var row=state.getFirst();
+  if(Boolean.FALSE.equals(row[1])) throw new Prohibited("EQUIPMENT_DISABLED");
+  if(Boolean.FALSE.equals(row[2])) throw new Prohibited("EQUIPMENT_CALL_DISABLED");
+  if("ERROR".equals(row[3])||"OFFLINE".equals(row[3])) throw new Prohibited("EQUIPMENT_IN_FAULT");
  }
 
  /** Hold the prohibition lock through a virtual pickup/drop and record its local status atomically. */

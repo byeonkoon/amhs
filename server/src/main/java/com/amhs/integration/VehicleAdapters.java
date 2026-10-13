@@ -19,8 +19,17 @@ public final class VehicleAdapters {
  public static final String JSON_LINE_V1="JSON_LINE_V1";
  /** One frame of bytes per command over TCP, laid out by a mapping document. */
  public static final String PC_FRAME_V1="PC_FRAME_V1";
- /** A block of PLC holding registers over Modbus TCP, laid out by a mapping document. */
+ /** A block of PLC words, laid out by a mapping document, over Modbus TCP or MELSEC. */
  public static final String PLC_WORD_V1="PLC_WORD_V1";
+ /**
+  * The same block of words, but a piece of equipment rather than a vehicle.
+  *
+  * <p>A separate key, because what a document may say about it is different. A stocker has no node
+  * and no battery; it has whether it is able, whether it will take a call, and what it is doing.
+  * Sharing the key would mean sharing the vocabulary, and a document that could report a stocker's
+  * battery is a document somebody will try to write.
+  */
+ public static final String EQUIPMENT_WORD_V1="EQUIPMENT_WORD_V1";
  /**
   * Adapters a vehicle may be put in use on without a mapping document. The rest -- a frame, a
   * register block, a broker -- are named by the document that describes them, and configuration

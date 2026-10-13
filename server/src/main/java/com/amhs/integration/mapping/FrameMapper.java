@@ -22,7 +22,15 @@ public final class FrameMapper {
  }
 
  /** What a received buffer said: a report, an acknowledgement, or neither. */
- public record Decoded(String externalVehicleId,MessageMapper.Report report,String ackOf,Map<String,JsonNode> slots){}
+ /**
+  * What a block or a frame said.
+  *
+  * <p>{ report} is the vehicle vocabulary, already placed. { values} is what the rule
+  * produced before that placing, by the names the document used -- which is how a reader with a
+  * different vocabulary, such as a piece of equipment, gets at the same work.
+  */
+ public record Decoded(String externalVehicleId,MessageMapper.Report report,String ackOf,
+                       Map<String,JsonNode> slots,Map<String,JsonNode> values){}
 
  /** The frame for this command, or empty when the document does not describe it. */
  public Optional<byte[]> toFrame(VehicleMessageMapping mapping,MessageMapper.Command command){
@@ -104,7 +112,7 @@ public final class FrameMapper {
     asLong(values.get("nodeId")),asText(values.get("nodeCode")),asText(values.get("mode")),asText(values.get("status")),
     asBool(values.get("carrier")),asDouble(values.get("batteryPct")),
     asBool(values.get("destinationChangeEnabled")),asBool(values.get("online")));
-   return Optional.of(new Decoded(vehicle,report,ackOf,slots));
+   return Optional.of(new Decoded(vehicle,report,ackOf,slots,Map.copyOf(values)));
   }
   return Optional.empty();
  }

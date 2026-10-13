@@ -1,0 +1,35 @@
+{
+  "mapping": "EQUIPMENT-MC-EXAMPLE",
+  "adapter": "EQUIPMENT_WORD_V1",
+  "version": 1,
+  "notes": "가상의 설비(스토커) 예제입니다. 실제 현장 레지스터표가 아니며, 현장 값은 이 파일을 복사해 고친 뒤 설정 화면에서 올립니다. MELSEC(MC 프로토콜 3E 바이너리) D1000부터 8워드를 읽습니다. 쓰지 않습니다 — 이 관제는 설비를 몰고 가지 않고 참작합니다.",
+
+  "area": {
+    "driver": "mc",
+    "read": "D1000",
+    "words": 8,
+    "endian": "big",
+    "poll-ms": 500
+  },
+
+  "identity": { "fromSlot": "unit" },
+
+  "layout": {
+    "unit":      { "word": 0, "type": "ascii", "length": 8, "area": "read" },
+    "statusNow": { "word": 4, "type": "u16", "area": "read" },
+    "ableBit":   { "word": 5, "bit": 0, "area": "read" },
+    "callBit":   { "word": 5, "bit": 1, "area": "read" },
+    "heartbeat": { "word": 6, "type": "u16", "area": "read" }
+  },
+
+  "inbound": [
+    { "when": { "always": true },
+      "report": {
+        "status":      { "from": "slot.statusNow",
+                         "values": { "0": "IDLE", "1": "READY", "2": "BUSY", "3": "LOADING",
+                                     "4": "UNLOADING", "9": "ERROR" } },
+        "available":   { "from": "slot.ableBit" },
+        "callEnabled": { "from": "slot.callBit" }
+      }}
+  ]
+}

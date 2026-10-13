@@ -1,4 +1,4 @@
-package com.amhs.integration.infrastructure;
+package com.amhs.integration;
 import java.io.*;
 import java.net.InetSocketAddress;
 import java.net.Socket;
@@ -14,7 +14,7 @@ import java.net.Socket;
  * hundredth holding register in the 4x convention and goes on the wire as 99; a plain number is
  * taken as the wire address it already is.
  */
-final class ModbusTcp implements AutoCloseable {
+final class ModbusTcp implements WordBus {
  private static final int MAX_REGISTERS=125;
  private final String host; private final int port,unitId,timeoutMs;
  private Socket socket; private DataInputStream in; private DataOutputStream out;
@@ -24,12 +24,7 @@ final class ModbusTcp implements AutoCloseable {
   this.host=host; this.port=port; this.unitId=unitId; this.timeoutMs=timeoutMs;
  }
 
- /** What the controller itself refused, as it said it. Not a link problem. */
- static final class ModbusRefused extends IOException {
-  final int code;
-  ModbusRefused(int code){ super("Modbus exception "+code); this.code=code; }
- }
-
+ /** The wire address a controller's documentation writes that way. */
  static int wireAddress(String address){
   var text=address.trim();
   long value=Long.parseLong(text);
@@ -39,7 +34,7 @@ final class ModbusTcp implements AutoCloseable {
 
  boolean isOpen(){ return socket!=null&&socket.isConnected()&&!socket.isClosed(); }
 
- synchronized void open() throws IOException {
+ @Override public synchronized void open() throws IOException {
   if(isOpen()) return;
   close();
   var fresh=new Socket();
@@ -51,7 +46,10 @@ final class ModbusTcp implements AutoCloseable {
   out=new DataOutputStream(new BufferedOutputStream(fresh.getOutputStream()));
  }
 
- synchronized int[] read(int address,int count) throws IOException {
+ @Override public int[] read(String area,int words) throws IOException { return read(wireAddress(area),words); }
+ @Override public void write(String area,int[] values) throws IOException { write(wireAddress(area),values); }
+
+ private synchronized int[] read(int address,int count) throws IOException {
   if(count<1||count>MAX_REGISTERS) throw new IOException("한 번에 읽을 수 있는 레지스터는 1~"+MAX_REGISTERS+"개입니다");
   open();
   var pdu=new byte[]{3,(byte)(address>>8),(byte)address,(byte)(count>>8),(byte)count};
@@ -62,7 +60,7 @@ final class ModbusTcp implements AutoCloseable {
   return values;
  }
 
- synchronized void write(int address,int[] values) throws IOException {
+ private synchronized void write(int address,int[] values) throws IOException {
   if(values.length<1||values.length>123) throw new IOException("한 번에 쓸 수 있는 레지스터는 1~123개입니다");
   open();
   var pdu=new byte[6+values.length*2];
@@ -86,7 +84,7 @@ final class ModbusTcp implements AutoCloseable {
    var body=new byte[Math.max(0,length-1)];
    in.readFully(body);
    if(answered!=id) continue;                    // an answer to something older; the next one is ours
-   if(body.length>0&&(body[0]&0x80)!=0) throw new ModbusRefused(body.length>1?body[1]&0xFF:0);
+   if(body.length>0&&(body[0]&0x80)!=0) throw new ControllerRefused("Modbus",body.length>1?body[1]&0xFF:0);
    return body;
   }
  }

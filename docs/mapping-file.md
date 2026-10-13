@@ -167,10 +167,10 @@ JSON은 이름으로 찾지만 **PC 프레임과 PLC 레지스터는 자리로 �
   시도 번호를 시퀀스로 씁니다 — 이미 시도를 구분하는 값이기 때문입니다.
 - `inbound`의 `ack`에 `sequence`를 적으면 그 프레임이 수신 확인입니다.
 
-## PLC 레지스터 (`PLC_WORD_V1`, Modbus TCP)
+## PLC 레지스터 (`PLC_WORD_V1`)
 
 ```json
-"area": { "write": "40100", "read": "40200", "words": 16, "endian": "big", "poll-ms": 300 },
+"area": { "driver": "modbus", "write": "40100", "read": "40200", "words": 16, "endian": "big", "poll-ms": 300 },
 "handshake": {
   "write": ["command", "sequence", "nodes"],
   "then-set": "request",
@@ -181,7 +181,23 @@ JSON은 이름으로 찾지만 **PC 프레임과 PLC 레지스터는 자리로 �
 }
 ```
 
-주소는 문서가 쓰는 대로 적습니다 — `40100`은 4x 관례의 100번째 보유 레지스터이고 와이어에서는 99입니다.
+### 어느 선으로 말하는가 — `driver`
+
+워드 블록을 읽고 쓴다는 **얼개는 같고** 다른 것은 선과 주소 표기뿐이라, 어댑터를 나누지 않고 `area`가
+말합니다. `layout`·`handshake`·명령·수신 규칙은 어느 쪽이든 글자 그대로 같습니다.
+
+| `driver` | 선 | 주소 표기 |
+|---|---|---|
+| `modbus` (적지 않으면 이것) | Modbus TCP, 기능 코드 3·16 | `40100` — 4x 관례의 100번째 보유 레지스터, 와이어에서는 99 |
+| `mc` | MELSEC 통신 프로토콜, 3E 바이너리, 일괄 읽기 0401·일괄 쓰기 1401 | `D100` · `W1A0` · `R500` · `ZR1000` |
+
+MELSEC 주소의 진법은 **제조사 관례 그대로**입니다 — 워드 레지스터(`D`·`R`·`ZR`)는 10진, 링크 레지스터
+(`W`)는 16진입니다. 모든 MELSEC 매뉴얼과 그것을 읽는 모든 기술자가 그렇게 세므로, 문서에 `W1A0`이라
+적으면 기술자가 뜻한 그 레지스터입니다.
+
+**워드 디바이스만 주소가 됩니다.** 비트 디바이스를 워드 단위로 읽으면 응답이 오기는 하지만 서로 무관한
+비트 열여섯 개가 올 뿐이고, 그중 어느 것을 뜻했는지 매핑 문서가 말할 방법이 없습니다. 비트가 필요하면
+블록 안 워드의 비트로 적습니다(`{ "word": 5, "bit": 0 }`).
 
 **순서가 안전의 전부입니다.**
 
@@ -201,6 +217,48 @@ JSON은 이름으로 찾지만 **PC 프레임과 PLC 레지스터는 자리로 �
 **읽기는 폴링입니다.** 아무것도 오지 않고 블록을 계속 읽는 것이 전부이므로, **`poll-ms`가 위치 보고
 지연 기준보다 충분히 작아야** 합니다. 그렇지 않으면 매 주기마다 모든 차량이 잠시 "보고 지연"이 됩니다.
 
+## 설비 레지스터 (`EQUIPMENT_WORD_V1`)
+
+차량이 아니라 **설비**가 뒤에 있는 같은 얼개입니다. `area`·`layout`·`driver`는 글자 그대로 같고, 다른
+것은 **무엇을 말할 수 있는가**입니다.
+
+```json
+"adapter": "EQUIPMENT_WORD_V1",
+"area": { "driver": "mc", "read": "D1000", "words": 8, "endian": "big", "poll-ms": 500 },
+"identity": { "fromSlot": "unit" },
+"inbound": [
+  { "when": { "always": true },
+    "report": {
+      "status":      { "from": "slot.statusNow",
+                       "values": { "0": "IDLE", "1": "READY", "2": "BUSY", "9": "ERROR" } },
+      "available":   { "from": "slot.ableBit" },
+      "callEnabled": { "from": "slot.callBit" }
+    }}
+]
+```
+
+| 보고 항목 | 뜻 |
+|---|---|
+| `status` | `IDLE` · `READY` · `BUSY` · `ERROR` · `OFFLINE` · `LOADING` · `UNLOADING` |
+| `available` | 이 설비를 쓸 수 있는가 |
+| `callEnabled` | 지금 호출을 받는가 |
+| `online` | 관제가 판단합니다. 문서가 적지 않습니다 |
+
+차량 어휘(`nodeId`·`batteryPct` 등)는 **쓸 수 없습니다.** 스토커에는 노드도 배터리도 없고, 적을 수 있게
+두면 누군가는 적습니다.
+
+- **읽기만 합니다.** 이 관제는 설비를 몰고 가지 않고 참작합니다. `outbound`를 적으면 그때는 핸드셰이크가
+  필수가 되지만(레지스터는 값이 남으므로), 지금 이 시스템에는 설비에 **무엇을 쓸지 정하는 판단이 없습니다.**
+- **침묵은 "그대로"가 아닙니다.** 멈춘 컨트롤러는 마지막 값을 계속 들고 있으므로, 가만히 두면 영원히
+  `READY`로 읽힙니다. 몇 주기 동안 못 읽으면 그 설비는 **offline**이 되고, 이후 판단은 그것을 봅니다.
+  마지막으로 말한 내용은 **지우지 않습니다** — 조용해질 때 무엇을 하고 있었는지가 알고 싶은 전부입니다.
+- 설비 상태는 `equipment.device_state`에 들어갑니다. 시뮬레이션 상태(`equipment.simulation_state`)와
+  **다른 테이블**입니다. 하나는 기계가 말한 것이고 하나는 누군가 시험 삼아 둔 것이라, 구분하지 못하면
+  진짜 고장과 연습을 구분하지 못합니다.
+- 반송 판단(`requireAvailable`)이 보는 것은 운전 모드가 정합니다. SIMULATION이면 시뮬레이션 상태, OPERATION이면
+  기계가 말한 것입니다. **배선해 놓고 한 번도 못 들은 설비는 거절합니다**(`EQUIPMENT_OFFLINE`) — 소식 없는
+  스토커가 바로 반송을 보내면 안 되는 그 설비입니다. 아무도 배선하지 않은 설비는 거절하지 않습니다.
+
 ## 토픽 패턴
 
 `{이름}`은 한 레벨을 잡아 `topic.이름`으로 쓸 수 있게 하고, MQTT의 `+`(한 레벨)·`#`(나머지)도 그대로
@@ -216,7 +274,8 @@ uagv/v3/#
 
 ## 보고 항목 (닫힌 목록)
 
-`inbound`의 `report`가 만들 수 있는 이름은 **이 관제가 실제로 행동하는 항목뿐**입니다.
+`inbound`의 `report`가 만들 수 있는 이름은 **이 관제가 실제로 행동하는 항목뿐**입니다. 아래는 차량 어휘이고,
+설비(`EQUIPMENT_WORD_V1`)는 [자기 어휘](#설비-레지스터-equipment_word_v1)를 씁니다.
 
 | 항목 | 뜻 |
 |---|---|
@@ -248,8 +307,9 @@ inbound[0].speed: 이 관제가 아는 보고 항목이 아닙니다 [...]
 - [sample-mappings/vda5050-v3.json](sample-mappings/vda5050-v3.json) — VDA5050 3.0 최소 반송 계약(order·instantActions 발행, state·connection 수신)
 - [sample-mappings/pc-frame-example.json](sample-mappings/pc-frame-example.json) — 32바이트 고정 프레임, STX/ETX, XOR 체크섬
 - [sample-mappings/plc-word-example.json](sample-mappings/plc-word-example.json) — Modbus TCP 보유 레지스터 16워드, 요청/수락 핸드셰이크
+- [sample-mappings/equipment-mc-example.json](sample-mappings/equipment-mc-example.json) — 설비(스토커), MELSEC D1000부터 8워드 읽기 전용
 
-셋 다 **가상의 값**입니다. 현장 값은 복사해서 고친 뒤 설정 화면에서 올립니다.
+넷 다 **가상의 값**입니다. 현장 값은 복사해서 고친 뒤 설정 화면에서 올립니다.
 
 ## 문서를 어디에 두는가
 
@@ -319,5 +379,6 @@ config/mappings/vda5050-v3.json   →  "mapping": "VDA5050-V3"
   편집기를 둬도 거부 이유는 같지만, 고치는 자리가 파일이라는 점은 그대로입니다.
 - 이적재 완료 같은 **작업 증거**의 매핑. 작업 상태를 바꾸는 판단은 링크가 아니라 작업 원장의 몫이므로
   별도 계약(`POST /transport-orders/{id}/transitions`)으로 둡니다.
-- Modbus 외의 PLC 드라이버(MC 프로토콜 등), 코일·입력 레지스터(지금은 보유 레지스터 읽기·쓰기만).
-- 실장비·실제 컨트롤러 검증. 세 어댑터 모두 시험용 서버를 상대로만 확인했습니다.
+- 코일·입력 레지스터(Modbus는 지금 보유 레지스터만), MELSEC의 비트 디바이스.
+- 설비에 **쓰는** 것. 지금은 읽기만 합니다 — 이 시스템에 설비로 보낼 판단 자체가 아직 없습니다.
+- 실장비·실제 컨트롤러 검증. 어댑터 넷 모두 시험용 서버를 상대로만 확인했습니다.
