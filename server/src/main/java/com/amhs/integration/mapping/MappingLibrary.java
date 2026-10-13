@@ -20,17 +20,17 @@ import java.util.concurrent.ConcurrentHashMap;
  * site that has written one has a reason.
  *
  * <p>A document that cannot be read does not stop the others and does not stop the server: it is
- * named in the log with everything wrong with it, and the vehicles that asked for it stay
- * unconfigured -- the honest state for a vehicle whose dialect nobody could read.
+ * named in the log with everything wrong with it, and whatever asked for it stays unconfigured --
+ * the honest state for a machine whose dialect nobody could read.
  */
 @Component
 public class MappingLibrary {
  private static final Logger log=LoggerFactory.getLogger(MappingLibrary.class);
  private final ObjectMapper json; private final JdbcTemplate jdbc; private final Path directory;
- private final Map<String,VehicleMessageMapping> builtIn=new ConcurrentHashMap<>();
+ private final Map<String,DeviceMessageMapping> builtIn=new ConcurrentHashMap<>();
  private final Map<String,List<String>> refused=new ConcurrentHashMap<>();
  /** What each site has installed, read once and kept until that site's configuration changes. */
- private final Map<Long,Map<String,VehicleMessageMapping>> installed=new ConcurrentHashMap<>();
+ private final Map<Long,Map<String,DeviceMessageMapping>> installed=new ConcurrentHashMap<>();
 
  public MappingLibrary(ObjectMapper json,JdbcTemplate jdbc,
                        @Value("${amhs.device.mappings:config/mappings}") String directory){
@@ -48,10 +48,10 @@ public class MappingLibrary {
   try(var files=Files.list(directory)){
    for(Path file:files.filter(f->f.toString().endsWith(".json")).toList()){
     try{
-     var mapping=VehicleMessageMapping.read(json,Files.readString(file));
+     var mapping=DeviceMessageMapping.read(json,Files.readString(file));
      var clash=builtIn.put(mapping.code(),mapping);
      if(clash!=null) log.warn("two mapping documents call themselves {}; {} is the one in use",mapping.code(),file);
-    }catch(VehicleMessageMapping.MappingRejected e){
+    }catch(DeviceMessageMapping.MappingRejected e){
      refused.put(file.getFileName().toString(),e.problems());
      log.error("mapping {} refused: {}",file,String.join("; ",e.problems()));
     }catch(IOException e){
@@ -65,7 +65,7 @@ public class MappingLibrary {
  }
 
  /** This site's document of that name, or the one shipped with the server, or neither. */
- public Optional<VehicleMessageMapping> byCode(long siteId,String code){
+ public Optional<DeviceMessageMapping> byCode(long siteId,String code){
   if(code==null) return Optional.empty();
   var own=ofSite(siteId).get(code);
   return Optional.ofNullable(own!=null?own:builtIn.get(code));
@@ -83,12 +83,12 @@ public class MappingLibrary {
   * threads arriving together may both read, which costs one query and decides nothing -- they would
   * both have read the same rows.
   */
- private Map<String,VehicleMessageMapping> ofSite(long siteId){
+ private Map<String,DeviceMessageMapping> ofSite(long siteId){
   var known=installed.get(siteId);
   if(known!=null) return known;
-  var out=new LinkedHashMap<String,VehicleMessageMapping>();
+  var out=new LinkedHashMap<String,DeviceMessageMapping>();
   jdbc.query("SELECT code,document FROM integration.message_mapping WHERE site_id=? ORDER BY code",(r,n)->{
-   try{ return Map.entry(r.getString(1),VehicleMessageMapping.read(json,r.getString(2))); }
+   try{ return Map.entry(r.getString(1),DeviceMessageMapping.read(json,r.getString(2))); }
    catch(IOException|RuntimeException e){
     // It was judged when it was stored. If it cannot be read now, the reader has changed under
     // it; the site is told rather than silently given the shipped one in its place.

@@ -61,8 +61,8 @@ import java.util.concurrent.locks.ReentrantLock;
  */
 @Component
 class JsonLineVehicleLinks implements DeviceChannel,com.amhs.integration.VehicleListening {
- private static final String JSON=com.amhs.integration.VehicleAdapters.JSON_LINE_V1;
- private static final String FRAME=com.amhs.integration.VehicleAdapters.PC_FRAME_V1;
+ private static final String JSON=com.amhs.integration.DeviceAdapters.JSON_LINE_V1;
+ private static final String FRAME=com.amhs.integration.DeviceAdapters.PC_FRAME_V1;
  private static final Logger log=LoggerFactory.getLogger(JsonLineVehicleLinks.class);
  private static final int MAX_FRAME=64*1024;
 
@@ -350,7 +350,7 @@ class JsonLineVehicleLinks implements DeviceChannel,com.amhs.integration.Vehicle
       decoded.ifPresent(said->{
        // The slot the document calls the identity is how a dialled-in gateway says which vehicle
        // this frame is about, and so which vehicle this connection speaks for.
-       claim(siteId,profileId,said.externalVehicleId());
+       claim(siteId,profileId,said.externalId());
        if(said.ackOf()!=null){
         var waiting=awaiting.get(said.ackOf());
         if(waiting!=null) waiting.complete(null);
@@ -367,10 +367,10 @@ class JsonLineVehicleLinks implements DeviceChannel,com.amhs.integration.Vehicle
   }
 
   private void writeReport(long siteId,long profileId,FrameMapper.Decoded said){
-   Long vehicleId=vehicleOf(siteId,profileId,said.externalVehicleId());
+   Long vehicleId=vehicleOf(siteId,profileId,said.externalId());
    Long revisionId=activeRevision(siteId);
    if(vehicleId==null||revisionId==null){
-    log.warn("frame report for {} on {}:{} has nowhere to go",said.externalVehicleId(),host,port);
+    log.warn("frame report for {} on {}:{} has nowhere to go",said.externalId(),host,port);
     return;
    }
    var report=said.report();

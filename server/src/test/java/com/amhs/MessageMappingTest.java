@@ -1,6 +1,6 @@
 package com.amhs;
 import com.amhs.integration.mapping.MessageMapper;
-import com.amhs.integration.mapping.VehicleMessageMapping;
+import com.amhs.integration.mapping.DeviceMessageMapping;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import java.nio.file.*;
@@ -20,8 +20,8 @@ class MessageMappingTest {
  private final ObjectMapper json=new ObjectMapper();
  private final MessageMapper mapper=new MessageMapper(json);
 
- private VehicleMessageMapping read(String document) throws Exception {
-  return VehicleMessageMapping.read(json,document);
+ private DeviceMessageMapping read(String document) throws Exception {
+  return DeviceMessageMapping.read(json,document);
  }
  private static final Map<String,String> IDENTITY=
   Map.of("prefix","uagv","version","v3","manufacturer","ACME","serial","AGV-7");
@@ -102,7 +102,7 @@ class MessageMappingTest {
     "inbound":[{"when":{"topic":"t/{serial}"},"report":{"speed":{"from":"body.v","op":"sqrt"}}}]}
    """;
   assertThatThrownBy(()->read(broken))
-   .isInstanceOfSatisfying(VehicleMessageMapping.MappingRejected.class,rejected->
+   .isInstanceOfSatisfying(DeviceMessageMapping.MappingRejected.class,rejected->
     assertThat(rejected.problems()).as("all of it, so it is fixed in one pass")
      .anyMatch(p->p.contains("mapping:"))          // no name
      .anyMatch(p->p.contains("identity:"))         // no way to tell which vehicle

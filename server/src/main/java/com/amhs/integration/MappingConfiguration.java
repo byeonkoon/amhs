@@ -1,6 +1,6 @@
 package com.amhs.integration;
 import com.amhs.integration.mapping.MappingLibrary;
-import com.amhs.integration.mapping.VehicleMessageMapping;
+import com.amhs.integration.mapping.DeviceMessageMapping;
 import com.amhs.platform.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -42,7 +42,7 @@ public class MappingConfiguration {
   var document=r.getString("document");
   int commands=0,rules=0;
   try{
-   var read=VehicleMessageMapping.read(json,document);
+   var read=DeviceMessageMapping.read(json,document);
    commands=read.outbound().size(); rules=read.inbound().size();
   }catch(IOException|RuntimeException ignored){ /* stored ones were valid when stored; say nothing here */ }
   return new Installed(r.getLong("id"),r.getString("code"),r.getString("adapter"),r.getString("notes"),
@@ -73,10 +73,10 @@ public class MappingConfiguration {
  /** The actor is recorded against the row; the request itself is audited by the access gate. */
  public Installed save(long site,String document,String actor){
   guard.acquire(site);
-  VehicleMessageMapping read;
-  try{ read=VehicleMessageMapping.read(json,document); }
+  DeviceMessageMapping read;
+  try{ read=DeviceMessageMapping.read(json,document); }
   catch(IOException e){ throw new ConfigurationException(422,"MAPPING_NOT_JSON"); }
-  catch(VehicleMessageMapping.MappingRejected e){ throw new ConfigurationException(422,"MAPPING_REJECTED: "+e.getMessage()); }
+  catch(DeviceMessageMapping.MappingRejected e){ throw new ConfigurationException(422,"MAPPING_REJECTED: "+e.getMessage()); }
   var existing=jdbc.query("SELECT id,version FROM integration.message_mapping WHERE site_id=? AND code=?",
    (r,n)->new long[]{r.getLong(1),r.getLong(2)},site,read.code()).stream().findFirst().orElse(null);
   if(existing==null){
@@ -94,18 +94,26 @@ public class MappingConfiguration {
  /**
   * Takes a document out of use.
   *
-  * <p>Refused while a vehicle's communication points at a profile that names it, in use or not: a
-  * vehicle configured against a dialect nobody can read is a vehicle that looks configured and is
-  * not, and the row that says so is the thing to change first. A profile naming it with no vehicle
-  * behind it is not in anybody's way, and does not stand in the way of this either.
+  * <p>Refused while anything's communication points at a profile that names it, in use or not: a
+  * machine configured against a dialect nobody can read is one that looks configured and is not,
+  * and the row that says so is the thing to change first. A profile naming it with nothing behind
+  * it is not in anybody's way, and does not stand in the way of this either.
+  *
+  * <p>Equipment counts as much as a vehicle does. It reads the same documents, and a stocker left
+  * pointing at a dialect that is no longer there is a stocker that reads as offline for a reason
+  * nobody will find in the equipment screens.
   */
  @Transactional
  public void remove(long site,String code,String actor){
   guard.acquire(site);
   get(site,code);
-  Integer used=jdbc.queryForObject("SELECT count(*) FROM integration.vehicle_communication v"
+  Integer used=jdbc.queryForObject(
+   "SELECT (SELECT count(*) FROM integration.vehicle_communication v"
    +" JOIN integration.protocol_profile p ON p.site_id=v.site_id AND p.id=v.protocol_profile_id"
-   +" WHERE v.site_id=? AND p.adapter_key=?",Integer.class,site,code);
+   +" WHERE v.site_id=? AND p.adapter_key=?)"
+   +" + (SELECT count(*) FROM equipment.communication e"
+   +" JOIN integration.protocol_profile p ON p.site_id=e.site_id AND p.id=e.protocol_profile_id"
+   +" WHERE e.site_id=? AND p.adapter_key=?)",Integer.class,site,code,site,code);
   if(used!=null&&used>0) throw new ConfigurationException(409,"MAPPING_IN_USE");
   jdbc.update("DELETE FROM integration.message_mapping WHERE site_id=? AND code=?",site,code);
   forget(site);

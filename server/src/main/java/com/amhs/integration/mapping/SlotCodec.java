@@ -1,5 +1,5 @@
 package com.amhs.integration.mapping;
-import com.amhs.integration.mapping.VehicleMessageMapping.Slot;
+import com.amhs.integration.mapping.DeviceMessageMapping.Slot;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -126,7 +126,7 @@ public final class SlotCodec {
  }
 
  /** The checksum a frame carries, worked out over the bytes it covers. */
- public int checksum(byte[] buffer,VehicleMessageMapping.Checksum rule){
+ public int checksum(byte[] buffer,DeviceMessageMapping.Checksum rule){
   int from=Math.max(0,rule.from()), to=Math.min(buffer.length-1,rule.to());
   int value=0;
   for(int i=from;i<=to;i++){

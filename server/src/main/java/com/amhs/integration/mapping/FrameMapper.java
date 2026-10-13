@@ -25,15 +25,18 @@ public final class FrameMapper {
  /**
   * What a block or a frame said.
   *
-  * <p>{ report} is the vehicle vocabulary, already placed. { values} is what the rule
+  * <p>{@code report} is the vehicle vocabulary, already placed. {@code values} is what the rule
   * produced before that placing, by the names the document used -- which is how a reader with a
   * different vocabulary, such as a piece of equipment, gets at the same work.
+  *
+  * <p>{@code externalId} is whoever the message was about, named as the far side names them: a
+  * vehicle on one link and a stocker on another, which is why it is not called a vehicle here.
   */
- public record Decoded(String externalVehicleId,MessageMapper.Report report,String ackOf,
+ public record Decoded(String externalId,MessageMapper.Report report,String ackOf,
                        Map<String,JsonNode> slots,Map<String,JsonNode> values){}
 
  /** The frame for this command, or empty when the document does not describe it. */
- public Optional<byte[]> toFrame(VehicleMessageMapping mapping,MessageMapper.Command command){
+ public Optional<byte[]> toFrame(DeviceMessageMapping mapping,MessageMapper.Command command){
   var out=mapping.outbound().get(command.commandType());
   if(out==null||out.slots().isEmpty()) return Optional.empty();
   var frame=mapping.frame();
@@ -50,7 +53,7 @@ public final class FrameMapper {
  }
 
  /** Fills the named slots of a buffer from the rules that describe them. Used for frames and registers alike. */
- public void write(VehicleMessageMapping mapping,Map<String,VehicleMessageMapping.Rule> slots,
+ public void write(DeviceMessageMapping mapping,Map<String,DeviceMessageMapping.Rule> slots,
                    MessageMapper.Command command,byte[] buffer,boolean little){
   slots.forEach((name,rule)->{
    var slot=mapping.layout().get(name);
@@ -61,7 +64,7 @@ public final class FrameMapper {
  }
 
  /** Every slot of the layout as it reads now, by name. */
- public Map<String,JsonNode> decode(VehicleMessageMapping mapping,byte[] buffer,boolean little,String area){
+ public Map<String,JsonNode> decode(DeviceMessageMapping mapping,byte[] buffer,boolean little,String area){
   var out=new LinkedHashMap<String,JsonNode>();
   mapping.layout().forEach((name,slot)->{
    if(area!=null&&!area.equals(slot.area())) return;
@@ -77,7 +80,7 @@ public final class FrameMapper {
   * <p>A frame whose checksum does not add up is not read at all. There is no "probably fine": the
   * check is the only thing standing between a corrupted node number and a vehicle driving to it.
   */
- public Optional<Decoded> fromFrame(VehicleMessageMapping mapping,byte[] buffer){
+ public Optional<Decoded> fromFrame(DeviceMessageMapping mapping,byte[] buffer){
   var frame=mapping.frame();
   boolean little=little(frame==null?null:frame.endian());
   if(frame!=null&&frame.checksum()!=null){
@@ -91,7 +94,7 @@ public final class FrameMapper {
  }
 
  /** The same, for a block of registers that has already been decoded. */
- public Optional<Decoded> read(VehicleMessageMapping mapping,Map<String,JsonNode> slots){
+ public Optional<Decoded> read(DeviceMessageMapping mapping,Map<String,JsonNode> slots){
   for(var rule:mapping.inbound()){
    if(!matches(rule,slots)) continue;
    var values=new LinkedHashMap<String,JsonNode>();
@@ -118,7 +121,7 @@ public final class FrameMapper {
  }
 
  /** Whether this rule is the one: every slot it names holds the value it names. */
- private static boolean matches(VehicleMessageMapping.Inbound rule,Map<String,JsonNode> slots){
+ private static boolean matches(DeviceMessageMapping.Inbound rule,Map<String,JsonNode> slots){
   if(rule.always()) return true;
   if(rule.whenSlots().isEmpty()) return false;
   for(var want:rule.whenSlots().entrySet()){

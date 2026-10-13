@@ -1,5 +1,5 @@
 package com.amhs.integration;
-import com.amhs.integration.mapping.VehicleMessageMapping;
+import com.amhs.integration.mapping.DeviceMessageMapping;
 
 /**
  * The wire a block of words is carried on, chosen by the name a mapping document gives it.
@@ -12,7 +12,7 @@ import com.amhs.integration.mapping.VehicleMessageMapping;
 public final class WordBuses {
  private WordBuses(){ }
  public static WordBus open(String driver,String host,int port,int unitId,int timeoutMs){
-  return VehicleMessageMapping.MC.equals(driver)
+  return DeviceMessageMapping.MC.equals(driver)
    ?new McProtocol(host,port,timeoutMs)
    :new ModbusTcp(host,port,unitId,timeoutMs);
  }

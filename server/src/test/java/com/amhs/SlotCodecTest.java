@@ -1,7 +1,7 @@
 package com.amhs;
 import com.amhs.integration.mapping.SlotCodec;
-import com.amhs.integration.mapping.VehicleMessageMapping;
-import com.amhs.integration.mapping.VehicleMessageMapping.Slot;
+import com.amhs.integration.mapping.DeviceMessageMapping;
+import com.amhs.integration.mapping.DeviceMessageMapping.Slot;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import java.nio.file.*;
@@ -105,15 +105,15 @@ class SlotCodecTest {
 
  @Test void acheckSumCoversWhatTheDocumentSaysItCovers(){
   var frame=new byte[]{0x02,0x10,0x00,0x05,0x00,0x00};
-  int xor=codec.checksum(frame,new VehicleMessageMapping.Checksum("xor",4,1,3));
+  int xor=codec.checksum(frame,new DeviceMessageMapping.Checksum("xor",4,1,3));
   assertThat(xor).isEqualTo(0x10^0x00^0x05);
-  int sum=codec.checksum(frame,new VehicleMessageMapping.Checksum("sum",4,1,3));
+  int sum=codec.checksum(frame,new DeviceMessageMapping.Checksum("sum",4,1,3));
   assertThat(sum).isEqualTo(0x10+0x00+0x05);
  }
 
  @Test void thepositionalSamplesShippedWithTheRepositoryAreValid() throws Exception {
   for(String file:new String[]{"pc-frame-example.json","plc-word-example.json"}){
-   var mapping=VehicleMessageMapping.read(json,Files.readString(Path.of("../docs/sample-mappings/"+file)));
+   var mapping=DeviceMessageMapping.read(json,Files.readString(Path.of("../docs/sample-mappings/"+file)));
    assertThat(mapping.layout()).as(file).isNotEmpty();
    assertThat(mapping.outbound()).as(file).containsKeys("MOVE","STOP");
   }
@@ -129,8 +129,8 @@ class SlotCodecTest {
     "outbound":{"MOVE":{"slots":{"sequence":{"from":"command.sequence"}}}},
     "inbound":[{"when":{"always":true},"report":{"nodeId":{"from":"slot.sequence"}}}]}
    """;
-  assertThatThrownBy(()->VehicleMessageMapping.read(json,noHandshake))
-   .isInstanceOfSatisfying(VehicleMessageMapping.MappingRejected.class,r->
+  assertThatThrownBy(()->DeviceMessageMapping.read(json,noHandshake))
+   .isInstanceOfSatisfying(DeviceMessageMapping.MappingRejected.class,r->
     assertThat(r.problems()).anyMatch(p->p.contains("handshake")&&p.contains("레지스터는 값이 남습니다")));
 
   // A block that belongs to another adapter is refused rather than ignored: somebody believing
@@ -141,8 +141,8 @@ class SlotCodecTest {
     "outbound":{"MOVE":{"topic":"t/1","body":{"x":1}}},
     "inbound":[{"when":{"topic":"t/1"},"report":{"nodeId":{"from":"body.x"}}}]}
    """;
-  assertThatThrownBy(()->VehicleMessageMapping.read(json,topicInPlc))
-   .isInstanceOfSatisfying(VehicleMessageMapping.MappingRejected.class,r->
+  assertThatThrownBy(()->DeviceMessageMapping.read(json,topicInPlc))
+   .isInstanceOfSatisfying(DeviceMessageMapping.MappingRejected.class,r->
     assertThat(r.problems())
      .anyMatch(p->p.contains("identity.fromTopic"))
      .anyMatch(p->p.contains("outbound.MOVE.topic"))
@@ -156,8 +156,8 @@ class SlotCodecTest {
     "outbound":{"MOVE":{"topic":"t/{serial}","body":{"x":1}}},
     "inbound":[{"when":{"topic":"t/{serial}"},"report":{"nodeId":{"from":"body.x"}}}]}
    """;
-  assertThatThrownBy(()->VehicleMessageMapping.read(json,layoutInJson))
-   .isInstanceOfSatisfying(VehicleMessageMapping.MappingRejected.class,r->
+  assertThatThrownBy(()->DeviceMessageMapping.read(json,layoutInJson))
+   .isInstanceOfSatisfying(DeviceMessageMapping.MappingRejected.class,r->
     assertThat(r.problems()).anyMatch(p->p.contains("layout:")&&p.contains("자리를 적지 않습니다")));
  }
 }

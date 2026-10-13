@@ -5,13 +5,18 @@ import java.io.IOException;
 import java.util.*;
 
 /**
- * How one family of vehicles says what this controller means, as a document rather than as code.
+ * How one family of machines says what this controller means, as a document rather than as code.
  *
- * <p>Every site meets vehicles that speak differently: the same "go to these nodes" is one JSON
+ * <p>Every site meets equipment that speaks differently: the same "go to these nodes" is one JSON
  * shape for one maker and another for the next, and the field that says a vehicle is under remote
  * control is called something different again. Writing an adapter per maker puts a site's wiring
- * into this repository and makes every new vehicle a release; writing the mapping down as data
+ * into this repository and makes every new machine a release; writing the mapping down as data
  * keeps the decisions here and the dialect at the site, where it belongs and where it changes.
+ *
+ * <p>A family is a family of vehicles or a family of equipment -- a stocker behind a PLC is the
+ * same arrangement as an AGV behind one, described in the same words. What differs between the two
+ * is only what a document of that adapter may report, because what a vehicle has to say about
+ * itself is not what a stocker has.
  *
  * <p>The document is deliberately not a language. There is no expression to evaluate, no script to
  * run: a field is taken from one of a fixed set of places, optionally translated through a table,
@@ -21,11 +26,11 @@ import java.util.*;
  * <p>The shape is documented in {@code docs/mapping-file.md}; a worked example is in
  * {@code docs/sample-mappings/}.
  */
-public record VehicleMessageMapping(String code,String adapter,int version,String notes,
+public record DeviceMessageMapping(String code,String adapter,int version,String notes,
                                     Identity identity,Map<String,Outbound> outbound,List<Inbound> inbound,
                                     Frame frame,Area area,Map<String,Slot> layout,Handshake handshake){
 
- /** How a message says which vehicle it is about. */
+ /** How a message says which machine it is about -- a vehicle on one link, a stocker on another. */
  public record Identity(String fromTopic,String fromField,String fromSlot){}
  /** One command, as the far side expects it: where it goes and what it carries. */
  public record Outbound(String topic,Map<String,Rule> body,Map<String,Rule> slots){}
@@ -108,7 +113,7 @@ public record VehicleMessageMapping(String code,String adapter,int version,Strin
  /** The wires a block of words can be carried on. Which one is the block's own property. */
  public static final Set<String> DRIVERS=Set.of(MODBUS,MC);
  /** The only names a mapping may produce on a vehicle's report: this controller's own vocabulary. */
- public static final Set<String> REPORT_FIELDS=
+ public static final Set<String> VEHICLE_FIELDS=
   Set.of("nodeId","nodeCode","mode","status","carrier","batteryPct","destinationChangeEnabled","online");
  /**
   * The same, for a piece of equipment, which is a different vocabulary because it is a different
@@ -124,9 +129,9 @@ public record VehicleMessageMapping(String code,String adapter,int version,Strin
  /** Adapters that work a block of words: the same arrangement, a vehicle behind it or a machine. */
  public static final Set<String> WORD_BLOCK=Set.of("PLC_WORD_V1","EQUIPMENT_WORD_V1");
 
- public static VehicleMessageMapping read(ObjectMapper json,String document) throws IOException {
+ public static DeviceMessageMapping read(ObjectMapper json,String document) throws IOException {
   var root=json.readTree(document);
-  var mapping=new VehicleMessageMapping(
+  var mapping=new DeviceMessageMapping(
    text(root,"mapping"),text(root,"adapter"),root.path("version").asInt(1),text(root,"notes"),
    identity(root.path("identity")),outbound(root.path("outbound")),inbound(root.path("inbound")),
    frame(root.path("frame")),area(root.path("area")),layout(root.path("layout")),
@@ -212,7 +217,7 @@ public record VehicleMessageMapping(String code,String adapter,int version,Strin
      if(!layout.containsKey(name)) wrong.add("inbound["+at+"].when."+name+": layout에 없는 슬롯입니다");
     });
    }
-   var allowed=equipment?EQUIPMENT_FIELDS:REPORT_FIELDS;
+   var allowed=equipment?EQUIPMENT_FIELDS:VEHICLE_FIELDS;
    in.report().forEach((field,rule)->{
     if(!allowed.contains(field)) wrong.add("inbound["+at+"]."+field+": 이 관제가 아는 보고 항목이 아닙니다 "+allowed);
     check(wrong,"inbound["+at+"]."+field,rule);

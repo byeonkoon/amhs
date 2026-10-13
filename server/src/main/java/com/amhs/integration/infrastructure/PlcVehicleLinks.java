@@ -65,7 +65,7 @@ class PlcVehicleLinks implements DeviceChannel {
   var mapping=mappings.byCode(wired.siteId(),wired.mappingCode()).orElse(null);
   if(mapping==null) return Verdict.notDelivered("MAPPING_NOT_IN_USE");
   // Another adapter's document on this link is not this adapter's to act on.
-  if(!com.amhs.integration.VehicleAdapters.PLC_WORD_V1.equals(mapping.adapter()))
+  if(!com.amhs.integration.DeviceAdapters.PLC_WORD_V1.equals(mapping.adapter()))
    return Verdict.notDelivered("ADAPTER_NOT_CONFIGURED");
   var out=mapping.outbound().get(command.commandType());
   if(out==null||out.slots().isEmpty()) return Verdict.notDelivered("COMMAND_NOT_IN_MAPPING");
@@ -73,7 +73,7 @@ class PlcVehicleLinks implements DeviceChannel {
    open!=null&&open.reaches(wired.host(),wired.port())?open:replace(open,wired,mapping));
   return controller.send(wired,mapping,out,command);
  }
- private Controller replace(Controller open,Wired wired,VehicleMessageMapping mapping){
+ private Controller replace(Controller open,Wired wired,DeviceMessageMapping mapping){
   if(open!=null) open.close();
   return new Controller(wired.host(),wired.port(),mapping);
  }
@@ -89,13 +89,13 @@ class PlcVehicleLinks implements DeviceChannel {
 
  /** One PLC: the registers it is given, the registers it shows, and who is listening. */
  private final class Controller {
-  private final String host; private final int port; private final VehicleMessageMapping mapping;
+  private final String host; private final int port; private final DeviceMessageMapping mapping;
   private final com.amhs.integration.WordBus wire;
   private final String writeAt,readAt; private final int words; private final boolean little;
   private final Map<Long,Wired> vehicles=new ConcurrentHashMap<>();
   private volatile long nextPollAt;
 
-  Controller(String host,int port,VehicleMessageMapping mapping){
+  Controller(String host,int port,DeviceMessageMapping mapping){
    this.host=host; this.port=port; this.mapping=mapping;
    var area=mapping.area();
    this.writeAt=area.write();
@@ -106,7 +106,7 @@ class PlcVehicleLinks implements DeviceChannel {
   }
   boolean reaches(String otherHost,int otherPort){ return host.equals(otherHost)&&port==otherPort; }
 
-  synchronized Verdict send(Wired wired,VehicleMessageMapping mapping,VehicleMessageMapping.Outbound out,
+  synchronized Verdict send(Wired wired,DeviceMessageMapping mapping,DeviceMessageMapping.Outbound out,
                             DeviceCommand command){
    vehicles.put(wired.vehicleId(),wired);
    var hand=mapping.handshake();
@@ -142,7 +142,7 @@ class PlcVehicleLinks implements DeviceChannel {
   }
 
   /** The buffer as registers, with the request bit set or clear. */
-  private int[] words(byte[] buffer,VehicleMessageMapping.Handshake hand,boolean request){
+  private int[] words(byte[] buffer,DeviceMessageMapping.Handshake hand,boolean request){
    var copy=buffer.clone();
    var bit=mapping.layout().get(hand.thenSet());
    if(bit!=null) codec.write(copy,bit,json.getNodeFactory().booleanNode(request),little);
@@ -152,7 +152,7 @@ class PlcVehicleLinks implements DeviceChannel {
   }
 
   /** Waits for the controller's own bit, with the sequence it echoes saying which command it took. */
-  private boolean awaitAcceptance(VehicleMessageMapping.Handshake hand,JsonNode sequence){
+  private boolean awaitAcceptance(DeviceMessageMapping.Handshake hand,JsonNode sequence){
    long until=System.currentTimeMillis()+hand.timeoutMs();
    while(System.currentTimeMillis()<until){
     var slots=readBlock();
@@ -217,7 +217,7 @@ class PlcVehicleLinks implements DeviceChannel {
  }
 
  /** What the controller will echo back to say which command it took. */
- private JsonNode expectedEcho(VehicleMessageMapping mapping,VehicleMessageMapping.Outbound out,
+ private JsonNode expectedEcho(DeviceMessageMapping mapping,DeviceMessageMapping.Outbound out,
                                DeviceCommand command,Wired wired){
   var hand=mapping.handshake();
   if(hand==null||hand.echoSlot()==null) return null;

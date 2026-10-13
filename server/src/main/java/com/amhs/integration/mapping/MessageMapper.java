@@ -38,7 +38,7 @@ public final class MessageMapper {
  }
 
  /** The message for this command, or empty when the mapping does not describe that command. */
- public Optional<Message> toMessage(VehicleMessageMapping mapping,Command command){
+ public Optional<Message> toMessage(DeviceMessageMapping mapping,Command command){
   var out=mapping.outbound().get(command.commandType());
   if(out==null) return Optional.empty();
   var body=json.createObjectNode();
@@ -47,7 +47,7 @@ public final class MessageMapper {
  }
 
  /** What this message says, or empty when no rule recognises its topic. */
- public Optional<Report> toReport(VehicleMessageMapping mapping,String topic,JsonNode body){
+ public Optional<Report> toReport(DeviceMessageMapping mapping,String topic,JsonNode body){
   for(var rule:mapping.inbound()){
    var captured=match(rule.whenTopic(),topic);
    if(captured==null) continue;
@@ -64,7 +64,7 @@ public final class MessageMapper {
  }
 
  /** Which vehicle the far side means, by the topic it used or a field it carried. */
- private String vehicleOf(VehicleMessageMapping mapping,Map<String,String> captured,JsonNode body){
+ private String vehicleOf(DeviceMessageMapping mapping,Map<String,String> captured,JsonNode body){
   var identity=mapping.identity();
   if(identity==null) return null;
   if(identity.fromTopic()!=null) return captured.get(identity.fromTopic());
@@ -79,7 +79,7 @@ public final class MessageMapper {
   * through the table if there is one, convert it if asked, and fall back only when what came out
   * was nothing.
   */
- public JsonNode value(VehicleMessageMapping.Rule rule,Command command,JsonNode body,Map<String,String> captured,
+ public JsonNode value(DeviceMessageMapping.Rule rule,Command command,JsonNode body,Map<String,String> captured,
                  Map<String,JsonNode> slots){
   JsonNode found=rule.constant()!=null?rule.constant():source(rule.from(),command,body,captured,slots,null,-1);
   if(rule.each()!=null&&found!=null&&found.isArray()){
@@ -103,7 +103,7 @@ public final class MessageMapper {
   if((found==null||found.isNull())&&rule.fallback()!=null) found=rule.fallback();
   return found;
  }
- private JsonNode each(VehicleMessageMapping.Rule rule,Command command,JsonNode body,Map<String,String> captured,
+ private JsonNode each(DeviceMessageMapping.Rule rule,Command command,JsonNode body,Map<String,String> captured,
                        Map<String,JsonNode> slots,JsonNode item,int index){
   JsonNode found=rule.constant()!=null?rule.constant():source(rule.from(),command,body,captured,slots,item,index);
   if(rule.values()!=null&&found!=null&&!found.isNull()) found=rule.values().get(found.asText());

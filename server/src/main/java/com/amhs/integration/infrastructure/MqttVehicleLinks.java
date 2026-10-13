@@ -5,7 +5,7 @@ import com.amhs.integration.DeviceChannel;
 import com.amhs.integration.DeviceCommand;
 import com.amhs.integration.mapping.MappingLibrary;
 import com.amhs.integration.mapping.MessageMapper;
-import com.amhs.integration.mapping.VehicleMessageMapping;
+import com.amhs.integration.mapping.DeviceMessageMapping;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PreDestroy;
 import org.eclipse.paho.client.mqttv3.*;
@@ -129,12 +129,12 @@ class MqttVehicleLinks implements DeviceChannel {
   private final String host; private final int port;
   private final Map<String,Listening> listening=new ConcurrentHashMap<>();
   private volatile MqttClient client; private volatile long nextAttemptAt;
-  private record Listening(long siteId,long profileId,VehicleMessageMapping mapping){}
+  private record Listening(long siteId,long profileId,DeviceMessageMapping mapping){}
 
   Broker(String host,int port){ this.host=host; this.port=port; }
   boolean reaches(String otherHost,int otherPort){ return host.equals(otherHost)&&port==otherPort; }
 
-  synchronized Verdict publish(Wired wired,VehicleMessageMapping mapping,MessageMapper.Message message){
+  synchronized Verdict publish(Wired wired,DeviceMessageMapping mapping,MessageMapper.Message message){
    var open=connect();
    if(open!=null) return Verdict.notDelivered(open);
    listen(wired,mapping);
@@ -172,7 +172,7 @@ class MqttVehicleLinks implements DeviceChannel {
   }
 
   /** Subscribes to what this vehicle's mapping says comes back, once per topic. */
-  private void listen(Wired wired,VehicleMessageMapping mapping){
+  private void listen(Wired wired,DeviceMessageMapping mapping){
    for(var rule:mapping.inbound()){
     String filter=fill(rule.whenTopic(),wired.identity());
     if(listening.putIfAbsent(filter,new Listening(wired.siteId(),wired.profileId(),mapping))!=null) continue;

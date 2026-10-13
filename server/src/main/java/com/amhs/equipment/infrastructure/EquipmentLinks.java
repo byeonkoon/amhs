@@ -1,10 +1,10 @@
 package com.amhs.equipment.infrastructure;
-import com.amhs.integration.VehicleAdapters;
+import com.amhs.integration.DeviceAdapters;
 import com.amhs.integration.mapping.FrameMapper;
 import com.amhs.integration.mapping.MappingLibrary;
 import com.amhs.integration.mapping.MessageMapper;
 import com.amhs.integration.mapping.SlotCodec;
-import com.amhs.integration.mapping.VehicleMessageMapping;
+import com.amhs.integration.mapping.DeviceMessageMapping;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PreDestroy;
@@ -84,7 +84,7 @@ public class EquipmentLinks {
   });
   byProfile.forEach((profileId,wired)->{
    var mapping=mappings.byCode(wired.getFirst().siteId(),wired.getFirst().mappingCode())
-    .filter(m->VehicleAdapters.EQUIPMENT_WORD_V1.equals(m.adapter())).orElse(null);
+    .filter(m->DeviceAdapters.EQUIPMENT_WORD_V1.equals(m.adapter())).orElse(null);
    if(mapping==null) return;   // another adapter's document, or one nobody could read
    var controller=controllers.computeIfAbsent(profileId,
     id->new Controller(wired.getFirst().host(),wired.getFirst().port(),mapping));
@@ -113,14 +113,14 @@ public class EquipmentLinks {
 
  /** One controller: the block it shows, and the units that block speaks for. */
  private final class Controller implements AutoCloseable {
-  private final String host; private final int port; private final VehicleMessageMapping mapping;
+  private final String host; private final int port; private final DeviceMessageMapping mapping;
   private final com.amhs.integration.WordBus wire;
   private final String readAt; private final int words; private final boolean little;
   private volatile long nextPollAt;
   /** When each unit was last actually read, so silence can be told from an unchanged value. */
   private final Map<Long,Long> lastSeen=new ConcurrentHashMap<>();
 
-  Controller(String host,int port,VehicleMessageMapping mapping){
+  Controller(String host,int port,DeviceMessageMapping mapping){
    this.host=host; this.port=port; this.mapping=mapping;
    var area=mapping.area();
    this.readAt=area.read(); this.words=area.words();
@@ -140,7 +140,7 @@ public class EquipmentLinks {
     if(said!=null) for(var unit:units){
      // A block that names which unit it is about speaks for that one only. One that names none
      // sits in front of a single machine, and the reading is that machine's.
-     if(said.externalVehicleId()!=null&&!said.externalVehicleId().equals(unit.externalId())) continue;
+     if(said.externalId()!=null&&!said.externalId().equals(unit.externalId())) continue;
      write(unit,said.values());
      lastSeen.put(unit.unitId(),now);
     }

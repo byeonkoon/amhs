@@ -27,7 +27,7 @@ public class CommunicationConfiguration {
   // change when somebody switches the link on. An adapter key is either one built in or the name of
   // a mapping document this server has read -- the second is how a new vehicle family arrives
   // without a release.
-  ConfigurationException.require(VehicleAdapters.KNOWN.contains(p.adapterKey())||mappings.has(site,p.adapterKey()),
+  ConfigurationException.require(DeviceAdapters.KNOWN.contains(p.adapterKey())||mappings.has(site,p.adapterKey()),
    "ADAPTER_NOT_IMPLEMENTED");
   ConfigurationException.require(c.enabled()&&("TCP".equals(c.commType())
    ||("MQTT".equals(c.commType())&&"BROKER".equals(c.role()))),"CONNECTION_NOT_IN_USE");

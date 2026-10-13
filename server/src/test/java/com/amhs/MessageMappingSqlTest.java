@@ -134,6 +134,33 @@ class MessageMappingSqlTest {
   assertThat(library.has(1,"SITE-LINE")).isFalse();
  }
 
+ /**
+  * Equipment names documents too, and counts the same.
+  *
+  * <p>A stocker left pointing at a dialect that is no longer there reads as offline for a reason
+  * nobody will find in the equipment screens, which is the worst kind of reason to have.
+  */
+ @Test void adocumentAPieceOfEquipmentStillNamesCannotBeTakenAway(){
+  mappings.save(1,document("SITE-LINE","move"),"tester");
+  var unitId=jdbc.queryForObject("SELECT u.id FROM equipment.unit u"
+   +" JOIN topology.map_revision m ON m.id=u.revision_id AND m.status='ACTIVE'"
+   +" WHERE u.site_id=1 ORDER BY u.id LIMIT 1",Long.class);
+  var c=connections.create(1,new ConnectionSettings("TCP","CLIENT","127.0.0.1",2098,false));
+  var p=protocols.create(1,new ProtocolSettings("PLC","1","SITE-LINE"));
+  // Straight to the row: what is being proved is the refusal, not the configuration service's
+  // own rules about which documents equipment may be put in use on.
+  jdbc.update("INSERT INTO equipment.communication(id,site_id,unit_id,connection_profile_id,"
+   +"protocol_profile_id,external_unit_id,enabled) VALUES(?,1,?,?,?,'STK-X',FALSE)",
+   9601L,unitId,c.id(),p.id());
+
+  assertThatThrownBy(()->mappings.remove(1,"SITE-LINE","tester"))
+   .isInstanceOf(ConfigurationException.class).hasMessageContaining("MAPPING_IN_USE");
+
+  jdbc.update("DELETE FROM equipment.communication WHERE id=?",9601L);
+  mappings.remove(1,"SITE-LINE","tester");
+  assertThat(library.has(1,"SITE-LINE")).isFalse();
+ }
+
  /** Reading what is installed is open as every read here is; installing one is not. */
  @Test void aMappingIsAnAdministratorsChangeAndOnlyWhileTheSiteIsStopped()throws Exception{
   mvc.perform(get(BASE)).andExpect(status().isOk());

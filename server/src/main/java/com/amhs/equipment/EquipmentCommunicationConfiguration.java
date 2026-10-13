@@ -1,7 +1,7 @@
 package com.amhs.equipment;
 import com.amhs.integration.ConnectionConfiguration;
 import com.amhs.integration.ProtocolConfiguration;
-import com.amhs.integration.VehicleAdapters;
+import com.amhs.integration.DeviceAdapters;
 import com.amhs.integration.mapping.MappingLibrary;
 import com.amhs.platform.*;
 import org.springframework.jdbc.core.RowMapper;
@@ -59,7 +59,7 @@ public class EquipmentCommunicationConfiguration {
    // equipment, and the link must be one this build can open and switched on itself -- otherwise
    // the row says a stocker is connected while nothing ever reads it.
    var document=mappings.byCode(site,p.adapterKey())
-    .filter(m->VehicleAdapters.EQUIPMENT_WORD_V1.equals(m.adapter()));
+    .filter(m->DeviceAdapters.EQUIPMENT_WORD_V1.equals(m.adapter()));
    ConfigurationException.require(document.isPresent(),"EQUIPMENT_ADAPTER_REQUIRED");
    ConfigurationException.require(c.enabled()&&"TCP".equals(c.commType()),"CONNECTION_NOT_IN_USE");
    // A dialled-in gateway has no address to poll, and equipment is read by polling.

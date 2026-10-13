@@ -141,6 +141,18 @@ class EquipmentLinkSqlTest {
   var rows=jdbc.query("SELECT online FROM equipment.device_state WHERE unit_id=?",(r,n)->r.getBoolean(1),unitId);
   return rows.isEmpty()?null:rows.getFirst();
  }
+ /**
+  * Why transport would be refused this port right now, or null when it would not be.
+  *
+  * <p>Waited on rather than the state column, because this is the thing being proved. A reading
+  * only matters through the answer it produces, and waiting on the column instead would race the
+  * poll interval: reading a state and then asking would let a few slow polls turn a fault into a
+  * silence between the two.
+  */
+ private String refusalFor(long port){
+  try{ equipment.requireAvailable(SITE,port); return null; }
+  catch(SimulatedEquipment.Prohibited e){ return e.getMessage(); }
+ }
 
  @Test void whatTheMachineSaysIsWrittenWhereTheRestOfTheSystemLooks() throws Exception {
   try(var melsec=new FakeMelsec()){
@@ -164,14 +176,12 @@ class EquipmentLinkSqlTest {
    melsec.words[5]=0b11;
    wire(melsec.port());
    inOperation();
-   assertThat(waitFor(()->"ERROR".equals(statusNow()))).isTrue();
-   assertThatThrownBy(()->equipment.requireAvailable(SITE,portId))
-    .isInstanceOf(SimulatedEquipment.Prohibited.class).hasMessage("EQUIPMENT_IN_FAULT");
+   assertThat(waitFor(()->"EQUIPMENT_IN_FAULT".equals(refusalFor(portId))))
+    .as("the fault it reported is what refuses the port").isTrue();
 
    // And when it says it is well again, the same question is allowed.
    melsec.words[4]=1;                             // READY
-   assertThat(waitFor(()->"READY".equals(statusNow()))).isTrue();
-   assertThatCode(()->equipment.requireAvailable(SITE,portId)).doesNotThrowAnyException();
+   assertThat(waitFor(()->refusalFor(portId)==null)).as("it was let through again").isTrue();
   }
  }
 
@@ -183,9 +193,8 @@ class EquipmentLinkSqlTest {
    melsec.words[5]=0b01;                          // able, but not taking calls
    wire(melsec.port());
    inOperation();
-   assertThat(waitFor(()->"READY".equals(statusNow()))).isTrue();
-   assertThatThrownBy(()->equipment.requireAvailable(SITE,portId))
-    .isInstanceOf(SimulatedEquipment.Prohibited.class).hasMessage("EQUIPMENT_CALL_DISABLED");
+   assertThat(waitFor(()->"EQUIPMENT_CALL_DISABLED".equals(refusalFor(portId)))).isTrue();
+   assertThat(statusNow()).as("it is well, it just will not take one").isEqualTo("READY");
   }
  }
 
@@ -202,15 +211,13 @@ class EquipmentLinkSqlTest {
    melsec.words[5]=0b11;
    wire(melsec.port());
    inOperation();
-   assertThat(waitFor(()->"READY".equals(statusNow()))).isTrue();
-   assertThatCode(()->equipment.requireAvailable(SITE,portId)).doesNotThrowAnyException();
+   assertThat(waitFor(()->refusalFor(portId)==null)).as("a machine that answers is let through").isTrue();
 
    melsec.deaf=true;
-   assertThat(waitFor(()->Boolean.FALSE.equals(onlineNow()))).as("it was noticed as gone").isTrue();
+   assertThat(waitFor(()->"EQUIPMENT_OFFLINE".equals(refusalFor(portId)))).as("it was noticed as gone").isTrue();
+   assertThat(onlineNow()).isFalse();
    // What it last said is kept: what a machine was doing when it went quiet is the thing worth knowing.
    assertThat(statusNow()).isEqualTo("READY");
-   assertThatThrownBy(()->equipment.requireAvailable(SITE,portId))
-    .isInstanceOf(SimulatedEquipment.Prohibited.class).hasMessage("EQUIPMENT_OFFLINE");
   }
  }
 
