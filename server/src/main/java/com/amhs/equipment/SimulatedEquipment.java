@@ -71,33 +71,49 @@ public class SimulatedEquipment {
   for(long port:ports) ids.addAll(jdbc.queryForList("SELECT equipment_unit_id FROM topology.port"
    +" WHERE site_id=? AND id=? AND equipment_unit_id IS NOT NULL",Long.class,site,port));
   for(long unit:ids){
-   var enabled=jdbc.queryForList("SELECT enabled FROM equipment.unit WHERE site_id=? AND id=? FOR UPDATE",Boolean.class,site,unit);
-   if(enabled.isEmpty()||!enabled.getFirst()) throw new Prohibited("EQUIPMENT_DISABLED");
-   if(simulated){
-    var state=jdbc.query("SELECT enabled,call_enabled FROM equipment.simulation_state WHERE unit_id=?",
-     (r,n)->new boolean[]{r.getBoolean(1),r.getBoolean(2)},unit);
-    if(!state.isEmpty()){
-     if(!state.getFirst()[0]) throw new Prohibited("EQUIPMENT_DISABLED");
-     if(!state.getFirst()[1]) throw new Prohibited("EQUIPMENT_CALL_DISABLED");
-    }
-   }else requireTheMachineSaidSo(site,unit);
+   // Taken before the answer is worked out, so a prohibition edit cannot land between the two.
+   jdbc.queryForList("SELECT enabled FROM equipment.unit WHERE site_id=? AND id=? FOR UPDATE",Boolean.class,site,unit);
+   var refusal=refusalFor(site,unit,simulated);
+   if(refusal!=null) throw new Prohibited(refusal);
   }
  }
 
+ /**
+  * Why this unit would refuse work right now, or null when it would not.
+  *
+  * <p>The same answer the screens show. Written once because two copies of this rule would be two
+  * rules: an operator reading "ready" off a screen while transport refuses the port has been given
+  * a reason to distrust the screen, and there is no way back from that.
+  */
+ public String refusalFor(long site,long unit,boolean simulated){
+  var enabled=jdbc.queryForList("SELECT enabled FROM equipment.unit WHERE site_id=? AND id=?",Boolean.class,site,unit);
+  if(enabled.isEmpty()||!enabled.getFirst()) return "EQUIPMENT_DISABLED";
+  if(simulated){
+   var state=jdbc.query("SELECT enabled,call_enabled FROM equipment.simulation_state WHERE unit_id=?",
+    (r,n)->new boolean[]{r.getBoolean(1),r.getBoolean(2)},unit);
+   if(state.isEmpty()) return null;
+   if(!state.getFirst()[0]) return "EQUIPMENT_DISABLED";
+   if(!state.getFirst()[1]) return "EQUIPMENT_CALL_DISABLED";
+   return null;
+  }
+  return whatTheMachineSaid(site,unit);
+ }
+
  /** What the machine itself last said, for a unit somebody has wired to one. */
- private void requireTheMachineSaidSo(long site,long unit){
+ private String whatTheMachineSaid(long site,long unit){
   var wired=jdbc.queryForObject("SELECT count(*) FROM equipment.communication"
    +" WHERE site_id=? AND unit_id=? AND enabled",Integer.class,site,unit);
-  if(wired==null||wired==0) return;             // not described to this controller; not a refusal
+  if(wired==null||wired==0) return null;        // not described to this controller; not a refusal
   var state=jdbc.query("SELECT online,available,call_enabled,status FROM equipment.device_state WHERE unit_id=?",
    (r,n)->new Object[]{r.getBoolean(1),r.getObject(2),r.getObject(3),r.getString(4)},unit);
   // Wired and never heard from is not "fine so far". Nothing is known, and acting on nothing is
   // how a carrier ends up in front of a machine that has been in fault since before the shift.
-  if(state.isEmpty()||!(Boolean)state.getFirst()[0]) throw new Prohibited("EQUIPMENT_OFFLINE");
+  if(state.isEmpty()||!(Boolean)state.getFirst()[0]) return "EQUIPMENT_OFFLINE";
   var row=state.getFirst();
-  if(Boolean.FALSE.equals(row[1])) throw new Prohibited("EQUIPMENT_DISABLED");
-  if(Boolean.FALSE.equals(row[2])) throw new Prohibited("EQUIPMENT_CALL_DISABLED");
-  if("ERROR".equals(row[3])||"OFFLINE".equals(row[3])) throw new Prohibited("EQUIPMENT_IN_FAULT");
+  if(Boolean.FALSE.equals(row[1])) return "EQUIPMENT_DISABLED";
+  if(Boolean.FALSE.equals(row[2])) return "EQUIPMENT_CALL_DISABLED";
+  if("ERROR".equals(row[3])||"OFFLINE".equals(row[3])) return "EQUIPMENT_IN_FAULT";
+  return null;
  }
 
  /** Hold the prohibition lock through a virtual pickup/drop and record its local status atomically. */

@@ -1,6 +1,14 @@
 package com.amhs;
+import com.amhs.equipment.EquipmentCommunicationConfiguration;
+import com.amhs.equipment.EquipmentCommunicationSettings;
+import com.amhs.equipment.EquipmentStates;
 import com.amhs.equipment.SimulatedEquipment;
 import com.amhs.equipment.infrastructure.EquipmentLinks;
+import com.amhs.integration.ConnectionConfiguration;
+import com.amhs.integration.ConnectionSettings;
+import com.amhs.integration.ProtocolConfiguration;
+import com.amhs.integration.ProtocolSettings;
+import com.amhs.platform.ConfigurationException;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -24,7 +32,9 @@ import static org.assertj.core.api.Assertions.*;
  "spring.datasource.url=${AMHS_TEST_DB_URL:jdbc:postgresql://127.0.0.1:5432/amhs_test}"})
 @EnabledIfEnvironmentVariable(named="AMHS_SQL_TEST",matches="true")
 class EquipmentLinkSqlTest {
- @Autowired EquipmentLinks links; @Autowired SimulatedEquipment equipment;
+ @Autowired EquipmentLinks devices; @Autowired SimulatedEquipment equipment;
+ @Autowired EquipmentStates states; @Autowired EquipmentCommunicationConfiguration links;
+ @Autowired ConnectionConfiguration connections; @Autowired ProtocolConfiguration protocols;
  @Autowired JdbcTemplate jdbc;
  private static final long SITE=1;
  private static final long PROFILE=9501, PROTOCOL=9501, WIRED=9501;
@@ -107,10 +117,21 @@ class EquipmentLinkSqlTest {
  }
  @AfterEach void clean(){
   jdbc.update("DELETE FROM equipment.communication WHERE id=?",WIRED);
+  if(unitId>0){
+   jdbc.update("DELETE FROM equipment.communication WHERE site_id=? AND unit_id=?",SITE,unitId);
+   jdbc.update("DELETE FROM equipment.device_state WHERE unit_id=?",unitId);
+   jdbc.update("DELETE FROM equipment.simulation_state WHERE unit_id=?",unitId);
+  }
   jdbc.update("DELETE FROM integration.connection_profile WHERE id=?",PROFILE);
   jdbc.update("DELETE FROM integration.protocol_profile WHERE id=?",PROTOCOL);
-  if(unitId>0) jdbc.update("DELETE FROM equipment.device_state WHERE unit_id=?",unitId);
-  jdbc.update("UPDATE platform.site_operation SET run_mode='SIMULATION' WHERE site_id=?",SITE);
+  // Profiles made through the services get ids of their own, so they are named to be found again.
+  jdbc.update("DELETE FROM integration.connection_profile WHERE site_id=? AND port IN (2096,2097)",SITE);
+  jdbc.update("DELETE FROM integration.protocol_profile WHERE site_id=? AND adapter_key IN (?,?)",
+   SITE,"PC-FRAME-EXAMPLE","EQUIPMENT-MC-EXAMPLE");
+  // This class is not @Transactional -- the link reads on its own connection -- so nothing rolls
+  // back and every row and mode it touches has to be put back by hand. MAINTENANCE is what the
+  // schema starts a site in, and what the rest of the suite expects to find.
+  jdbc.update("UPDATE platform.site_operation SET run_mode='SIMULATION',mode='MAINTENANCE' WHERE site_id=?",SITE);
  }
 
  private void wire(int port){
@@ -127,7 +148,7 @@ class EquipmentLinkSqlTest {
  }
  private boolean waitFor(java.util.function.BooleanSupplier until) throws InterruptedException {
   for(int i=0;i<100;i++){
-   links.poll();
+   devices.poll();
    if(until.getAsBoolean()) return true;
    Thread.sleep(20);
   }
@@ -227,7 +248,7 @@ class EquipmentLinkSqlTest {
   try(var closed=new ServerSocket(0)){ dead=closed.getLocalPort(); }
   wire(dead);
   inOperation();
-  links.poll();
+  devices.poll();
   assertThatThrownBy(()->equipment.requireAvailable(SITE,portId))
    .isInstanceOf(SimulatedEquipment.Prohibited.class).hasMessage("EQUIPMENT_OFFLINE");
  }
@@ -240,7 +261,7 @@ class EquipmentLinkSqlTest {
    melsec.endCode=0xC059;                         // the controller saying no to the request
    wire(melsec.port());
    inOperation();
-   links.poll(); Thread.sleep(100); links.poll();
+   devices.poll(); Thread.sleep(100); devices.poll();
    assertThat(statusNow()).as("nothing was read, so nothing was written").isNull();
    assertThatThrownBy(()->equipment.requireAvailable(SITE,portId))
     .isInstanceOf(SimulatedEquipment.Prohibited.class).hasMessage("EQUIPMENT_OFFLINE");
@@ -251,5 +272,68 @@ class EquipmentLinkSqlTest {
  @Test void aunitNobodyWiredIsNotRefused(){
   inOperation();
   assertThatCode(()->equipment.requireAvailable(SITE,portId)).doesNotThrowAnyException();
+ }
+
+ /**
+  * What the screen shows is what transport decided, not a second opinion.
+  *
+  * <p>A screen saying "ready" while transport refuses the port would give an operator a reason to
+  * distrust the screen, and there is no way back from that. So the view carries the refusal the
+  * decision itself produces.
+  */
+ @Test void thescreenIsGivenTheSameAnswerTransportActsOn() throws Exception {
+  try(var melsec=new FakeMelsec()){
+   melsec.name(0,"STK-01");
+   melsec.words[4]=9;                             // ERROR
+   melsec.words[5]=0b11;
+   wire(melsec.port());
+   inOperation();
+   assertThat(waitFor(()->"EQUIPMENT_IN_FAULT".equals(refusalFor(portId)))).isTrue();
+
+   var shown=states.list(SITE).stream().filter(s->s.unitId()==unitId).findFirst().orElseThrow();
+   assertThat(shown.wired()).isTrue();
+   assertThat(shown.online()).isTrue();
+   assertThat(shown.status()).isEqualTo("ERROR");
+   assertThat(shown.fromDevice()).as("in OPERATION it is the machine's own state").isTrue();
+   assertThat(shown.lastSeenAt()).isNotNull();
+   assertThat(shown.refusal()).as("the same answer transport acts on").isEqualTo("EQUIPMENT_IN_FAULT");
+  }
+ }
+
+ /** A unit nobody wired reads as unwired and refuses nothing, which is the honest pair. */
+ @Test void anunwiredUnitReadsAsUnwiredAndRefusesNothing(){
+  inOperation();
+  var shown=states.list(SITE).stream().filter(s->s.unitId()==unitId).findFirst().orElseThrow();
+  assertThat(shown.wired()).isFalse();
+  assertThat(shown.refusal()).isNull();
+  assertThat(shown.online()).as("nothing is wired, so there is nothing to be online").isNull();
+ }
+
+ /** In SIMULATION the screen shows what somebody set, and says so. */
+ @Test void insimulationTheScreenShowsTheSimulatedState(){
+  jdbc.update("INSERT INTO equipment.simulation_state(unit_id,enabled,call_enabled,status) VALUES(?,TRUE,FALSE,'BUSY')"
+   +" ON CONFLICT(unit_id) DO UPDATE SET enabled=TRUE,call_enabled=FALSE,status='BUSY'",unitId);
+  var shown=states.list(SITE).stream().filter(s->s.unitId()==unitId).findFirst().orElseThrow();
+  assertThat(shown.fromDevice()).isFalse();
+  assertThat(shown.status()).isEqualTo("BUSY");
+  assertThat(shown.callEnabled()).isFalse();
+  assertThat(shown.refusal()).isEqualTo("EQUIPMENT_CALL_DISABLED");
+ }
+
+ /** A vehicle's document describes a vehicle. Equipment may not be put in use on one. */
+ @Test void equipmentMayOnlyBePutInUseOnAnEquipmentDocument(){
+  jdbc.update("UPDATE platform.site_operation SET mode='MAINTENANCE' WHERE site_id=?",SITE);
+  var c=connections.create(SITE,new ConnectionSettings("TCP","CLIENT","127.0.0.1",2097,true));
+  var vehicleDoc=protocols.create(SITE,new ProtocolSettings("PC","1.0","PC-FRAME-EXAMPLE"));
+  assertThatThrownBy(()->links.create(SITE,
+   new EquipmentCommunicationSettings(unitId,c.id(),vehicleDoc.id(),"STK-01",true)))
+   .isInstanceOf(ConfigurationException.class).hasMessage("EQUIPMENT_ADAPTER_REQUIRED");
+
+  // And a link that waits for the far side to dial in cannot be polled, so it is refused too.
+  var waiting=connections.create(SITE,new ConnectionSettings("TCP","SERVER","127.0.0.1",2096,true));
+  var equipmentDoc=protocols.create(SITE,new ProtocolSettings("PLC","1.0","EQUIPMENT-MC-EXAMPLE"));
+  assertThatThrownBy(()->links.create(SITE,
+   new EquipmentCommunicationSettings(unitId,waiting.id(),equipmentDoc.id(),"STK-01",true)))
+   .isInstanceOf(ConfigurationException.class).hasMessage("EQUIPMENT_NEEDS_A_DIALLED_LINK");
  }
 }

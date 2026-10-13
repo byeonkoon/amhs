@@ -65,6 +65,33 @@ export const simulationEquipmentApi = {
   list: () => `/api/v1/sites/${SITE_ID}/simulation/equipment`,
   state: (id: number) => `/api/v1/sites/${SITE_ID}/simulation/equipment/${id}/state`,
 };
+
+/**
+ * One unit as it stands: what it is wired to, what it last said, and whether work would be refused.
+ *
+ * <p>`refusal` is the server's own answer, not one worked out again here. A screen that said
+ * "ready" while transport refused the port would be a screen nobody could trust again.
+ *
+ * <p>`fromDevice` says which half of that is being shown. In SIMULATION the state is what somebody
+ * set to try something out; in OPERATION it is what the machine said down its link.
+ */
+export type EquipmentState = {
+  unitId: number; code: string; name: string; kind: string;
+  configuredEnabled: boolean; wired: boolean;
+  online: boolean | null; available: boolean | null; callEnabled: boolean | null;
+  status: string | null; lastSeenAt: string | null;
+  refusal: string | null; fromDevice: boolean;
+};
+/** Which profiles reach a piece of equipment, and what the far side calls it. */
+export type EquipmentCommunicationSettings = {
+  unitId: number; connectionProfileId: number; protocolProfileId: number;
+  externalUnitId: string; enabled: boolean;
+};
+export const equipmentApi = {
+  states: () => `/api/v1/sites/${SITE_ID}/equipment/states`,
+  /** Which equipment is wired to what. ADMIN, and the site has to be in maintenance to change it. */
+  communications: () => `/api/v1/sites/${SITE_ID}/configuration/equipment-communications`,
+};
 /**
  * One map revision as the server reports it, with how much it holds.
  *

@@ -1,7 +1,8 @@
 import React from 'react';
 import {
-  ApiError, cfgApi, get, getAs, opsApi, send, sendText, ROLE_LABEL,
-  type Cfg, type ConnectionSettings, type EquipmentSettings, type InstalledMapping, type MapData, type MapRevision,
+  ApiError, cfgApi, equipmentApi, get, getAs, opsApi, send, sendText, ROLE_LABEL,
+  type Cfg, type ConnectionSettings, type EquipmentCommunicationSettings, type EquipmentSettings,
+  type InstalledMapping, type MapData, type MapRevision,
   type OperationOptions, type PortSettings, type ProtocolSettings,
   type Session, type VdaProfileSettings, type VehicleSettings,
 } from '../../api';
@@ -11,7 +12,7 @@ import { NodeTab, SegmentTab } from './TopologyTabs';
 import { layerOfNode } from '../map/MapView';
 import {
   BCR_POLICY, CONTROL_AUTHORITY, chargeNodeRequired, chargingPolicyOptions,
-  connectionIssues, explainCode, protocolIssues, PROTO_TYPES, roleOptions, vdaProfileIssues,
+  connectionIssues, equipmentLinkIssues, explainCode, protocolIssues, PROTO_TYPES, roleOptions, vdaProfileIssues,
   vehicleIssues, vehicleVdaIssues, versionOptions,
 } from './rules';
 
@@ -20,7 +21,7 @@ import {
  * vehicle and every command rather than to one of these, so they sit behind the account menu
  * where changing them needs the authority that reach deserves.
  */
-type Tab = "revisions" | "vehicles" | "vda" | "ports" | "nodes" | "segments" | "connections" | "protocols" | "mappings";
+type Tab = "revisions" | "vehicles" | "vda" | "ports" | "nodes" | "segments" | "connections" | "protocols" | "mappings" | "equipmentLinks";
 const TABS: { key: Tab; label: string }[] = [
   { key: 'revisions', label: '지도 버전' },
   { key: 'vehicles', label: '차량' }, { key: 'vda', label: 'VDA 프로파일' },
@@ -28,6 +29,7 @@ const TABS: { key: Tab; label: string }[] = [
   { key: 'nodes', label: '노드' }, { key: 'segments', label: '구간' },
   { key: 'connections', label: '연결' }, { key: 'protocols', label: '프로토콜' },
   { key: 'mappings', label: '매핑 문서' },
+  { key: 'equipmentLinks', label: '설비 통신' },
 ];
 
 export function ConfigurationScreen({ map, session, revisions, onChanged }: {
@@ -67,6 +69,7 @@ export function ConfigurationScreen({ map, session, revisions, onChanged }: {
           {tab === 'connections' && <ConnectionTab canWrite={canWrite} />}
           {tab === 'protocols' && <ProtocolTab canWrite={canWrite} />}
           {tab === 'mappings' && <MappingTab canWrite={canWrite} />}
+          {tab === 'equipmentLinks' && <EquipmentLinkTab canWrite={canWrite} />}
         </div>
       </div>
     </>
@@ -935,6 +938,105 @@ function MappingTab({ canWrite }: { canWrite: boolean }) {
             style={{ ...field, height: 320, fontFamily: 'var(--mono, monospace)', fontSize: 11, lineHeight: 1.5 }} />
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Which equipment is wired to what.
+ *
+ * <p>The same two profiles a vehicle uses, because a stocker behind a PLC is the same arrangement
+ * as an AGV behind one. What differs is the dialect: an equipment document says what a stocker can
+ * report, which is not what a vehicle can, so the server refuses a vehicle's document here.
+ *
+ * <p>Equipment is read by polling, so the link has to be one this controller dials. A gateway that
+ * dials in has no address to poll and is refused.
+ */
+function EquipmentLinkTab({ canWrite }: { canWrite: boolean }) {
+  const { items, error, reload } = useList<EquipmentCommunicationSettings>(equipmentApi.communications());
+  const units = useList<EquipmentSettings>(opsApi.equipment());
+  const [draft, setDraft] = React.useState<Cfg<EquipmentCommunicationSettings> | null>(null);
+  const [busy, setBusy] = React.useState(false);
+  const [message, setMessage] = React.useState<string | null>(null);
+  React.useEffect(() => { setDraft(null); setMessage(null); }, [items]);
+  if (error) return <Failed error={error} onRetry={reload} />;
+  if (!items) return <Loading what="설비 통신 설정" />;
+  const named = (unitId: number) => units.items?.find(u => u.id === unitId)?.settings.code ?? `#${unitId}`;
+  const s = draft?.settings;
+  const set = (patch: Partial<EquipmentCommunicationSettings>) =>
+    setDraft(d => d && ({ ...d, settings: { ...d.settings, ...patch } }));
+  const save = async () => {
+    if (!draft) return;
+    setBusy(true); setMessage(null);
+    try {
+      await send(`${equipmentApi.communications()}/${draft.id}?expectedVersion=${draft.version}`, 'PUT',
+        draft.settings, '설정 화면에서 수정');
+      setMessage('저장했습니다.'); reload();
+    } catch (e) {
+      const code = e instanceof ApiError ? e.message : String(e);
+      setMessage(e instanceof ApiError && e.status === 409 && code === 'VERSION_CONFLICT'
+        ? explainCode('VERSION_CONFLICT') : explainCode(code));
+    } finally { setBusy(false); }
+  };
+  return (
+    <div className="grid" style={{ gridTemplateColumns: '240px minmax(0,1fr)', gap: 14 }}>
+      <div>
+        {items.length === 0
+          ? <p className="hint" style={{ margin: 0 }}>설정된 설비 통신이 없습니다.</p>
+          : items.map(c => (
+            <button key={c.id} type="button" className={`vehicle-btn${draft?.id === c.id ? ' sel' : ''}`}
+              onClick={() => { setDraft(structuredClone(c)); setMessage(null); }}>
+              <b>{named(c.settings.unitId)}</b>
+              <span>{c.settings.externalUnitId} · {c.settings.enabled ? '사용' : '사용 안 함'} · rev{c.version}</span>
+            </button>
+          ))}
+      </div>
+      <div>
+        {!s || !draft ? (
+          <p className="hint" style={{ margin: 0 }}>
+            왼쪽에서 설비 통신을 선택하세요. 설비마다 연결·프로토콜 프로파일과 저쪽이 부르는 이름을 지정하면,
+            그 설비가 말하는 것을 받아 반송 판단에 씁니다. 설정하지 않은 설비는 거부하지 않고 통과시킵니다.
+          </p>
+        ) : (
+          <>
+            <div style={row}>
+              <label htmlFor="ec-ext">외부 설비 ID</label>
+              <div>
+                <input id="ec-ext" style={field} value={s.externalUnitId}
+                  onChange={e => set({ externalUnitId: e.target.value })} />
+                <span className="hint">설비 쪽이 이 설비를 부르는 이름입니다. 매핑 문서가 신원 슬롯에서 읽는 값과 같아야 합니다.</span>
+              </div>
+            </div>
+            <div style={row}>
+              <label htmlFor="ec-conn">연결 프로파일</label>
+              <div>
+                <input id="ec-conn" type="number" style={field} value={s.connectionProfileId}
+                  onChange={e => set({ connectionProfileId: Number(e.target.value) })} />
+                <span className="hint">연결 탭의 TCP·CLIENT 프로파일이어야 합니다. 폴링으로 읽으므로 접속을 받는 구성은 쓸 수 없습니다.</span>
+              </div>
+            </div>
+            <div style={row}>
+              <label htmlFor="ec-proto">프로토콜 프로파일</label>
+              <div>
+                <input id="ec-proto" type="number" style={field} value={s.protocolProfileId}
+                  onChange={e => set({ protocolProfileId: Number(e.target.value) })} />
+                <span className="hint">어댑터 키가 <span className="mono">EQUIPMENT_WORD_V1</span> 매핑 문서를 가리켜야 합니다.</span>
+              </div>
+            </div>
+            <div style={row}>
+              <label>활성화</label>
+              <div>
+                <label style={{ fontSize: 12, color: canWrite ? 'var(--ink2)' : 'var(--mut)' }}>
+                  <input type="checkbox" checked={s.enabled} disabled={!canWrite}
+                    onChange={e => set({ enabled: e.target.checked })} /> 사용
+                </label>
+                <span className="hint">사용으로 두면 이 설비를 주기적으로 읽습니다. 읽은 것이 없으면 그 설비로 가는 작업을 거부합니다.</span>
+              </div>
+            </div>
+            <SaveBar issues={equipmentLinkIssues(s)} canWrite={canWrite} busy={busy} message={message} onSave={save} />
+          </>
+        )}
+      </div>
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import React from 'react';
 import {
-  ApiError, get, opsApi, send, simulationEquipmentApi, type SimulatedEquipmentState,
+  ApiError, equipmentApi, get, opsApi, send, simulationEquipmentApi,
+  type EquipmentState, type SimulatedEquipmentState,
   type Cfg, type EquipmentSettings, type RackSettings, type Session, type SlotView,
 } from '../../api';
 import { Chip, Empty } from '../../shell/States';
@@ -89,6 +90,8 @@ export function EquipmentScreen({ session, revisionId, simulated }: { session: S
         <p style={{ margin: 0, fontSize: 12 }}><Chip tone={notice.tone}>거부</Chip> {notice.text}</p>
       </div></div>}
 
+      <EquipmentLinkState simulated={simulated} />
+
       {simulated && <SimulationControls unitId={unitId} mayControl={session.level >= 2} />}
 
       {units.length === 0
@@ -175,7 +178,7 @@ function SimulationControls({ unitId, mayControl }: { unitId: number | null; may
   }
   const disabled = busy || !mayControl;
   return <section className="card"><div className="ch"><h2>설비 시뮬레이션</h2></div><div className="cb">
-    <p className="hint">가상 상태는 직접 변경할 수 있습니다. 사용금지·콜금지만 작업을 차단하며, 나머지 상태와 실제 설비 통신 여부는 작업 할당을 제한하지 않습니다.</p>
+    <p className="hint">가상 상태는 직접 변경할 수 있습니다. 시뮬레이션에서는 사용금지·콜금지만 작업을 차단하고 나머지 상태는 제한하지 않습니다. 운전 모드가 OPERATION이면 이 값들은 쓰이지 않고, 설비가 링크로 말한 것이 판단 근거가 됩니다.</p>
     {error && <p role="alert">{error}</p>}
     {!state ? <p>설비를 선택해 주세요.</p> : <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
       <label><input type="checkbox" checked={state.enabled} disabled={disabled}
@@ -239,5 +242,75 @@ function explain(code: string): string {
   if (code === 'UNUSABLE_SLOT_WOULD_BE_REMOVED') return '줄이려는 범위에 사용 금지 셀이 있습니다. 그 표시가 사라지므로 거부했습니다.';
   if (code === 'SITE_NOT_IN_MAINTENANCE') return '유지보수 상태에서만 설비 설정을 바꿀 수 있습니다.';
   if (code === 'ROLE_ENGINEER_REQUIRED') return '설비 설정 권한이 필요합니다.';
+  // Why work would be refused, as the server decides it. The same codes transport throws.
+  if (code === 'EQUIPMENT_DISABLED') return '사용금지 상태입니다.';
+  if (code === 'EQUIPMENT_CALL_DISABLED') return '호출을 받지 않는 상태입니다.';
+  if (code === 'EQUIPMENT_IN_FAULT') return '설비가 오류를 보고했습니다.';
+  if (code === 'EQUIPMENT_OFFLINE') return '연결 설정은 있으나 설비에게서 들은 것이 없습니다. 통신이 끊겼거나 아직 한 번도 수신하지 못했습니다.';
   return code;
+}
+
+/**
+ * What each unit says, and whether work would be refused.
+ *
+ * <p>The link writes what the machine says and transport reads it to decide. Between those two
+ * there was nowhere to look, so a carrier could be refused for a reason that existed only inside a
+ * decision. The refusal shown here is the server's own answer rather than one worked out again,
+ * because a screen saying "ready" while transport refuses the port is a screen nobody trusts twice.
+ */
+function EquipmentLinkState({ simulated }: { simulated: boolean }) {
+  const [states, setStates] = React.useState<EquipmentState[] | null>(null);
+  const [error, setError] = React.useState('');
+  React.useEffect(() => {
+    const c = new AbortController();
+    let active = true;
+    const read = () => get<EquipmentState[]>(equipmentApi.states(), c.signal)
+      .then(v => { if (active) { setStates(v); setError(''); } })
+      .catch(e => { if (active && !aborted(e)) setError('설비 상태를 읽지 못했습니다.'); });
+    void read();
+    const timer = window.setInterval(read, 2000);
+    return () => { active = false; c.abort(); window.clearInterval(timer); };
+  }, []);
+  if (error) return <section className="card"><div className="cb"><p role="alert" style={{ margin: 0, fontSize: 12 }}>{error}</p></div></section>;
+  if (!states || states.length === 0) return null;
+  const wired = states.filter(s => s.wired).length;
+  return <section className="card">
+    <div className="ch"><h2>설비 상태</h2>
+      <span className="aux">{simulated ? '시뮬레이션 값입니다 — 운전 모드가 OPERATION이면 설비가 말한 값으로 바뀝니다'
+        : `설비가 링크로 말한 값입니다 · 연결 설정된 설비 ${wired}대`}</span>
+    </div>
+    <div className="cb">
+      <Grid cols="130px 90px 90px 90px 90px 130px 1fr"
+        head={['설비', '연결', '상태', '사용', '콜', '마지막 수신', '작업 가능 여부']}>
+        {states.map(s => (
+          <Row key={s.unitId}>
+            <span className="mono">{s.code}</span>
+            <span>{!s.wired
+              ? <span className="hint" style={{ margin: 0 }}>미설정</span>
+              : s.online === null ? <Chip tone="id">—</Chip>
+                : <Chip tone={s.online ? 'ok' : 'er'}>{s.online ? '수신 중' : '끊김'}</Chip>}</span>
+            <span>{s.status ? <Chip tone={STATUS_TONE[s.status] ?? 'id'}>{EQ_STATUS[s.status] ?? s.status}</Chip>
+              : <span className="hint" style={{ margin: 0 }}>—</span>}</span>
+            <span>{mark(s.configuredEnabled && s.available !== false)}</span>
+            <span>{mark(s.callEnabled !== false)}</span>
+            <span className="mono" style={{ fontSize: 11 }}>{s.lastSeenAt ? s.lastSeenAt.slice(11, 19) : '—'}</span>
+            <span>{s.refusal
+              ? <><Chip tone="er">거부</Chip> <span style={{ fontSize: 12 }}>{explain(s.refusal)}</span></>
+              : <Chip tone="ok">가능</Chip>}</span>
+          </Row>
+        ))}
+      </Grid>
+      {!simulated && wired === 0 && <p className="hint" style={{ marginTop: 8 }}>
+        연결 설정된 설비가 없습니다. 설비가 말하는 것을 받으려면 자원 구성의 <b>설비 통신</b>에서 설비마다
+        연결·프로토콜 프로파일을 지정하세요. 설정하지 않은 설비는 거부하지 않고 그대로 통과시킵니다.
+      </p>}
+    </div>
+  </section>;
+}
+const EQ_STATUS: Record<string, string> = { IDLE: '대기', READY: '준비', BUSY: '작업 중', ERROR: '오류',
+  OFFLINE: '오프라인', LOADING: '차량 인수 중', UNLOADING: '설비 인계 중' };
+const STATUS_TONE: Record<string, string> = { READY: 'ok', IDLE: 'id', BUSY: 'wr', LOADING: 'wr',
+  UNLOADING: 'wr', ERROR: 'er', OFFLINE: 'er' };
+function mark(ok: boolean) {
+  return <span style={{ color: ok ? 'var(--ok)' : 'var(--crit)', fontWeight: 600 }}>{ok ? '○' : '✕'}</span>;
 }

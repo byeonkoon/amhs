@@ -1,4 +1,7 @@
-import type { ConnectionSettings, OperationOptions, ProtocolSettings, VdaProfileSettings, VehicleSettings } from '../../api';
+import type {
+  ConnectionSettings, EquipmentCommunicationSettings, OperationOptions, ProtocolSettings,
+  VdaProfileSettings, VehicleSettings,
+} from '../../api';
 
 /**
  * Field dependencies, mirrored from the server contract so the form cannot offer a
@@ -69,6 +72,13 @@ export function vdaProfileIssues(p: VdaProfileSettings): string[] {
 /** TCP connects as client or server; MQTT only ever points at a broker. */
 export function roleOptions(commType: ConnectionSettings['commType']): readonly string[] {
   return commType === 'TCP' ? ['CLIENT', 'SERVER'] : ['BROKER'];
+}
+export function equipmentLinkIssues(c: EquipmentCommunicationSettings): string[] {
+  const out: string[] = [];
+  if (!c.externalUnitId.trim()) out.push('외부 설비 ID를 입력해 주세요.');
+  if (!(c.connectionProfileId > 0)) out.push('연결 프로파일을 지정해 주세요.');
+  if (!(c.protocolProfileId > 0)) out.push('프로토콜 프로파일을 지정해 주세요.');
+  return out;
 }
 export function connectionIssues(c: ConnectionSettings): string[] {
   const out: string[] = [];
@@ -176,7 +186,10 @@ export function explainCode(code: string): string {
     // A mapping document: the dialect one family of vehicles is spoken to in.
     MAPPING_NOT_JSON: 'JSON 형식이 아닙니다. 파일 내용을 확인해 주세요.',
     MAPPING_NOT_FOUND: '이 사이트에 그런 매핑 문서가 없습니다.',
-    MAPPING_IN_USE: '이 매핑을 쓰는 차량이 있습니다. 그 차량의 통신 설정이 다른 프로토콜 프로파일을 가리키게 먼저 바꾸세요.',
+    MAPPING_IN_USE: '이 매핑을 쓰는 차량이나 설비가 있습니다. 그 통신 설정이 다른 프로토콜 프로파일을 가리키게 먼저 바꾸세요.',
+    EQUIPMENT_ADAPTER_REQUIRED: '설비는 EQUIPMENT_WORD_V1 매핑 문서를 가리키는 프로토콜 프로파일이 필요합니다.',
+    EQUIPMENT_NEEDS_A_DIALLED_LINK: '설비는 주기적으로 읽어야 하므로 접속하는 쪽(CLIENT) 연결만 쓸 수 있습니다.',
+    EQUIPMENT_COMMUNICATION_NOT_FOUND: '그런 설비 통신 설정이 없습니다.',
   };
   return map[code] ?? code;
 }
