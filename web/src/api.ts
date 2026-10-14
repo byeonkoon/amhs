@@ -92,6 +92,28 @@ export const equipmentApi = {
   /** Which equipment is wired to what. ADMIN, and the site has to be in maintenance to change it. */
   communications: () => `/api/v1/sites/${SITE_ID}/configuration/equipment-communications`,
 };
+
+/**
+ * Where this site tells the system that asked for the work how it ended.
+ *
+ * <p>`authValue` is a secret and behaves like one: a read never returns it, and saving `null` keeps
+ * whatever is stored — so changing the URL cannot silently wipe the credential. An empty string is
+ * the only way to clear it, which says so.
+ */
+export type HostEndpointSettings = {
+  url: string; authHeader: string | null; authValue: string | null;
+  timeoutMs: number; maxAttempts: number; enabled: boolean;
+};
+/** One notice and what became of saying it. */
+export type HostNotice = {
+  id: number; orderId: number; orderStatus: string;
+  state: 'PENDING' | 'SENT' | 'REFUSED' | 'ABANDONED';
+  attempts: number; lastError: string | null; createdAt: string; settledAt: string | null;
+};
+export const hostApi = {
+  endpoint: () => `/api/v1/sites/${SITE_ID}/configuration/host`,
+  notices: () => `/api/v1/sites/${SITE_ID}/configuration/host/notices`,
+};
 /**
  * One map revision as the server reports it, with how much it holds.
  *

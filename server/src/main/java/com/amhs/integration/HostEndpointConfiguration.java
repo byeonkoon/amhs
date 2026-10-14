@@ -46,10 +46,14 @@ public class HostEndpointConfiguration {
     +"max_attempts,enabled) VALUES(?,?,?,?,?,?,?,?)",guard.nextId(),site,settings.url(),
     settings.authHeader(),settings.authValue(),settings.timeoutMs(),settings.maxAttempts(),settings.enabled());
   }else{
+   // Three cases, and they have to be three: null keeps what is stored, an empty string clears it,
+   // anything else replaces it. Without the middle one there would be no way to take a credential
+   // away; without the first, editing a URL would take it away by accident.
+   String secret=settings.authValue();
    guard.changed(jdbc.update("UPDATE integration.host_endpoint SET url=?,auth_header=?,"
     +"auth_value=CASE WHEN CAST(? AS VARCHAR) IS NULL THEN auth_value ELSE CAST(? AS VARCHAR) END,"
     +"timeout_ms=?,max_attempts=?,enabled=?,version=version+1 WHERE site_id=?",
-    settings.url(),settings.authHeader(),settings.authValue(),settings.authValue(),
+    settings.url(),settings.authHeader(),secret,secret==null||secret.isEmpty()?null:secret,
     settings.timeoutMs(),settings.maxAttempts(),settings.enabled(),site));
   }
   return get(site).orElseThrow(()->new ConfigurationException(500,"HOST_ENDPOINT_NOT_SAVED"));

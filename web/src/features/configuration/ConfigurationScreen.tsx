@@ -1,8 +1,8 @@
 import React from 'react';
 import {
-  ApiError, cfgApi, equipmentApi, get, getAs, opsApi, send, sendText, ROLE_LABEL,
+  ApiError, cfgApi, equipmentApi, get, getAs, hostApi, opsApi, send, sendText, ROLE_LABEL,
   type Cfg, type ConnectionSettings, type EquipmentCommunicationSettings, type EquipmentSettings,
-  type InstalledMapping, type MapData, type MapRevision,
+  type HostEndpointSettings, type HostNotice, type InstalledMapping, type MapData, type MapRevision,
   type OperationOptions, type PortSettings, type ProtocolSettings,
   type Session, type VdaProfileSettings, type VehicleSettings,
 } from '../../api';
@@ -12,7 +12,8 @@ import { NodeTab, SegmentTab } from './TopologyTabs';
 import { layerOfNode } from '../map/MapView';
 import {
   BCR_POLICY, CONTROL_AUTHORITY, chargeNodeRequired, chargingPolicyOptions,
-  connectionIssues, equipmentLinkIssues, explainCode, protocolIssues, PROTO_TYPES, roleOptions, vdaProfileIssues,
+  connectionIssues, equipmentLinkIssues, explainCode, hostEndpointIssues, protocolIssues, PROTO_TYPES, roleOptions,
+  vdaProfileIssues,
   vehicleIssues, vehicleVdaIssues, versionOptions,
 } from './rules';
 
@@ -21,7 +22,7 @@ import {
  * vehicle and every command rather than to one of these, so they sit behind the account menu
  * where changing them needs the authority that reach deserves.
  */
-type Tab = "revisions" | "vehicles" | "vda" | "ports" | "nodes" | "segments" | "connections" | "protocols" | "mappings" | "equipmentLinks";
+type Tab = "revisions" | "vehicles" | "vda" | "ports" | "nodes" | "segments" | "connections" | "protocols" | "mappings" | "equipmentLinks" | "host";
 const TABS: { key: Tab; label: string }[] = [
   { key: 'revisions', label: '지도 버전' },
   { key: 'vehicles', label: '차량' }, { key: 'vda', label: 'VDA 프로파일' },
@@ -30,6 +31,7 @@ const TABS: { key: Tab; label: string }[] = [
   { key: 'connections', label: '연결' }, { key: 'protocols', label: '프로토콜' },
   { key: 'mappings', label: '매핑 문서' },
   { key: 'equipmentLinks', label: '설비 통신' },
+  { key: 'host', label: '상위 통보' },
 ];
 
 export function ConfigurationScreen({ map, session, revisions, onChanged }: {
@@ -70,6 +72,7 @@ export function ConfigurationScreen({ map, session, revisions, onChanged }: {
           {tab === 'protocols' && <ProtocolTab canWrite={canWrite} />}
           {tab === 'mappings' && <MappingTab canWrite={canWrite} />}
           {tab === 'equipmentLinks' && <EquipmentLinkTab canWrite={canWrite} />}
+          {tab === 'host' && <HostNoticeTab canWrite={canWrite} />}
         </div>
       </div>
     </>
@@ -1041,3 +1044,159 @@ function EquipmentLinkTab({ canWrite }: { canWrite: boolean }) {
     </div>
   );
 }
+
+/**
+ * Where this site tells the system that asked for the work how it ended, and what became of saying it.
+ *
+ * <p>Both on one tab on purpose. "These are the settings" and "this is what happened with them" are
+ * the same question when a host has been refusing everything since Tuesday, and splitting them
+ * across two screens makes somebody carry the answer between them.
+ */
+function HostNoticeTab({ canWrite }: { canWrite: boolean }) {
+  const [draft, setDraft] = React.useState<HostEndpointSettings | null>(null);
+  const [configured, setConfigured] = React.useState(false);
+  const [notices, setNotices] = React.useState<HostNotice[]>([]);
+  const [error, setError] = React.useState<unknown>(null);
+  const [busy, setBusy] = React.useState(false);
+  const [message, setMessage] = React.useState<string | null>(null);
+  const [tick, setTick] = React.useState(0);
+  const reload = () => setTick(t => t + 1);
+
+  React.useEffect(() => {
+    const ac = new AbortController();
+    setError(null);
+    Promise.all([
+      getAs<{ configured: boolean; endpoint?: Cfg<HostEndpointSettings> }>(hostApi.endpoint(), ac.signal),
+      getAs<HostNotice[]>(hostApi.notices(), ac.signal),
+    ]).then(([found, said]) => {
+      setConfigured(found.configured);
+      // A credential never comes back, so the field starts empty and an empty field means "leave it".
+      setDraft(found.endpoint
+        ? { ...found.endpoint.settings, authValue: null }
+        : { url: '', authHeader: null, authValue: null, timeoutMs: 3000, maxAttempts: 8, enabled: false });
+      setNotices(said);
+    }).catch(cause => { if ((cause as Error).name !== 'AbortError') setError(cause); });
+    return () => ac.abort();
+  }, [tick]);
+
+  const set = (patch: Partial<HostEndpointSettings>) => setDraft(d => d && ({ ...d, ...patch }));
+  const save = async () => {
+    if (!draft) return;
+    setBusy(true); setMessage(null);
+    try {
+      await send(hostApi.endpoint(), 'PUT', draft, '설정 화면에서 수정');
+      setMessage(draft.authValue
+        ? '저장했습니다. 인증 값은 저장만 되고 다시 보이지 않습니다.'
+        : '저장했습니다. 인증 값은 비워 두었으므로 저장된 값을 그대로 씁니다.');
+      reload();
+    } catch (e) {
+      setMessage(explainCode(e instanceof ApiError ? e.message : String(e)));
+    } finally { setBusy(false); }
+  };
+
+  if (error) return <Failed error={error} onRetry={reload} />;
+  if (!draft) return <Loading what="상위 통보 설정" />;
+  const stuck = notices.filter(n => n.state === 'REFUSED' || n.state === 'ABANDONED').length;
+  const waiting = notices.filter(n => n.state === 'PENDING').length;
+  return (
+    <div>
+      <p className="hint" style={{ margin: '0 0 10px' }}>
+        반송 작업이 <b>스스로 더 진행하지 않는 지점</b>에서 지시를 보낸 시스템에 알립니다 — 완료·취소·실패,
+        그리고 사람을 기다리는 회수 요청입니다. 알림은 상태를 바꾸는 같은 트랜잭션에 기록되므로 잃지 않습니다.
+      </p>
+      <div style={row}>
+        <label htmlFor="h-url">주소</label>
+        <div>
+          <input id="h-url" style={field} value={draft.url} placeholder="https://wms.example/amhs/notices"
+            onChange={e => set({ url: e.target.value })} />
+          <span className="hint">http 또는 https만 받습니다. 리다이렉트는 따라가지 않습니다 — 인증 헤더가 다른 호스트로 새기 때문입니다.</span>
+        </div>
+      </div>
+      <div style={row}>
+        <label htmlFor="h-hdr">인증 헤더</label>
+        <div>
+          <input id="h-hdr" style={field} value={draft.authHeader ?? ''} placeholder="Authorization"
+            onChange={e => set({ authHeader: e.target.value || null })} />
+          <span className="hint">비워 두면 인증 없이 보냅니다.</span>
+        </div>
+      </div>
+      <div style={row}>
+        <label htmlFor="h-val">인증 값</label>
+        <div>
+          {/* 빈 입력은 null로 보냅니다. ''를 보내면 서버가 '지우라'는 뜻으로 받으므로,
+              값을 건드리지 않으려던 저장이 자격증명을 지워 버립니다. */}
+          <input id="h-val" type="password" style={field} value={draft.authValue ?? ''} autoComplete="off"
+            placeholder={configured ? '저장되어 있습니다 — 바꿀 때만 입력하세요' : ''}
+            onChange={e => set({ authValue: e.target.value === '' ? null : e.target.value })} />
+          <span className="hint">
+            들어가기만 하고 <b>나오지 않습니다.</b> 비워 두면 저장된 값을 그대로 씁니다. 인증을 쓰지 않으려면
+            위의 <b>헤더 이름</b>을 비우세요.
+          </span>
+        </div>
+      </div>
+      <div style={row}>
+        <label htmlFor="h-to">응답 대기</label>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <input id="h-to" type="number" style={{ ...field, width: 120 }} value={draft.timeoutMs}
+            onChange={e => set({ timeoutMs: Number(e.target.value) })} />
+          <span className="hint" style={{ margin: 0, alignSelf: 'center' }}>ms (200~30000)</span>
+        </div>
+      </div>
+      <div style={row}>
+        <label htmlFor="h-att">재시도 상한</label>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <input id="h-att" type="number" style={{ ...field, width: 120 }} value={draft.maxAttempts}
+            onChange={e => set({ maxAttempts: Number(e.target.value) })} />
+          <span className="hint" style={{ margin: 0, alignSelf: 'center' }}>
+            1~50. 간격은 2초부터 두 배씩 늘어 최대 5분입니다. 상한에 닿으면 <b>도달 여부를 알 수 없음</b>으로 남깁니다.
+          </span>
+        </div>
+      </div>
+      <div style={row}>
+        <label>활성화</label>
+        <div>
+          <label style={{ fontSize: 12, color: canWrite ? 'var(--ink2)' : 'var(--mut)' }}>
+            <input type="checkbox" checked={draft.enabled} disabled={!canWrite}
+              onChange={e => set({ enabled: e.target.checked })} /> 사용
+          </label>
+          <span className="hint">꺼 두면 아무것도 나가지 않고 <b>쌓입니다</b>. 잃지는 않으므로 켜면 그때 나갑니다.</span>
+        </div>
+      </div>
+      <SaveBar issues={hostEndpointIssues(draft)} canWrite={canWrite} busy={busy} message={message} onSave={save} />
+
+      <div style={{ marginTop: 18 }}>
+        <div className="ch" style={{ paddingLeft: 0 }}>
+          <h3 style={{ margin: 0, fontSize: 13 }}>최근 통보</h3>
+          <span className="aux">
+            {notices.length === 0 ? '아직 없습니다'
+              : `${notices.length}건 · 대기 ${waiting}${stuck > 0 ? ` · 거절·불명 ${stuck}` : ''}`}
+          </span>
+        </div>
+        {notices.length === 0
+          ? <p className="hint" style={{ margin: 0 }}>작업이 끝나거나 회수가 필요해지면 여기에 쌓입니다.</p>
+          : (
+            <Grid cols="90px 150px 110px 70px 1fr 150px" head={['작업', '상태', '결과', '시도', '마지막 오류', '시각']}>
+              {notices.map(n => (
+                <Row key={n.id}>
+                  <span className="mono">#{n.orderId}</span>
+                  <span className="mono">{n.orderStatus}</span>
+                  <span><Chip tone={NOTICE_TONE[n.state]}>{NOTICE_STATE[n.state]}</Chip></span>
+                  <span className="mono">{n.attempts}</span>
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                    title={n.lastError ?? ''}>{n.lastError ?? ''}</span>
+                  <span className="mono" style={{ fontSize: 11 }}>{(n.settledAt ?? n.createdAt).slice(5, 19).replace('T', ' ')}</span>
+                </Row>
+              ))}
+            </Grid>
+          )}
+      </div>
+    </div>
+  );
+}
+/** 거절과 불명을 나눠 보여줍니다 — "아니라고 했다"와 "알 수 없다"는 다른 사실입니다. */
+const NOTICE_STATE: Record<HostNotice['state'], string> = {
+  PENDING: '대기', SENT: '전달', REFUSED: '거절', ABANDONED: '도달 불명',
+};
+const NOTICE_TONE: Record<HostNotice['state'], string> = {
+  PENDING: 'wr', SENT: 'ok', REFUSED: 'er', ABANDONED: 'er',
+};

@@ -197,6 +197,13 @@ class HostNoticeSqlTest {
    assertThat(jdbc.queryForObject("SELECT auth_value FROM integration.host_endpoint WHERE site_id=?",
     String.class,SITE)).as("kept through an edit that did not mention it").isEqualTo("secret-value");
 
+   // An empty string is the one way to take it away, and it has to be: without it a credential
+   // could be set and never removed.
+   hosts.save(SITE,new HostEndpointSettings(upstairs.url(),null,"",2500,4,true));
+   assertThat(jdbc.queryForObject("SELECT auth_value FROM integration.host_endpoint WHERE site_id=?",
+    String.class,SITE)).as("explicitly cleared").isNull();
+   hosts.save(SITE,new HostEndpointSettings(upstairs.url(),"X-Test-Auth","secret-value",2500,4,true));
+
    orderEnded("COMPLETED");
    assertThat(waitFor(()->"SENT".equals(stateNow()))).isTrue();
    assertThat(upstairs.heard.poll(2,TimeUnit.SECONDS)).isNotNull();

@@ -1,5 +1,5 @@
 import type {
-  ConnectionSettings, EquipmentCommunicationSettings, OperationOptions, ProtocolSettings,
+  ConnectionSettings, EquipmentCommunicationSettings, HostEndpointSettings, OperationOptions, ProtocolSettings,
   VdaProfileSettings, VehicleSettings,
 } from '../../api';
 
@@ -72,6 +72,15 @@ export function vdaProfileIssues(p: VdaProfileSettings): string[] {
 /** TCP connects as client or server; MQTT only ever points at a broker. */
 export function roleOptions(commType: ConnectionSettings['commType']): readonly string[] {
   return commType === 'TCP' ? ['CLIENT', 'SERVER'] : ['BROKER'];
+}
+export function hostEndpointIssues(h: HostEndpointSettings): string[] {
+  const out: string[] = [];
+  if (!h.url.trim()) out.push('상위 시스템 주소를 입력해 주세요.');
+  else if (!h.url.startsWith('http://') && !h.url.startsWith('https://'))
+    out.push('주소는 http:// 또는 https:// 로 시작해야 합니다.');
+  if (!(h.timeoutMs >= 200 && h.timeoutMs <= 30000)) out.push('응답 대기는 200~30000ms 범위입니다.');
+  if (!(h.maxAttempts >= 1 && h.maxAttempts <= 50)) out.push('재시도 상한은 1~50입니다.');
+  return out;
 }
 export function equipmentLinkIssues(c: EquipmentCommunicationSettings): string[] {
   const out: string[] = [];
@@ -156,6 +165,9 @@ export function explainCode(code: string): string {
     PORT_NODE_UNKNOWN: '포트가 가리키는 노드가 파일 안에 없습니다.',
     PORT_VEHICLE_TYPE_INVALID: '포트의 접근 차종은 OHT 또는 AGV입니다.',
     PORT_EQUIPMENT_UNKNOWN: '포트가 가리키는 설비가 이 사이트에 없습니다. 설비를 먼저 등록한 뒤 지도를 올려 주세요.',
+    HOST_URL_NOT_HTTP: '상위 시스템 주소는 http:// 또는 https:// 로 시작해야 합니다.',
+    INVALID_HOST_TIMEOUT: '응답 대기는 200~30000ms 범위입니다.',
+    INVALID_HOST_ATTEMPTS: '재시도 상한은 1~50입니다.',
     VEHICLE_CODE_REPEATED: '같은 차량 코드가 두 번 나옵니다.',
     VEHICLE_TYPE_INVALID: '차종은 OHT 또는 AGV입니다.',
     VEHICLE_NODE_UNKNOWN: '차량이 가리키는 노드가 파일 안에 없습니다.',
