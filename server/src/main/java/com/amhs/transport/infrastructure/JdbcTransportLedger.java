@@ -11,7 +11,8 @@ import java.util.*;
 @Service
 class JdbcTransportLedger implements TransportLedger {
  private final JdbcTemplate jdbc;
- JdbcTransportLedger(JdbcTemplate jdbc){this.jdbc=jdbc;}
+ private final com.amhs.integration.HostNotices notices;
+ JdbcTransportLedger(JdbcTemplate jdbc,com.amhs.integration.HostNotices notices){this.jdbc=jdbc;this.notices=notices;}
 
  @Transactional(readOnly=true)
  public long activeRevision(long siteId){
@@ -200,6 +201,11 @@ class JdbcTransportLedger implements TransportLedger {
    +"evidence_kind,command_id,carrier_location) VALUES(?,?,?,?,?,?,?,?,?,?)",
    orderId,seq,current.name(),target.name(),reason,actorCode,traceId,
    evidence.kind().name(),evidence.commandId(),established==null?null:established.name());
+  // The system that asked for this work hears when it stops moving by itself: it ended, or it is
+  // waiting for a person. Written here, in this transaction, so a rolled back transition cannot
+  // announce something that did not happen and a committed one cannot fail to.
+  if(target.isTerminal()||target==OrderStatus.RECOVERY_REQUIRED)
+   notices.announce(siteId,orderId,target.name(),reason);
   return find(siteId,orderId).orElseThrow();
  }
 
