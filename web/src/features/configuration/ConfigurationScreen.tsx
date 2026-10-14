@@ -562,10 +562,11 @@ function PortTab({ map, canWrite }: { map: MapData; canWrite: boolean }) {
                 <select id="p-eqp" style={field} value={s.equipmentUnitId ?? ''}
                   onChange={e => set({ equipmentUnitId: e.target.value ? Number(e.target.value) : null })}>
                   <option value="">연결 안 함</option>
-                  {(units ?? []).filter(u => u.settings.revisionId === s.revisionId)
-                    .map(u => <option key={u.id} value={u.id}>{u.settings.name || u.settings.code} ({u.settings.code})</option>)}
+                  {/* 설비는 지도가 아니라 사이트의 것이라 지도 버전과 상관없이 전부 고를 수 있습니다. */}
+                  {(units ?? []).map(u =>
+                    <option key={u.id} value={u.id}>{u.settings.name || u.settings.code} ({u.settings.code})</option>)}
                 </select>
-                <span className="hint">지도에는 포트 코드 대신 이 설비 이름이 표시됩니다.</span>
+                <span className="hint">지도에는 포트 코드 대신 이 설비 이름이 표시됩니다. 설비는 지도 버전과 무관하므로 새 지도에서도 같은 설비를 가리킬 수 있습니다.</span>
               </div>
             </div>
             <SaveBar issues={s.code.trim() ? [] : ['포트 코드를 입력해 주세요.']} canWrite={canWrite} busy={busy}

@@ -40,7 +40,7 @@ class CarrierPlacementSqlTest {
  @BeforeEach void aRackOfItsOwn(){
   modeBefore=jdbc.queryForObject("SELECT mode FROM platform.site_operation WHERE site_id=?",String.class,SITE);
   mode("MAINTENANCE");
-  unitId=equipment.createUnit(SITE,new EquipmentSettings(REVISION,run+"-STK",run+" 스토커","STOCKER",true)).id();
+  unitId=equipment.createUnit(SITE,new EquipmentSettings(run+"-STK",run+" 스토커","STOCKER",true)).id();
   rackId=equipment.createRack(SITE,unitId,new RackSettings(run+"-R1",2,3,true)).id();
   // Running, on purpose: recording what is in the equipment must work while the site works.
   mode("RUNNING");

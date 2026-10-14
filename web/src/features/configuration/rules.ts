@@ -155,6 +155,7 @@ export function explainCode(code: string): string {
     PORT_CODE_REPEATED: '같은 포트 코드가 두 번 나옵니다.',
     PORT_NODE_UNKNOWN: '포트가 가리키는 노드가 파일 안에 없습니다.',
     PORT_VEHICLE_TYPE_INVALID: '포트의 접근 차종은 OHT 또는 AGV입니다.',
+    PORT_EQUIPMENT_UNKNOWN: '포트가 가리키는 설비가 이 사이트에 없습니다. 설비를 먼저 등록한 뒤 지도를 올려 주세요.',
     VEHICLE_CODE_REPEATED: '같은 차량 코드가 두 번 나옵니다.',
     VEHICLE_TYPE_INVALID: '차종은 OHT 또는 AGV입니다.',
     VEHICLE_NODE_UNKNOWN: '차량이 가리키는 노드가 파일 안에 없습니다.',

@@ -33,8 +33,15 @@ public record MapDocument(List<Node> nodes,List<Segment> segments,List<Port> por
   * straight line, which is how a junction a rail vehicle can actually take is drawn.
   */
  public record Segment(String from,String to,Long costMm,Boolean enabled,Long curveMm){}
- /** A handover place on a node, and the kind of vehicle that may reach it. */
- public record Port(String code,String node,String portType,String accessVehicleType){}
+ /**
+  * A handover place on a node, and the kind of vehicle that may reach it.
+  *
+  * <p>{@code equipment} names the machine the controller hands over to here, by its code. Equipment
+  * belongs to the site rather than to any one map, so this is a reference out of the document to
+  * something that outlives it -- which is why importing refuses a name the site does not have
+  * rather than quietly creating one.
+  */
+ public record Port(String code,String node,String portType,String accessVehicleType,String equipment){}
  /** A vehicle and where it starts. {@code home} is where it waits, {@code charge} where it charges. */
  public record Vehicle(String code,String name,String vType,String initialNode,String home,String charge,
                        Integer speedMmS,String chargingPolicy,Boolean enabled,Boolean assignmentEnabled){}

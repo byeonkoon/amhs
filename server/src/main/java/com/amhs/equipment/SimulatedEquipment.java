@@ -29,14 +29,14 @@ public class SimulatedEquipment {
   requireSimulation(site);
   return jdbc.query("SELECT u.id,u.enabled,COALESCE(s.enabled,TRUE),COALESCE(s.call_enabled,TRUE),COALESCE(s.status,'IDLE')"
    +" FROM equipment.unit u LEFT JOIN equipment.simulation_state s ON s.unit_id=u.id"
-   +" JOIN topology.map_revision m ON m.id=u.revision_id AND m.status='ACTIVE' WHERE u.site_id=? ORDER BY u.id",
+   +" WHERE u.site_id=? ORDER BY u.id",
    (r,n)->new State(r.getLong(1),r.getBoolean(2),r.getBoolean(3),r.getBoolean(4),r.getString(5)),site);
  }
  @Transactional
  public State change(long site,long unit,Change change){
   requireSimulation(site);
-  var found=jdbc.queryForList("SELECT u.id FROM equipment.unit u JOIN topology.map_revision m ON m.id=u.revision_id"
-   +" WHERE u.site_id=? AND u.id=? AND m.status='ACTIVE' FOR UPDATE OF u",Long.class,site,unit);
+  var found=jdbc.queryForList("SELECT u.id FROM equipment.unit u"
+   +" WHERE u.site_id=? AND u.id=? FOR UPDATE OF u",Long.class,site,unit);
   if(found.isEmpty()) throw new ConfigurationException(404,"EQUIPMENT_NOT_FOUND");
   var old=list(site).stream().filter(s->s.unitId()==unit).findFirst().orElseThrow();
   if(change.status()!=null){

@@ -90,7 +90,7 @@ class TopologyAndEquipmentSqlTest {
  }
 
  @Test void aRacksCellsAreGeneratedFromItsSizeAndKeepWhatWasDecidedAboutThem(){
-  var unit=equipment.createUnit(SITE,new EquipmentSettings(REVISION,run+"-STK",run+" 스토커","STOCKER",true));
+  var unit=equipment.createUnit(SITE,new EquipmentSettings(run+"-STK",run+" 스토커","STOCKER",true));
   var rack=equipment.createRack(SITE,unit.id(),new RackSettings("R1",2,3,true));
   assertThat(equipment.slots(SITE,unit.id(),rack.id())).hasSize(6);
 
@@ -115,11 +115,19 @@ class TopologyAndEquipmentSqlTest {
    409,"UNUSABLE_SLOT_WOULD_BE_REMOVED");
  }
 
- @Test void equipmentKindAndRevisionAreChecked(){
-  rejected(()->equipment.createUnit(SITE,new EquipmentSettings(REVISION,run+"-BAD","x","CONVEYOR",true)),
+ /**
+  * A unit's kind is checked, and its code is the site's rather than a revision's.
+  *
+  * <p>Equipment names no node, so nothing about it changes when the track is redrawn and it is not
+  * tied to a map revision. That makes the code unique per site: two stockers called the same thing
+  * is a mistake whichever map is in use.
+  */
+ @Test void equipmentKindIsCheckedAndCodesAreUniquePerSite(){
+  rejected(()->equipment.createUnit(SITE,new EquipmentSettings(run+"-BAD","x","CONVEYOR",true)),
    422,"INVALID_EQUIPMENT_KIND");
-  rejected(()->equipment.createUnit(SITE,new EquipmentSettings(9999,run+"-REV","x","BUFFER",true)),
-   422,"REVISION_NOT_FOUND");
+  equipment.createUnit(SITE,new EquipmentSettings(run+"-ONCE","x","BUFFER",true));
+  assertThatThrownBy(()->equipment.createUnit(SITE,new EquipmentSettings(run+"-ONCE","x","BUFFER",true)))
+   .isInstanceOf(org.springframework.dao.DuplicateKeyException.class);
  }
 
  /**
@@ -153,7 +161,7 @@ class TopologyAndEquipmentSqlTest {
   var s=before.settings();
   rejected(()->topology.updateNode(SITE,REVISION,103,before.version(),
    new NodeSettings(s.code(),s.xMm(),s.yMm(),s.enabled(),s.stopNode(),s.mergePoint())),409,"SITE_NOT_IN_MAINTENANCE");
-  rejected(()->equipment.createUnit(SITE,new EquipmentSettings(REVISION,run+"-RUN","x","BUFFER",true)),
+  rejected(()->equipment.createUnit(SITE,new EquipmentSettings(run+"-RUN","x","BUFFER",true)),
    409,"SITE_NOT_IN_MAINTENANCE");
  }
 }

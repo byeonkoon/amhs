@@ -73,11 +73,20 @@ public class MapImport {
   // ---- what sits on it ----
   var portCodes=new HashSet<String>();
   var networkOf=new HashMap<String,VehicleType>();   // node code -> the kind of vehicle that reaches it
+  // Equipment is the site's, not the map's, so a port names one that is already there. Looked up
+  // once: a map with a hundred ports should not ask the database a hundred times for the same set.
+  var equipmentIds=new HashMap<String,Long>();
+  jdbc.query("SELECT code,id FROM equipment.unit WHERE site_id=?",
+   (r,n)->equipmentIds.put(r.getString(1),r.getLong(2)),site);
   for(var port:document.ports()){
    String code=text(port.code(),"PORT_CODE");
    ConfigurationException.require(portCodes.add(code),"PORT_CODE_REPEATED");
    ConfigurationException.require(nodeIds.containsKey(text(port.node(),"PORT_NODE")),"PORT_NODE_UNKNOWN");
    networkOf.put(port.node(),kind(port.accessVehicleType(),"PORT_VEHICLE_TYPE_INVALID"));
+   // Naming equipment this site does not have is refused rather than ignored. A port that silently
+   // lost its machine is a handover place the controller will never ask about.
+   if(port.equipment()!=null&&!port.equipment().isBlank())
+    ConfigurationException.require(equipmentIds.containsKey(port.equipment()),"PORT_EQUIPMENT_UNKNOWN");
   }
   var vehicleCodes=new HashSet<String>();
   for(var vehicle:document.vehicles()){
@@ -130,11 +139,12 @@ public class MapImport {
     !Boolean.FALSE.equals(segment.enabled()),segment.curveMm()!=null?segment.curveMm():0L);
   }
   for(var port:document.ports())
-   jdbc.update("INSERT INTO topology.port(id,site_id,revision_id,code,port_type,access_vehicle_type,linked_node_id)"
-    +" VALUES(?,?,?,?,?,?,?)",
+   jdbc.update("INSERT INTO topology.port(id,site_id,revision_id,code,port_type,access_vehicle_type,"
+    +"linked_node_id,equipment_unit_id) VALUES(?,?,?,?,?,?,?,?)",
     guard.nextId(),site,revisionId,port.code(),
     port.portType()==null||port.portType().isBlank()?"LOAD":upper(port.portType()),
-    upper(port.accessVehicleType()),nodeIds.get(port.node()));
+    upper(port.accessVehicleType()),nodeIds.get(port.node()),
+    port.equipment()==null||port.equipment().isBlank()?null:equipmentIds.get(port.equipment()));
   for(var vehicle:document.vehicles())
    jdbc.update("INSERT INTO fleet.vehicle_profile(id,site_id,revision_id,code,name,v_type,initial_node_id,"
     +"home_node_id,charge_node_id,enabled,assignment_enabled,charging_policy,speed_mm_s)"
@@ -174,10 +184,12 @@ public class MapImport {
    +" WHERE e.site_id=? AND e.revision_id=? ORDER BY f.code,t.code",
    (r,n)->new MapDocument.Segment(r.getString(1),r.getString(2),r.getLong(3),r.getBoolean(4),r.getLong(5)),
    site,map.id());
-  var ports=jdbc.query("SELECT p.code,n.code,p.port_type,p.access_vehicle_type FROM topology.port p"
+  var ports=jdbc.query("SELECT p.code,n.code,p.port_type,p.access_vehicle_type,u.code FROM topology.port p"
    +" JOIN topology.node n ON n.site_id=p.site_id AND n.revision_id=p.revision_id AND n.id=p.linked_node_id"
+   +" LEFT JOIN equipment.unit u ON u.id=p.equipment_unit_id"
    +" WHERE p.site_id=? AND p.revision_id=? ORDER BY p.code",
-   (r,n)->new MapDocument.Port(r.getString(1),r.getString(2),r.getString(3),r.getString(4)),site,map.id());
+   (r,n)->new MapDocument.Port(r.getString(1),r.getString(2),r.getString(3),r.getString(4),r.getString(5)),
+   site,map.id());
   var vehicles=jdbc.query("SELECT v.code,v.name,v.v_type,i.code,h.code,c.code,v.speed_mm_s,v.charging_policy,"
    +"v.enabled,v.assignment_enabled FROM fleet.vehicle_profile v"
    +" JOIN topology.node i ON i.site_id=v.site_id AND i.revision_id=v.revision_id AND i.id=v.initial_node_id"

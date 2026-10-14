@@ -38,7 +38,8 @@
     { "from": "OHT-B01", "to": "OHT-M002", "curveMm": 2200, "costMm": 5000 }
   ],
   "ports": [
-    { "code": "BAY-O01", "node": "OHT-B01", "portType": "LOAD", "accessVehicleType": "OHT" }
+    { "code": "BAY-O01", "node": "OHT-B01", "portType": "LOAD", "accessVehicleType": "OHT",
+      "equipment": "STK-01" }
   ],
   "vehicles": [
     { "code": "OHT-11", "name": "OHT 11", "vType": "OHT", "initialNode": "OHT-M001", "speedMmS": 2000 },
@@ -86,6 +87,11 @@
 | `node` | 어느 노드에서 인수도하는지. |
 | `portType` | `LOAD`/`UNLOAD` 등. 생략하면 `LOAD`. |
 | `accessVehicleType` | `OHT` 또는 `AGV`. 그 포트에 닿을 수 있는 차종입니다. |
+| `equipment` | 이 포트에서 인수도하는 **설비 코드**. 생략하면 연결하지 않습니다. |
+
+**설비는 지도의 것이 아닙니다.** 사이트의 것이고 지도 버전과 무관하게 살아 있으므로, `equipment`는 문서
+바깥을 가리키는 유일한 참조입니다. 그래서 **사이트에 없는 이름을 적으면 거절합니다**(`PORT_EQUIPMENT_UNKNOWN`)
+— 조용히 연결을 비우면 관제가 영영 묻지 않을 인수도 자리가 됩니다. 설비를 먼저 등록한 뒤 지도를 올립니다.
 
 ### vehicles
 

@@ -109,9 +109,8 @@ class EquipmentLinkSqlTest {
 
  @BeforeEach void wireUp(){
   clean();
-  unitId=jdbc.queryForObject("SELECT u.id FROM equipment.unit u"
-   +" JOIN topology.map_revision m ON m.id=u.revision_id AND m.status='ACTIVE'"
-   +" WHERE u.site_id=? ORDER BY u.id LIMIT 1",Long.class,SITE);
+  // Equipment belongs to the site rather than to a map revision, so no revision joins here.
+  unitId=jdbc.queryForObject("SELECT id FROM equipment.unit WHERE site_id=? ORDER BY id LIMIT 1",Long.class,SITE);
   portId=jdbc.queryForObject("SELECT id FROM topology.port WHERE site_id=? AND equipment_unit_id=? LIMIT 1",
    Long.class,SITE,unitId);
  }

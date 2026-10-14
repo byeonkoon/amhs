@@ -1,4 +1,5 @@
 package com.amhs;
+import com.amhs.equipment.EquipmentSettings;
 import com.amhs.mapio.MapDocument;
 import com.amhs.mapio.MapImport;
 import com.amhs.platform.ConfigurationException;
@@ -26,7 +27,7 @@ import static org.assertj.core.api.Assertions.*;
 @EnabledIfEnvironmentVariable(named="AMHS_SQL_TEST",matches="true")
 class MapImportSqlTest {
  @Autowired MapImport maps; @Autowired TopologyQuery query; @Autowired JdbcTemplate jdbc;
- @Autowired TopologyConfiguration topology;
+ @Autowired TopologyConfiguration topology; @Autowired com.amhs.equipment.EquipmentConfiguration equipment;
  private static final long SITE=1, IN_USE=1;
  private final List<Long> mine=new java.util.ArrayList<>();
 
@@ -42,6 +43,12 @@ class MapImportSqlTest {
    jdbc.update("DELETE FROM topology.map_revision WHERE id=?",revision);
   }
   mine.clear();
+  // Equipment outlives revisions now, so deleting the revisions does not take it with them. A port
+  // on some revision this test did not make may still point at it, so the link is cut first --
+  // which is the same order the application takes, and the reason this is not just a DELETE.
+  jdbc.update("UPDATE topology.port SET equipment_unit_id=NULL WHERE equipment_unit_id IN"
+   +" (SELECT id FROM equipment.unit WHERE site_id=? AND code LIKE 'MAP-%')",SITE);
+  jdbc.update("DELETE FROM equipment.unit WHERE site_id=? AND code LIKE 'MAP-%'",SITE);
  }
  private long imported(MapDocument document){
   long id=maps.importDocument(SITE,document).id();
@@ -64,7 +71,7 @@ class MapImportSqlTest {
     new MapDocument.Segment("T-N2","T-BAY",null,null,2000L),
     new MapDocument.Segment("T-BAY","T-N3",null,null,2000L),
     segment("T-N4","T-WAIT"),segment("T-WAIT","T-N1")),
-   List.of(new MapDocument.Port("T-PORT","T-BAY","LOAD","OHT")),
+   List.of(new MapDocument.Port("T-PORT","T-BAY","LOAD","OHT",null)),
    List.of(new MapDocument.Vehicle("T-OHT-01","test vehicle","OHT","T-N1",null,null,2000,null,null,null)),
    List.of(new MapDocument.Zone("T-ZONE",1,"MAINTENANCE",List.of("T-WAIT"))));
  }
@@ -164,7 +171,7 @@ class MapImportSqlTest {
   refused(()->maps.importDocument(SITE,new MapDocument(List.of(node("X1",0,0)),
    List.of(segment("X1","NOWHERE")),List.of(),List.of(),List.of())),"SEGMENT_NODE_UNKNOWN");
   refused(()->maps.importDocument(SITE,new MapDocument(List.of(node("X1",0,0)),
-   List.of(),List.of(new MapDocument.Port("P","X1","LOAD","TRAIN")),List.of(),List.of())),
+   List.of(),List.of(new MapDocument.Port("P","X1","LOAD","TRAIN",null)),List.of(),List.of())),
    "PORT_VEHICLE_TYPE_INVALID");
   refused(()->maps.importDocument(SITE,new MapDocument(List.of(node("X1",0,0)),List.of(),List.of(),
    List.of(new MapDocument.Vehicle("V","v","OHT","NOWHERE",null,null,null,null,null,null)),List.of())),
@@ -184,5 +191,37 @@ class MapImportSqlTest {
 
   assertThat(jdbc.queryForObject("SELECT count(*) FROM topology.map_revision WHERE site_id=?",Integer.class,SITE))
    .as("nothing refused left a revision behind").isEqualTo(revisions);
+ }
+
+ /**
+  * Equipment outlives the map, and a port says which machine it hands over to.
+  *
+  * <p>This is the whole reason a port carries an equipment code. Equipment belongs to the site, so
+  * a new map does not take it away -- but a port on that new map has to say which machine it meets,
+  * or every import quietly hands back a site whose stockers nothing points at.
+  */
+ @Test void aportKeepsItsEquipmentAcrossANewMap(){
+  var unit=equipment.createUnit(SITE,new EquipmentSettings("MAP-STK","map test stocker","STOCKER",true));
+  var document=smallSite();
+  var withEquipment=new MapDocument(document.nodes(),document.segments(),
+   List.of(new MapDocument.Port("T-PORT","T-BAY","LOAD","OHT","MAP-STK")),
+   document.vehicles(),document.zones());
+
+  long made=imported(withEquipment);
+  var linked=jdbc.queryForObject("SELECT equipment_unit_id FROM topology.port WHERE site_id=? AND revision_id=?",
+   Long.class,SITE,made);
+  assertThat(linked).as("the new map's port points at the site's machine").isEqualTo(unit.id());
+
+  // And it comes back out the same way, so a map can be exported, edited and brought in again.
+  assertThat(maps.export(SITE,made).ports().getFirst().equipment()).isEqualTo("MAP-STK");
+ }
+
+ /** A port naming a machine this site does not have is refused, not quietly unlinked. */
+ @Test void aportNamingEquipmentTheSiteDoesNotHaveIsRefused(){
+  var document=smallSite();
+  var wrong=new MapDocument(document.nodes(),document.segments(),
+   List.of(new MapDocument.Port("T-PORT","T-BAY","LOAD","OHT","NO-SUCH-MACHINE")),
+   document.vehicles(),document.zones());
+  refused(()->maps.importDocument(SITE,wrong),"PORT_EQUIPMENT_UNKNOWN");
  }
 }

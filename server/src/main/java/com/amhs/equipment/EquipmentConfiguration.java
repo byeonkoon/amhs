@@ -24,26 +24,26 @@ public class EquipmentConfiguration {
  @Transactional(readOnly=true)
  public List<ConfigurationRecord<EquipmentSettings>> units(long site){
   guard.requireSite(site);
-  return jdbc.query("SELECT id,version,revision_id,code,name,kind,enabled FROM equipment.unit"
+  return jdbc.query("SELECT id,version,code,name,kind,enabled FROM equipment.unit"
    +" WHERE site_id=? ORDER BY id",UNIT,site);
  }
 
  @Transactional
  public ConfigurationRecord<EquipmentSettings> createUnit(long site,EquipmentSettings s){
-  guard.acquire(site); s.validate(); requireRevision(site,s.revisionId());
+  guard.acquire(site); s.validate();
   long id=guard.nextId();
-  jdbc.update("INSERT INTO equipment.unit(id,site_id,revision_id,code,name,kind,enabled) VALUES(?,?,?,?,?,?,?)",
-   id,site,s.revisionId(),s.code(),s.name()==null?"":s.name(),s.kind(),s.enabled());
+  jdbc.update("INSERT INTO equipment.unit(id,site_id,code,name,kind,enabled) VALUES(?,?,?,?,?,?)",
+   id,site,s.code(),s.name()==null?"":s.name(),s.kind(),s.enabled());
   return unit(site,id);
  }
 
  @Transactional
  public ConfigurationRecord<EquipmentSettings> updateUnit(long site,long id,long expectedVersion,EquipmentSettings s){
   guard.acquire(site); ConfigurationException.require(expectedVersion>=0,"INVALID_VERSION");
-  s.validate(); requireRevision(site,s.revisionId()); unit(site,id);
-  guard.changed(jdbc.update("UPDATE equipment.unit SET revision_id=?,code=?,name=?,kind=?,enabled=?,version=version+1"
+  s.validate(); unit(site,id);
+  guard.changed(jdbc.update("UPDATE equipment.unit SET code=?,name=?,kind=?,enabled=?,version=version+1"
    +" WHERE site_id=? AND id=? AND version=?",
-   s.revisionId(),s.code(),s.name()==null?"":s.name(),s.kind(),s.enabled(),site,id,expectedVersion));
+   s.code(),s.name()==null?"":s.name(),s.kind(),s.enabled(),site,id,expectedVersion));
   return unit(site,id);
  }
 
@@ -123,14 +123,9 @@ public class EquipmentConfiguration {
      +" ON CONFLICT(rack_id,level,col) DO NOTHING",
      rackId,level,col,slotCode(code,level,col));
  }
- private void requireRevision(long site,long revisionId){
-  int known=jdbc.queryForObject("SELECT count(*) FROM topology.map_revision WHERE site_id=? AND id=?",
-   Integer.class,site,revisionId);
-  if(known==0) throw new ConfigurationException(422,"REVISION_NOT_FOUND");
- }
  /** One unit of this site, or a refusal saying there is no such thing. */
  public ConfigurationRecord<EquipmentSettings> unit(long site,long id){
-  var rows=jdbc.query("SELECT id,version,revision_id,code,name,kind,enabled FROM equipment.unit"
+  var rows=jdbc.query("SELECT id,version,code,name,kind,enabled FROM equipment.unit"
    +" WHERE site_id=? AND id=?",UNIT,site,id);
   if(rows.isEmpty())throw new ConfigurationException(404,"EQUIPMENT_NOT_FOUND");
   return rows.getFirst();
@@ -142,7 +137,7 @@ public class EquipmentConfiguration {
   return rows.getFirst();
  }
  private static final RowMapper<ConfigurationRecord<EquipmentSettings>> UNIT=(r,n)->new ConfigurationRecord<>(
-  r.getLong(1),r.getLong(2),new EquipmentSettings(r.getLong(3),r.getString(4),r.getString(5),r.getString(6),r.getBoolean(7)));
+  r.getLong(1),r.getLong(2),new EquipmentSettings(r.getString(3),r.getString(4),r.getString(5),r.getBoolean(6)));
  private static final RowMapper<ConfigurationRecord<RackSettings>> RACK=(r,n)->new ConfigurationRecord<>(
   r.getLong(1),r.getLong(2),new RackSettings(r.getString(3),r.getInt(4),r.getInt(5),r.getBoolean(6)));
  private static final RowMapper<SlotView> SLOT=(r,n)->new SlotView(

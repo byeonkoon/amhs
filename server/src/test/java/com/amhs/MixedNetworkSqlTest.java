@@ -32,8 +32,8 @@ class MixedNetworkSqlTest {
     new MapDocument.Node("MX-M",1000L,0L,true,false,false,false,null),
     new MapDocument.Node("MX-D",2000L,0L,true,false,false,false,null)),
    List.of(new MapDocument.Segment("MX-S","MX-M",1000L,true,0L),new MapDocument.Segment("MX-M","MX-D",1000L,true,0L)),
-   List.of(new MapDocument.Port("MX-S-P","MX-S","LOAD","OHT"),
-    new MapDocument.Port("MX-M-P","MX-M","LOAD","AGV"),new MapDocument.Port("MX-D-P","MX-D","LOAD","OHT")),
+   List.of(new MapDocument.Port("MX-S-P","MX-S","LOAD","OHT",null),
+    new MapDocument.Port("MX-M-P","MX-M","LOAD","AGV",null),new MapDocument.Port("MX-D-P","MX-D","LOAD","OHT",null)),
    List.of(new MapDocument.Vehicle("MX-OHT","mixed","OHT","MX-S",null,null,1000,"DISABLED",true,true)),List.of());
   long id=maps.importDocument(1,doc).id();
   assertThat(topology.mixedNetwork(1,id)).isNotNull();

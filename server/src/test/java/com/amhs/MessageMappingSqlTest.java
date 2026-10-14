@@ -142,9 +142,7 @@ class MessageMappingSqlTest {
   */
  @Test void adocumentAPieceOfEquipmentStillNamesCannotBeTakenAway(){
   mappings.save(1,document("SITE-LINE","move"),"tester");
-  var unitId=jdbc.queryForObject("SELECT u.id FROM equipment.unit u"
-   +" JOIN topology.map_revision m ON m.id=u.revision_id AND m.status='ACTIVE'"
-   +" WHERE u.site_id=1 ORDER BY u.id LIMIT 1",Long.class);
+  var unitId=jdbc.queryForObject("SELECT id FROM equipment.unit WHERE site_id=1 ORDER BY id LIMIT 1",Long.class);
   var c=connections.create(1,new ConnectionSettings("TCP","CLIENT","127.0.0.1",2098,false));
   var p=protocols.create(1,new ProtocolSettings("PLC","1","SITE-LINE"));
   // Straight to the row: what is being proved is the refusal, not the configuration service's

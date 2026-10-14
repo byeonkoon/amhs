@@ -71,9 +71,9 @@ class MigrationUpgradePathSqlTest {
     assertThat(appliedCount(c)).as("every migration applied").isGreaterThan(Integer.parseInt(BEFORE_THE_SAMPLE));
     assertThat(failedVersions(c)).as("no migration recorded as failed").isEmpty();
     // The site's own row is still the one it was, and nothing created a second STK-01.
-    assertThat(scalar(c,"SELECT count(*) FROM equipment.unit WHERE site_id=1 AND revision_id=1 AND code='STK-01'"))
+    assertThat(scalar(c,"SELECT count(*) FROM equipment.unit WHERE site_id=1 AND code='STK-01'"))
      .isEqualTo(1L);
-    assertThat(scalar(c,"SELECT id FROM equipment.unit WHERE site_id=1 AND revision_id=1 AND code='STK-01'"))
+    assertThat(scalar(c,"SELECT id FROM equipment.unit WHERE site_id=1 AND code='STK-01'"))
      .isEqualTo(771001L);
     // The ports that meant STK-01 point at the site's row, by code, which is what they always meant.
     assertThat(scalar(c,"SELECT count(*) FROM topology.port WHERE site_id=1 AND revision_id=1"

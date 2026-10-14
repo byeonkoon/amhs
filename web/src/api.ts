@@ -529,7 +529,8 @@ export type NodeSettings = {
 export type EdgeSettings = { fromNodeId: number; toNodeId: number; cost: number; enabled: boolean; curveMm?: number };
 
 export type EquipmentKind = 'STOCKER' | 'BUFFER' | 'PROCESS';
-export type EquipmentSettings = { revisionId: number; code: string; name: string; kind: EquipmentKind; enabled: boolean };
+/** One piece of equipment. It names no node, so it belongs to the site rather than to a map. */
+export type EquipmentSettings = { code: string; name: string; kind: EquipmentKind; enabled: boolean };
 export type RackSettings = { code: string; levels: number; columns: number; enabled: boolean };
 /**
  * One cell. `usable` says somebody decided it is not to be filled — it is not occupancy, not a

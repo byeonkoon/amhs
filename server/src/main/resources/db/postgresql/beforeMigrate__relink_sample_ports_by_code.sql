@@ -30,15 +30,33 @@ BEGIN
      AND NOT EXISTS (SELECT 1 FROM equipment.unit u WHERE u.id=p.equipment_unit_id);
   GET DIAGNOSTICS cleared=ROW_COUNT;
 
-  UPDATE topology.port p SET equipment_unit_id=u.id
-   FROM equipment.unit u
-   WHERE u.site_id=p.site_id AND u.revision_id=p.revision_id
-     AND p.equipment_unit_id IS NULL
-     AND u.code = CASE p.code
-          WHEN 'OHT-A' THEN 'STK-01' WHEN 'OHT-D' THEN 'STK-01'
-          WHEN 'OHT-B' THEN 'EQP-01' WHEN 'OHT-C' THEN 'EQP-02' WHEN 'OHT-E' THEN 'BUF-01'
-          WHEN 'AGV-A' THEN 'STK-11' WHEN 'AGV-B' THEN 'EQP-11' WHEN 'AGV-C' THEN 'BUF-11' END;
-  GET DIAGNOSTICS linked=ROW_COUNT;
+  -- Only on a database that has not reached V54 yet.
+  --
+  -- This exists to get a database safely *through* the migration that would otherwise roll back,
+  -- and that migration is long behind V54. A database at V54 or later has made its links already,
+  -- and equipment there is site-wide with no revision to match on -- so the statement below cannot
+  -- even be parsed against it, which is why it is behind a column check and run dynamically.
+  --
+  -- Doing nothing there is also what keeps a second migration of an up-to-date database quiet: a
+  -- callback that went on linking by code alone would find ports on other revisions and change
+  -- something every time it ran.
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+             WHERE table_schema='equipment' AND table_name='unit' AND column_name='revision_id')
+  THEN
+    EXECUTE $sql$
+      UPDATE topology.port p SET equipment_unit_id=u.id
+       FROM equipment.unit u
+       WHERE u.site_id=p.site_id AND u.revision_id=p.revision_id
+         AND p.equipment_unit_id IS NULL
+         AND u.code = CASE p.code
+              WHEN 'OHT-A' THEN 'STK-01' WHEN 'OHT-D' THEN 'STK-01'
+              WHEN 'OHT-B' THEN 'EQP-01' WHEN 'OHT-C' THEN 'EQP-02' WHEN 'OHT-E' THEN 'BUF-01'
+              WHEN 'AGV-A' THEN 'STK-11' WHEN 'AGV-B' THEN 'EQP-11' WHEN 'AGV-C' THEN 'BUF-11' END
+    $sql$;
+    GET DIAGNOSTICS linked=ROW_COUNT;
+  ELSE
+    linked:=0;
+  END IF;
 
   IF cleared>0 OR linked>0 THEN
     RAISE NOTICE 'sample port links: % cleared, % linked by code before migrating',cleared,linked;

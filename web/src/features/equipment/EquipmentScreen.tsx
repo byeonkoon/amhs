@@ -14,7 +14,7 @@ import { Grid, Panel, Row } from '../../shell/Panel';
  * Marking a cell unusable is a decision someone records about a real place; it is deliberately not
  * occupancy and not a reservation, and this screen never presents it as either.
  */
-export function EquipmentScreen({ session, revisionId, simulated }: { session: Session; revisionId: number; simulated: boolean }) {
+export function EquipmentScreen({ session, simulated }: { session: Session; simulated: boolean }) {
   const [units, setUnits] = React.useState<Cfg<EquipmentSettings>[] | null>(null);
   const [unitId, setUnitId] = React.useState<number | null>(null);
   const [racks, setRacks] = React.useState<Cfg<RackSettings>[]>([]);
