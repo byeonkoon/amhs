@@ -79,19 +79,35 @@ function pen(prefix, x, y, headingDeg, from = null) {
   return state;
 }
 
-/* ---- the main line: a rounded rectangle driven clockwise ---- */
-function mainLine(prefix, x0, y0, width, height, radius) {
-  const p = pen(prefix, x0 + radius, y0, 0);
-  const runX = width - 2 * radius, runY = height - 2 * radius;
+/**
+ * The interbay: a ring driven clockwise, near enough a circle, with a bay off each side.
+ *
+ * <p>A circle would be the honest shape for a loop that is only ever driven round, but a bay has
+ * to leave it at a right angle and come back, and there is no right angle to an arc -- a spur off
+ * one would leave at a slant and foul the line it just left. So the ring is a regular polygon with
+ * its corners eased: every side is a straight a bay can sit squarely in, and with enough sides the
+ * thing reads as a circle to anybody looking at it.
+ *
+ * <p>Eight sides is what the numbers allow. The straight left after the corners are eased has to
+ * hold a bay's span with room either end, and fewer, longer sides is what buys that -- sixteen
+ * would look rounder and leave no side long enough to put anything on.
+ */
+function ring(prefix, cx, cy, radius, sides, corner) {
+  const half = Math.PI / sides;                 // half the angle one side subtends at the centre
+  const edge = 2 * radius * Math.sin(half);     // corner to corner
+  const run = edge - 2 * corner * Math.tan(half);   // what is left once the corners are eased
+  const apothem = radius * Math.cos(half);      // centre to the middle of a side
+  // Start in the middle of the bottom side, driving right, so the ring comes out centred on
+  // (cx, cy) and turns the same way round as everything else here.
+  const p = pen(prefix, cx - run / 2, cy - apothem, 0);
   const runs = [];
-  for (const run of [runX, runY, runX, runY]) {
+  for (let i = 0; i < sides; i++) {
     const from = p.path.length - 1;
     p.straight(run);
     runs.push([from, p.path.length - 1]);   // a bay must begin and end inside one of these
-    p.turn(radius, 90);
+    p.turn(corner, 360 / sides);
   }
   // The pen is back where it started: close the ring onto the first node instead of repeating it.
-  // The pen has arrived back at the first node's position; that last node is the first one again.
   const last = p.path.pop(), first = p.path[0];
   const k = nodes.findIndex(n => n.code === last);
   if (k >= 0) nodes.splice(k, 1);
@@ -257,15 +273,18 @@ function planBays(runs, sides, prefix) {
 }
 
 /* ================= OHT: main line, work bays, an inspection spur and a waiting spur ============ */
-const ohtRing = mainLine('OHT-M', 20000, 20000, 190000, 104000, 7000);
+const ohtRing = ring('OHT-M', 120000, 90000, 60000, 8, 7000);
 let ohtPath = ohtRing.path;
-// Three bays along the top, three along the bottom, and one on each side -- the inspection loop
-// and the waiting loop. Every one of them sits inside a straight run, never across a corner.
+// One bay to a side, hanging outward: six places to hand a carrier over, the inspection loop and
+// the place vehicles stand when there is nothing to do. Spacing them round the ring rather than
+// crowding them onto two long sides is the point of the shape -- a vehicle leaving any bay is a
+// short arc from the next, whichever way it came.
+const bay = { bays: 1, span: 3, depth: 26000 };
 const ohtSides = [
-  { bays: 3, span: 4, depth: 30000 },
-  { bays: 1, span: 5, depth: 34000, label: 'OHT-INSP', laneNodes: 3 },
-  { bays: 3, span: 4, depth: 30000 },
-  { bays: 1, span: 4, depth: 26000, label: 'OHT-WAIT', extras: { waitFor: 'OHT' }, laneNodes: 2 },
+  bay, bay, bay,
+  { bays: 1, span: 3, depth: 30000, label: 'OHT-INSP', laneNodes: 3 },
+  bay, bay, bay,
+  { bays: 1, span: 3, depth: 24000, label: 'OHT-WAIT', extras: { waitFor: 'OHT' }, laneNodes: 2 },
 ];
 const ohtPlan = planBays(ohtRing.runs, ohtSides, 'OHT-B');
 const ohtLanes = new Map();
@@ -287,7 +306,9 @@ if (inspection.length)
   zones.push({ code: 'INSPECTION', capacity: inspection.length, kind: 'MAINTENANCE', nodes: inspection });
 
 /* ================= AGV: its own loop, bays, chargers and a waiting spur ======================== */
-const agvRing = oval('AGV-M', 20000, 190000, 230000, 90000);
+// Clear of the OHT ring's outermost bays: that ring now reaches further up and down than the old
+// rectangle did, and an AGV bay off this loop's near side comes back towards it.
+const agvRing = oval('AGV-M', 20000, 230000, 230000, 90000);
 let agvPath = agvRing.path;
 // Ten AGVs: four chargers and eight places to stand, in one bay. Fewer chargers than vehicles is
 // ordinary and the controller queues for them, but a vehicle that has finished charging must have
