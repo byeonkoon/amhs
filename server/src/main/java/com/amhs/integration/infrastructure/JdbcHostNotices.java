@@ -37,6 +37,12 @@ class JdbcHostNotices implements HostNotices {
   body.put("orderId",orderId);
   body.put("siteId",siteId);
   body.put("status",orderStatus);
+  // Which transition of this order this is. The sender already holds an order's notices in order,
+  // so this is the second lock on the same door: a system upstairs that receives them out of order
+  // for any reason of its own can still tell which came last, without trusting arrival time.
+  var sequence=jdbc.queryForObject("SELECT COALESCE(MAX(seq),0) FROM transport.order_event WHERE order_id=?",
+   Integer.class,orderId);
+  body.put("sequence",sequence==null?0:sequence);
   if(reason!=null&&!reason.isBlank()) body.put("reason",reason);
   // Said in the words the request came in: port codes, and the caller's own idempotency key, which
   // is how the system upstairs recognises which of its orders this is. Ids here are this database's

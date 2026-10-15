@@ -17,8 +17,16 @@ public record HostEndpointSettings(String url,String authHeader,String authValue
   ConfigurationException.require(url.startsWith("http://")||url.startsWith("https://"),"HOST_URL_NOT_HTTP");
   ConfigurationException.require(timeoutMs>=200&&timeoutMs<=30000,"INVALID_HOST_TIMEOUT");
   ConfigurationException.require(maxAttempts>=1&&maxAttempts<=50,"INVALID_HOST_ATTEMPTS");
-  if(authHeader!=null&&!authHeader.isBlank())
+  if(authHeader!=null&&!authHeader.isBlank()){
    ConfigurationInput.text(authHeader,128,"HOST_AUTH_HEADER");
+   // Asked of the client that will have to send it, rather than checked against a list copied from
+   // its documentation. `Host`, `Connection` and the rest are refused by the HTTP client itself, and
+   // a name it will not send is a setting that stops every notice at nought attempts if it is let
+   // through here. The client's own answer is the only one that stays right as it changes.
+   try{ java.net.http.HttpRequest.newBuilder(java.net.URI.create("http://host.invalid/"))
+     .header(authHeader,"probe").build(); }
+   catch(IllegalArgumentException e){ throw new ConfigurationException(422,"HOST_AUTH_HEADER_NOT_ALLOWED"); }
+  }
  }
  /** The same settings with the secret removed, which is the only form that leaves this server. */
  public HostEndpointSettings withoutSecret(){

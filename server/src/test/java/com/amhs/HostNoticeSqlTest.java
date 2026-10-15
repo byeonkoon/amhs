@@ -28,6 +28,8 @@ import static org.assertj.core.api.Assertions.*;
 @EnabledIfEnvironmentVariable(named="AMHS_SQL_TEST",matches="true")
 class HostNoticeSqlTest {
  @Autowired HostEndpointConfiguration hosts; @Autowired HostNotifier notifier;
+ @Autowired com.amhs.integration.HostNotices notices;
+ @Autowired org.springframework.transaction.support.TransactionTemplate tx;
  @Autowired JdbcTemplate jdbc;
  private static final long SITE=1;
  private long orderId;
@@ -84,12 +86,14 @@ class HostNoticeSqlTest {
  private void sendTo(Upstairs upstairs){
   hosts.save(SITE,new HostEndpointSettings(upstairs.url(),"X-Test-Auth","secret-value",2000,4,true));
  }
- /** A notice as if an order had just ended, written the way the ledger writes one. */
+ /**
+  * A notice as if an order had just ended -- through the real path, not an INSERT of its own.
+  *
+  * <p>The ledger calls this inside the transaction that changed the order, so the test does the
+  * same. It also means the body under test is the body that would really be sent.
+  */
  private void orderEnded(String status){
-  jdbc.update("INSERT INTO integration.host_notice(site_id,order_id,notice_key,order_status,body)"
-   +" VALUES(?,?,?,?,?) ON CONFLICT(notice_key) DO NOTHING",
-   SITE,orderId,"order-"+orderId+"-"+status,status,
-   "{\"event\":\"transport-order\",\"orderId\":"+orderId+",\"status\":\""+status+"\"}");
+  tx.executeWithoutResult(s->notices.announce(SITE,orderId,status,null));
  }
  private String stateNow(){
   var rows=jdbc.query("SELECT state FROM integration.host_notice WHERE site_id=? ORDER BY id DESC LIMIT 1",
@@ -214,6 +218,90 @@ class HostNoticeSqlTest {
  @Test void anaddressNothingCanDialIsRefusedAtTheSettings(){
   assertThatThrownBy(()->hosts.save(SITE,new HostEndpointSettings("ftp://host/notices",null,null,2000,4,true)))
    .hasMessageContaining("HOST_URL_NOT_HTTP");
+ }
+
+ /**
+  * A header the HTTP client will not send is refused when it is saved.
+  *
+  * <p>Asked of the client itself rather than checked against a list: {@code Host}, {@code Connection}
+  * and the rest are the client's rules, and a copy of them here would drift.
+  */
+ @Test void aheaderTheClientWillNotSendIsRefusedAtTheSettings(){
+  assertThatThrownBy(()->hosts.save(SITE,new HostEndpointSettings("http://127.0.0.1/x","Host","wms",2000,4,true)))
+   .hasMessageContaining("HOST_AUTH_HEADER_NOT_ALLOWED");
+  assertThatThrownBy(()->hosts.save(SITE,new HostEndpointSettings("http://127.0.0.1/x","Connection","close",2000,4,true)))
+   .hasMessageContaining("HOST_AUTH_HEADER_NOT_ALLOWED");
+ }
+
+ /**
+  * Settings that cannot be made into a request at all settle the notice rather than stalling it.
+  *
+  * <p>Written straight to the row, because the settings service refuses this now -- what is being
+  * proved is that a row which somehow holds such settings does not leave every notice at PENDING
+  * with nought attempts, which is a queue that never moves and never says why.
+  */
+ @Test void settingsThatCannotBeSentAreSettledNotStalled() throws Exception {
+  try(var upstairs=new Upstairs()){
+   sendTo(upstairs);
+   jdbc.update("UPDATE integration.host_endpoint SET auth_header='Host' WHERE site_id=?",SITE);
+   orderEnded("COMPLETED");
+   assertThat(waitFor(()->"REFUSED".equals(stateNow()))).as("settled, not stuck").isTrue();
+   var row=jdbc.queryForMap("SELECT attempts,last_error FROM integration.host_notice WHERE site_id=?",SITE);
+   assertThat((Integer)row.get("attempts")).isGreaterThan(0);
+   assertThat((String)row.get("last_error")).contains("unusable host settings");
+  }
+ }
+
+ /**
+  * One order's notices leave in the order they were written.
+  *
+  * <p>The case this is for: recovery fails and backs off, completion is written next and would go
+  * straight through, and the retry of the first then succeeds -- leaving the system upstairs told
+  * that an order it saw finish needs recovering. The later notice waits instead.
+  */
+ @Test void alaterNoticeDoesNotOvertakeAnEarlierOneForTheSameOrder() throws Exception {
+  try(var upstairs=new Upstairs()){
+   upstairs.answer=503;                           // nothing gets through at first
+   hosts.save(SITE,new HostEndpointSettings(upstairs.url(),null,null,500,8,true));
+   orderEnded("RECOVERY_REQUIRED");
+   assertThat(waitFor(()->attemptsFor("RECOVERY_REQUIRED")>0)).as("the first was tried").isTrue();
+
+   // The order finishes while the first notice is waiting to be retried.
+   orderEnded("COMPLETED");
+   upstairs.answer=200;
+   upstairs.heard.clear();
+
+   assertThat(waitFor(()->"SENT".equals(stateFor("COMPLETED")))).as("both got there").isTrue();
+   assertThat(stateFor("RECOVERY_REQUIRED")).as("the earlier one went first").isEqualTo("SENT");
+
+   var order=new java.util.ArrayList<String>();
+   String body;
+   while((body=upstairs.heard.poll(200,TimeUnit.MILLISECONDS))!=null)
+    order.add(body.contains("RECOVERY_REQUIRED")?"RECOVERY_REQUIRED":"COMPLETED");
+   assertThat(order).as("recovery before completion, never the other way")
+    .containsExactly("RECOVERY_REQUIRED","COMPLETED");
+  }
+ }
+
+ /** Which transition it is, so a host that reorders them for its own reasons can still tell. */
+ @Test void anoticeSaysWhichTransitionOfTheOrderItIs() throws Exception {
+  try(var upstairs=new Upstairs()){
+   sendTo(upstairs);
+   orderEnded("COMPLETED");
+   assertThat(waitFor(()->"SENT".equals(stateNow()))).isTrue();
+   assertThat(upstairs.heard.poll(2,TimeUnit.SECONDS)).contains("\"sequence\"");
+  }
+ }
+
+ private String stateFor(String status){
+  var rows=jdbc.query("SELECT state FROM integration.host_notice WHERE site_id=? AND order_status=?",
+   (r,n)->r.getString(1),SITE,status);
+  return rows.isEmpty()?null:rows.getFirst();
+ }
+ private int attemptsFor(String status){
+  var rows=jdbc.query("SELECT attempts FROM integration.host_notice WHERE site_id=? AND order_status=?",
+   (r,n)->r.getInt(1),SITE,status);
+  return rows.isEmpty()?0:rows.getFirst();
  }
 
  /** What was said lately, for somebody trying to find out why the host has gone quiet. */

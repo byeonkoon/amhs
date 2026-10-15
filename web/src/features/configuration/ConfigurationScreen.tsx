@@ -1062,22 +1062,36 @@ function HostNoticeTab({ canWrite }: { canWrite: boolean }) {
   const [tick, setTick] = React.useState(0);
   const reload = () => setTick(t => t + 1);
 
+  // The settings are read when this opens and after a save, and not otherwise: re-reading them on
+  // a timer would overwrite whatever somebody is in the middle of typing.
   React.useEffect(() => {
     const ac = new AbortController();
     setError(null);
-    Promise.all([
-      getAs<{ configured: boolean; endpoint?: Cfg<HostEndpointSettings> }>(hostApi.endpoint(), ac.signal),
-      getAs<HostNotice[]>(hostApi.notices(), ac.signal),
-    ]).then(([found, said]) => {
-      setConfigured(found.configured);
-      // A credential never comes back, so the field starts empty and an empty field means "leave it".
-      setDraft(found.endpoint
-        ? { ...found.endpoint.settings, authValue: null }
-        : { url: '', authHeader: null, authValue: null, timeoutMs: 3000, maxAttempts: 8, enabled: false });
-      setNotices(said);
-    }).catch(cause => { if ((cause as Error).name !== 'AbortError') setError(cause); });
+    getAs<{ configured: boolean; endpoint?: Cfg<HostEndpointSettings> }>(hostApi.endpoint(), ac.signal)
+      .then(found => {
+        setConfigured(found.configured);
+        // A credential never comes back, so the field starts empty and an empty field means "leave it".
+        setDraft(found.endpoint
+          ? { ...found.endpoint.settings, authValue: null }
+          : { url: '', authHeader: null, authValue: null, timeoutMs: 3000, maxAttempts: 8, enabled: false });
+      })
+      .catch(cause => { if ((cause as Error).name !== 'AbortError') setError(cause); });
     return () => ac.abort();
   }, [tick]);
+
+  // The notices are what change on their own -- PENDING becomes SENT, REFUSED or ABANDONED out in
+  // the sender -- so they are read on a timer, and separately, which is what lets that happen
+  // without touching the form above.
+  React.useEffect(() => {
+    const ac = new AbortController();
+    let active = true;
+    const read = () => getAs<HostNotice[]>(hostApi.notices(), ac.signal)
+      .then(said => { if (active) setNotices(said); })
+      .catch(cause => { if (active && (cause as Error).name !== 'AbortError') setError(cause); });
+    void read();
+    const timer = window.setInterval(read, 2000);
+    return () => { active = false; ac.abort(); window.clearInterval(timer); };
+  }, []);
 
   const set = (patch: Partial<HostEndpointSettings>) => setDraft(d => d && ({ ...d, ...patch }));
   const save = async () => {
