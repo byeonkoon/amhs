@@ -189,32 +189,34 @@ function spur(path, atIndex, span, depth, label, extras = {}, laneNodes = 1, rad
     laneCodes.push(p.path[p.path.length - 1]);
     p.straight(far / 2, {}, far / 2);
   } else {
-    // Stalls beside the lane, never one behind another. A row of stalls is a queue: the vehicle in
-    // front decides when the one behind may leave, and a vehicle that is parked has no reason to
-    // move -- so a charger behind a parked vehicle is a charger nobody can reach. Each stall is its
-    // own short branch off the lane instead, which is how a charging bay is actually built.
-    const spine = [p.path[p.path.length - 1]];
+    // Stalls on the lane itself, one after another along the far side of the bay.
+    //
+    // They used to hang off it, each on its own short branch, so that no vehicle could ever be
+    // behind another. That is how a charging bay is often built and it drew badly: a row of spikes
+    // off the loop, which is not what any of the rest of this layout looks like.
+    //
+    // On the lane they are a queue, and the queue is the honest part: the bay is a loop driven one
+    // way, so a vehicle leaves by going on round rather than by backing out, and a vehicle still
+    // charging does hold up the one behind it. That is what a charging stand does on a floor, and
+    // it is the controller's to schedule -- there are more stalls than vehicles so there is always
+    // somewhere to go, and a vehicle that has finished moves on to a waiting stall and frees its
+    // charger.
     for (let i = 0; i < laneNodes; i++) {
-      p.straight(far / laneNodes, {}, far / laneNodes);
-      spine.push(p.path[p.path.length - 1]);
-    }
-    const entry = byCode.get(path[atIndex]);
-    for (let i = 0; i < laneNodes; i++) {
-      const s = byCode.get(spine[i]), e = byCode.get(spine[i + 1]);
-      const mx = (s.xMm + e.xMm) / 2, my = (s.yMm + e.yMm) / 2;
-      const ux = e.xMm - s.xMm, uy = e.yMm - s.yMm, len2 = Math.hypot(ux, uy) || 1;
-      // Off the side away from the main line, so a stall never reaches back towards it.
-      let ox = -uy / len2 * STALL, oy = ux / len2 * STALL;
-      if (Math.hypot(mx + ox - entry.xMm, my + oy - entry.yMm)
-        < Math.hypot(mx - ox - entry.xMm, my - oy - entry.yMm)) { ox = -ox; oy = -oy; }
       // A bay may name and mark each stall for itself, so the chargers and the places to stand
       // afterwards can be one area rather than two at opposite ends of the loop.
       const spec = typeof extras === 'function' ? extras(i) : extras;
       const { code, ...marks } = spec;
-      const stall = node(code ?? `${label}-${i + 1}`, mx + ox, my + oy, marks);
-      link(spine[i], stall);
-      link(stall, spine[i + 1]);
-      laneCodes.push(stall);
+      p.straight(far / laneNodes, {}, far / laneNodes);
+      const made = p.path[p.path.length - 1];
+      if (code) {
+        // Rename the node the pen just dropped to the name this stall was given.
+        const n = byCode.get(made);
+        byCode.delete(made); n.code = code; byCode.set(code, n);
+        for (const s of segments) { if (s.from === made) s.from = code; if (s.to === made) s.to = code; }
+        p.path[p.path.length - 1] = code;
+      }
+      Object.assign(byCode.get(code ?? made), marks);
+      laneCodes.push(code ?? made);
     }
   }
   p.turn(radius, 90);
@@ -272,35 +274,87 @@ function planBays(runs, sides, prefix) {
   return plan;
 }
 
-/* ================= OHT: main line, work bays, an inspection spur and a waiting spur ============ */
-const ohtRing = ring('OHT-M', 120000, 90000, 60000, 8, 7000);
-let ohtPath = ohtRing.path;
-// One bay to a side, hanging outward: six places to hand a carrier over, the inspection loop and
-// the place vehicles stand when there is nothing to do. Spacing them round the ring rather than
-// crowding them onto two long sides is the point of the shape -- a vehicle leaving any bay is a
-// short arc from the next, whichever way it came.
-const bay = { bays: 1, span: 3, depth: 26000 };
-const ohtSides = [
-  bay, bay, bay,
-  { bays: 1, span: 3, depth: 30000, label: 'OHT-INSP', laneNodes: 3 },
-  bay, bay, bay,
-  { bays: 1, span: 3, depth: 24000, label: 'OHT-WAIT', extras: { waitFor: 'OHT' }, laneNodes: 2 },
-];
-const ohtPlan = planBays(ohtRing.runs, ohtSides, 'OHT-B');
+/* ================= OHT: two intrabay loops, joined down one side, with bays off each ============ */
+/**
+ * Two long loops, one above the other, with their work hanging off them, and a link between them
+ * at one end. That is the shape a fab's overhead track is: a bay is a row of tools and the rail
+ * goes up one side of it and back down the other, so the loop is long and thin and sits over the
+ * row. The link at the end is what makes it one network rather than two -- a carrier that has to
+ * cross from one bay to the next goes round by it.
+ *
+ * <p>A single ring round the whole floor is the other way to draw this, and it is worse for the
+ * same reason the real thing is not drawn that way: every bay would be on the circumference, so the
+ * distance between two of them would be set by how far apart they happen to sit on the ring rather
+ * than by how far apart the tools are.
+ */
+const ohtTop = oval('OHT-A', 40000, 40000, 200000, 56000);
+const ohtLow = oval('OHT-C', 40000, 168000, 200000, 56000);
+let ohtTopPath = ohtTop.path, ohtLowPath = ohtLow.path;
+
+// An oval's two straights are its upper and its lower, and a bay hangs outward from whichever it
+// is on. The gap between the two loops therefore belongs to the lower loop's bays and to the link:
+// everything on the upper loop goes up and away, so nothing reaches into a space it cannot see
+// across.
+const topPlan = planBays(ohtTop.runs, [
+  { each: [
+    { span: 4, depth: 26000 },
+    { span: 4, depth: 26000 },
+    { span: 4, depth: 30000, label: 'OHT-INSP', laneNodes: 3 },
+  ] },
+  { bays: 0, span: 4, depth: 0 },
+], 'OHT-B');
+const lowPlan = planBays(ohtLow.runs, [
+  { bays: 2, span: 4, depth: 24000 },
+  { each: [
+    { span: 4, depth: 26000 },
+    { span: 4, depth: 26000, label: 'OHT-WAIT', extras: { waitFor: 'OHT' }, laneNodes: 2 },
+  ] },
+], 'OHT-D');
+
 const ohtLanes = new Map();
-for (const plan of ohtPlan.slice().sort((x, y) => y.at - x.at)) {
-  const made = spur(ohtPath, plan.at, plan.span, plan.depth, plan.label,
+for (const plan of topPlan.slice().sort((x, y) => y.at - x.at)) {
+  const made = spur(ohtTopPath, plan.at, plan.span, plan.depth, plan.label,
     plan.extras ?? {}, plan.laneNodes ?? 1);
-  ohtPath = made.path;
+  ohtTopPath = made.path;
   ohtLanes.set(plan.label, made.lane);
 }
-ohtPlan.filter(p => p.label.startsWith('OHT-B')).forEach((p, i) => {
+for (const plan of lowPlan.slice().sort((x, y) => y.at - x.at)) {
+  const made = spur(ohtLowPath, plan.at, plan.span, plan.depth, plan.label,
+    plan.extras ?? {}, plan.laneNodes ?? 1);
+  ohtLowPath = made.path;
+  ohtLanes.set(plan.label, made.lane);
+}
+
+/**
+ * The link between the two loops: down one side, up the other, clear of both.
+ *
+ * <p>Two one-way runs rather than one: a vehicle has to be able to come back, and a single length
+ * of track that both directions used would be a place two vehicles meet head on with nowhere to go.
+ * They are taken from the far end of each loop, where there is nothing else, and they are the only
+ * track either loop shares with anything.
+ */
+function joinLoops(upper, lower) {
+  const nodesOf = path => path.map(c => byCode.get(c)).filter(Boolean);
+  const u = nodesOf(upper), l = nodesOf(lower);
+  // Taken off the facing straights, not simply the rightmost nodes of each loop: the rightmost
+  // are on the half-circle, and a line between two points of an arc cuts across the arc itself.
+  const facing = (ns, y) => ns.filter(n => Math.abs(n.yMm - y) < 1).sort((a, b) => b.xMm - a.xMm);
+  const down = facing(u, Math.max(...u.map(n => n.yMm)));   // the upper loop's lower straight
+  const up = facing(l, Math.min(...l.map(n => n.yMm)));     // the lower loop's upper straight
+  // One node apart, so the two runs are parallel rather than on top of one another.
+  link(down[0].code, up[0].code);
+  link(up[1].code, down[1].code);
+}
+joinLoops(ohtTopPath, ohtLowPath);
+
+[...topPlan, ...lowPlan].filter(p => /^OHT-[BD]/.test(p.label)).forEach((p, i) => {
   const lane = ohtLanes.get(p.label) ?? [];
   if (lane.length) ports.push({
     code: `BAY-O${String(i + 1).padStart(2, '0')}`, node: lane[0],
     portType: i % 2 === 0 ? 'LOAD' : 'UNLOAD', accessVehicleType: 'OHT',
   });
 });
+const ohtPath = [...ohtTopPath, ...ohtLowPath];
 const inspection = ohtLanes.get('OHT-INSP') ?? [];
 if (inspection.length)
   zones.push({ code: 'INSPECTION', capacity: inspection.length, kind: 'MAINTENANCE', nodes: inspection });
@@ -308,7 +362,7 @@ if (inspection.length)
 /* ================= AGV: its own loop, bays, chargers and a waiting spur ======================== */
 // Clear of the OHT ring's outermost bays: that ring now reaches further up and down than the old
 // rectangle did, and an AGV bay off this loop's near side comes back towards it.
-const agvRing = oval('AGV-M', 20000, 230000, 230000, 90000);
+const agvRing = oval('AGV-M', 20000, 300000, 230000, 90000);
 let agvPath = agvRing.path;
 // Ten AGVs: four chargers and eight places to stand, in one bay. Fewer chargers than vehicles is
 // ordinary and the controller queues for them, but a vehicle that has finished charging must have
