@@ -87,8 +87,21 @@ export type EquipmentCommunicationSettings = {
   unitId: number; connectionProfileId: number; protocolProfileId: number;
   externalUnitId: string; enabled: boolean;
 };
+/**
+ * What a handover port's equipment has been told: a carrier is coming, which way, and whose.
+ *
+ * `state` is how the telling went — TOLD is the controller having echoed it back, IN_DOUBT is
+ * written with nobody answering, NOT_TOLD is nothing written at all.
+ */
+export type EquipmentStatement = {
+  portId: number; portCode: string; unitId: number; unitCode: string;
+  reserved: boolean; direction: 'PICKUP' | 'DROP' | null;
+  transferring: boolean; attention: boolean; carrier: string | null;
+  state: 'TOLD' | 'IN_DOUBT' | 'NOT_TOLD'; lastError: string | null; toldAt: string | null;
+};
 export const equipmentApi = {
   states: () => `/api/v1/sites/${SITE_ID}/equipment/states`,
+  statements: () => `/api/v1/sites/${SITE_ID}/equipment/statements`,
   /** Which equipment is wired to what. ADMIN, and the site has to be in maintenance to change it. */
   communications: () => `/api/v1/sites/${SITE_ID}/configuration/equipment-communications`,
 };

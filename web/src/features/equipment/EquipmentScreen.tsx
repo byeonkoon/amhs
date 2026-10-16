@@ -1,7 +1,7 @@
 import React from 'react';
 import {
   ApiError, equipmentApi, get, opsApi, send, simulationEquipmentApi,
-  type EquipmentState, type SimulatedEquipmentState,
+  type EquipmentState, type EquipmentStatement, type SimulatedEquipmentState,
   type Cfg, type EquipmentSettings, type RackSettings, type Session, type SlotView,
 } from '../../api';
 import { Chip, Empty } from '../../shell/States';
@@ -91,6 +91,8 @@ export function EquipmentScreen({ session, simulated }: { session: Session; simu
       </div></div>}
 
       <EquipmentLinkState simulated={simulated} />
+
+      {!simulated && <EquipmentStatements />}
 
       {simulated && <SimulationControls unitId={unitId} mayControl={session.level >= 2} />}
 
@@ -307,6 +309,62 @@ function EquipmentLinkState({ simulated }: { simulated: boolean }) {
     </div>
   </section>;
 }
+/**
+ * 설비에 알린 것.
+ *
+ * <p>관제는 그 포트로 차량을 보냈다는 것을 알고 설비는 모릅니다. 미리 알면 설비가 포트를 잡아 두고
+ * 반송물을 준비할 수 있으므로, 그 한 가지를 알립니다 — 인수도 핸드셰이크 자체는 차량과 포트가 자기들
+ * 선으로 하는 일이고 관제는 그 사이에 끼지 않습니다.
+ *
+ * <p>여기가 **전달 여부를 볼 수 있는 유일한 자리**입니다. `결과 불명`인 포트는 설비가 알 수도 있고
+ * 모를 수도 있는 포트이고, 다른 화면에는 그런 사실이 나타나지 않습니다.
+ */
+function EquipmentStatements() {
+  const [told, setTold] = React.useState<EquipmentStatement[] | null>(null);
+  React.useEffect(() => {
+    const c = new AbortController();
+    let active = true;
+    const read = () => get<EquipmentStatement[]>(equipmentApi.statements(), c.signal)
+      .then(v => { if (active) setTold(v); })
+      .catch(() => { /* 설비 상태 패널이 이미 링크 오류를 말합니다 */ });
+    void read();
+    const timer = window.setInterval(read, 2000);
+    return () => { active = false; c.abort(); window.clearInterval(timer); };
+  }, []);
+  if (!told || told.length === 0) return null;
+  return <section className="card">
+    <div className="ch"><h2>설비에 알린 것</h2>
+      <span className="aux">그 포트로 반송이 가고 있다는 예고입니다 · 인수도 핸드셰이크는 차량과 포트가 합니다</span>
+    </div>
+    <div className="cb">
+      <Grid cols="120px 110px 90px 90px 120px 110px 1fr"
+        head={['포트', '설비', '예고', '방향', '반송물', '전달', '비고']}>
+        {told.map(t => (
+          <Row key={t.portId}>
+            <span className="mono">{t.portCode}</span>
+            <span className="mono">{t.unitCode}</span>
+            <span>{t.reserved ? <Chip tone={t.transferring ? 'wr' : 'ok'}>{t.transferring ? '인수도 중' : '예약'}</Chip>
+              : <span className="hint" style={{ margin: 0 }}>없음</span>}</span>
+            <span>{t.direction ? (t.direction === 'PICKUP' ? '설비 반출' : '설비 반입') : '—'}</span>
+            <span className="mono" style={{ fontSize: 11 }}>{t.carrier ?? '—'}</span>
+            <span><Chip tone={STATEMENT_TONE[t.state]}>{STATEMENT_STATE[t.state]}</Chip></span>
+            <span style={{ fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+              title={t.lastError ?? ''}>
+              {t.attention ? '사람 확인 대기 · ' : ''}{t.lastError ?? (t.toldAt ? t.toldAt.slice(11, 19) : '')}
+            </span>
+          </Row>
+        ))}
+      </Grid>
+    </div>
+  </section>;
+}
+/** 전달·결과 불명·미전달을 나눕니다 — "알렸다"와 "알았는지 모른다"는 다른 사실입니다. */
+const STATEMENT_STATE: Record<EquipmentStatement['state'], string> = {
+  TOLD: '전달', IN_DOUBT: '결과 불명', NOT_TOLD: '미전달',
+};
+const STATEMENT_TONE: Record<EquipmentStatement['state'], string> = {
+  TOLD: 'ok', IN_DOUBT: 'wr', NOT_TOLD: 'er',
+};
 const EQ_STATUS: Record<string, string> = { IDLE: '대기', READY: '준비', BUSY: '작업 중', ERROR: '오류',
   OFFLINE: '오프라인', LOADING: '차량 인수 중', UNLOADING: '설비 인계 중' };
 const STATUS_TONE: Record<string, string> = { READY: 'ok', IDLE: 'id', BUSY: 'wr', LOADING: 'wr',

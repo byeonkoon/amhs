@@ -121,4 +121,40 @@ class MessageMappingTest {
   assertThat(MessageMapper.match("{prefix}/v3/{maker}/{serial}/state","uagv/v2/ACME/AGV-7/state")).isNull();
   assertThat(MessageMapper.match("{prefix}/{version}/{maker}/{serial}/state","uagv/v3/ACME/state")).isNull();
  }
+
+ /** The shipped equipment example reads, writes the one statement, and has a handshake for it. */
+ @Test void theequipmentSampleSaysTheOneThingItMay() throws Exception {
+  var mapping=read(Files.readString(Path.of("../docs/sample-mappings/equipment-mc-example.json")));
+  assertThat(mapping.adapter()).isEqualTo("EQUIPMENT_WORD_V1");
+  assertThat(mapping.outbound()).containsOnlyKeys("PORT_INTENT");
+  assertThat(mapping.area().write()).isNotBlank();
+  assertThat(mapping.handshake()).isNotNull();
+  assertThat(mapping.handshake().echoSlot()).as("which statement was taken").isNotNull();
+ }
+
+ /**
+  * An equipment document that writes something else, or has nowhere to write it, is refused.
+  *
+  * <p>There is one thing this controller says to a machine. A document naming another command has
+  * described one that will never be sent, and a dead command in a document is worse than none --
+  * somebody wrote it believing it would go.
+  */
+ @Test void anEquipmentDocumentMaySayOnlyTheOneThingAndMustHaveSomewhereToSayIt() {
+  String wrong="""
+   {"mapping":"EQ-WRONG","adapter":"EQUIPMENT_WORD_V1",
+    "area":{"driver":"mc","read":"D1000","words":4,"poll-ms":500},
+    "identity":{"fromSlot":"unit"},
+    "layout":{"unit":{"word":0,"type":"ascii","length":4,"area":"read"},
+              "cmd":{"word":2,"type":"u16"},"req":{"word":3,"bit":0},
+              "took":{"word":3,"bit":1,"area":"read"},"echo":{"word":1,"type":"u16","area":"read"}},
+    "inbound":[{"when":{"always":true},"report":{"status":{"from":"slot.cmd","values":{"0":"IDLE"}}}}],
+    "outbound":{"OPEN_DOOR":{"slots":{"cmd":1}}},
+    "handshake":{"write":["cmd"],"then-set":"req","accepted-bit":"took","echo-slot":"echo"}}
+   """;
+  assertThatThrownBy(()->read(wrong))
+   .isInstanceOfSatisfying(DeviceMessageMapping.MappingRejected.class,rejected->
+    assertThat(rejected.problems())
+     .anyMatch(p->p.contains("OPEN_DOOR"))          // not a thing this controller says
+     .anyMatch(p->p.contains("area.write")));       // and nowhere to say it
+ }
 }

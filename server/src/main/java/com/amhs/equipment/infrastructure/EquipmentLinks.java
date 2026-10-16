@@ -5,6 +5,7 @@ import com.amhs.integration.mapping.MappingLibrary;
 import com.amhs.integration.mapping.MessageMapper;
 import com.amhs.integration.mapping.SlotCodec;
 import com.amhs.integration.mapping.DeviceMessageMapping;
+import com.amhs.platform.OperationOptionConfiguration;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PreDestroy;
@@ -36,9 +37,16 @@ import java.util.concurrent.ConcurrentHashMap;
  *     polls the unit is marked offline, and offline is what the rest of the system acts on.</li>
  * </ul>
  *
- * <p>Nothing is written. Equipment here is a thing this controller takes account of, not one it
- * drives -- and an adapter that could write is an adapter somebody will ask to, long before there
- * is a decision anywhere in this system about what to write.
+ * <p>It also says one thing, where a document asks it to. This controller knows something the
+ * machine does not -- that a vehicle has been sent to one of its ports -- and a stocker that is
+ * told a minute early can hold the port and have the carrier ready. That statement is all it
+ * writes: the handover handshake itself is the vehicle's and the port's own business over their own
+ * wires, and this is not in the middle of it. See {@link PortIntents}.
+ *
+ * <p>Both halves run on <b>this component's own thread</b>. A read waits on a controller that may
+ * be gone and a statement waits for a controller to acknowledge it; on the shared scheduler either
+ * one would hold up the vehicle links and the simulation tick, which is a stocker's reply stopping
+ * vehicles from moving.
  */
 @Component
 public class EquipmentLinks {
@@ -46,32 +54,77 @@ public class EquipmentLinks {
  /** How many missed polls before a unit is called offline, so one slow read is not a fault. */
  private static final int MISSED_POLLS_BEFORE_OFFLINE=3;
 
- private final JdbcTemplate jdbc; private final MappingLibrary mappings; private final ObjectMapper json;
- private final FrameMapper frames;
- private final Map<Long,Controller> controllers=new ConcurrentHashMap<>();
- private final int timeoutMs,unitId;
+ /** The one statement an equipment document may be asked to carry. */
+ private static final String INTENT="PORT_INTENT";
 
- EquipmentLinks(JdbcTemplate jdbc,MappingLibrary mappings,ObjectMapper json,
+ private final JdbcTemplate jdbc; private final MappingLibrary mappings; private final ObjectMapper json;
+ private final FrameMapper frames; private final SlotCodec codec; private final MessageMapper rules;
+ private final PortIntents intents; private final OperationOptionConfiguration options;
+ private final Map<Long,Controller> controllers=new ConcurrentHashMap<>();
+ private final int timeoutMs,unitId; private final long refreshMs;
+ /**
+  * The thread that waits on controllers.
+  *
+  * <p>Its own, and for the reason the notice sender has its own: every {@code @Scheduled} method
+  * here shares one scheduler thread, and both halves of this component wait on a machine that may
+  * not answer. A stocker that has gone quiet must not be able to stop vehicles from moving.
+  */
+ private final java.util.concurrent.ExecutorService worker=
+  java.util.concurrent.Executors.newSingleThreadExecutor(r->{
+   var thread=new Thread(r,"equipment-links");
+   thread.setDaemon(true);
+   return thread;
+  });
+ /** Whether a pass is already running, so a slow one is not piled on by the next tick. */
+ private final java.util.concurrent.atomic.AtomicBoolean passing=new java.util.concurrent.atomic.AtomicBoolean();
+
+ EquipmentLinks(JdbcTemplate jdbc,MappingLibrary mappings,ObjectMapper json,PortIntents intents,
+                OperationOptionConfiguration options,
                 @Value("${amhs.device.plc.timeout-ms:1500}") int timeoutMs,
-                @Value("${amhs.device.plc.unit-id:1}") int unitId){
+                @Value("${amhs.device.plc.unit-id:1}") int unitId,
+                @Value("${amhs.device.equipment.refresh-ms:30000}") long refreshMs){
   this.jdbc=jdbc; this.mappings=mappings; this.json=json;
-  this.frames=new FrameMapper(json,new MessageMapper(json),new SlotCodec(json));
-  this.timeoutMs=timeoutMs; this.unitId=unitId;
+  this.rules=new MessageMapper(json); this.codec=new SlotCodec(json);
+  this.frames=new FrameMapper(json,rules,codec);
+  this.intents=intents; this.options=options;
+  this.timeoutMs=timeoutMs; this.unitId=unitId; this.refreshMs=refreshMs;
  }
+
+ /**
+  * Hands the pass to the worker and returns at once.
+  *
+  * <p>A tick arriving while the last pass is still going is dropped rather than queued: the
+  * wiring is in the database and the next tick will find it.
+  */
+ void tick(){
+  if(!passing.compareAndSet(false,true)) return;
+  try{
+   worker.execute(()->{
+    try{ poll(); }
+    catch(RuntimeException e){ log.error("equipment pass failed",e); }
+    finally{ passing.set(false); }
+   });
+  }catch(RuntimeException e){ passing.set(false); throw e; }
+ }
+ @PreDestroy void stopWorker(){ worker.shutdownNow(); }
 
  /** One unit as its controller holds it. */
  private record Wired(long siteId,long unitId,long profileId,String host,int port,String externalId,
                       String mappingCode){}
 
  /**
-  * Brings the open controllers in line with the configuration, and reads each one that is due.
+  * Brings the open controllers in line with the configuration, reads each one that is due, and
+  * tells each the statement its ports are owed.
   *
   * <p>Read every tick rather than remembered, for the same reason the ports are: wiring changes
   * while the server runs, and a link held open to a machine nobody is talking about any more is
   * a state written against a unit that no longer has one.
+  *
+  * <p>Synchronized, and public so a test can step it and see the result before it returns: two
+  * passes at once would have two threads writing the same block, which is half of one statement
+  * and half of another.
   */
- @Scheduled(fixedDelayString="${amhs.device.equipment.tick-ms:200}")
- public void poll(){
+ public synchronized void poll(){
   Map<Long,List<Wired>> byProfile;
   try{ byProfile=wiring(); }
   catch(RuntimeException e){ log.warn("could not read equipment wiring: {}",e.getMessage()); return; }
@@ -90,7 +143,18 @@ public class EquipmentLinks {
     id->new Controller(wired.getFirst().host(),wired.getFirst().port(),mapping));
    try{ controller.pollOnce(wired); }
    catch(RuntimeException e){ log.debug("equipment poll {}: {}",profileId,e.getMessage()); }
+   // Only a site that is really running tells a machine anything. In SIMULATION the vehicle on its
+   // way to that port is a vehicle that does not exist, and a real stocker holding a port for it
+   // would be holding it for nothing.
+   try{ if(running(wired.getFirst().siteId())) controller.tellOnce(wired); }
+   catch(RuntimeException e){ log.warn("equipment statement {}: {}",profileId,e.getMessage()); }
   });
+ }
+
+ /** Whether this site's equipment is real equipment, as far as this controller is concerned. */
+ private boolean running(long siteId){
+  try{ return !options.get(siteId).settings().simulated(); }
+  catch(RuntimeException e){ return false; }
  }
 
  /** Every unit in use, by the connection profile that reaches it. */
@@ -115,7 +179,7 @@ public class EquipmentLinks {
  private final class Controller implements AutoCloseable {
   private final String host; private final int port; private final DeviceMessageMapping mapping;
   private final com.amhs.integration.WordBus wire;
-  private final String readAt; private final int words; private final boolean little;
+  private final String readAt,writeAt; private final int words; private final boolean little;
   private volatile long nextPollAt;
   /** When each unit was last actually read, so silence can be told from an unchanged value. */
   private final Map<Long,Long> lastSeen=new ConcurrentHashMap<>();
@@ -123,7 +187,7 @@ public class EquipmentLinks {
   Controller(String host,int port,DeviceMessageMapping mapping){
    this.host=host; this.port=port; this.mapping=mapping;
    var area=mapping.area();
-   this.readAt=area.read(); this.words=area.words();
+   this.readAt=area.read(); this.writeAt=area.write(); this.words=area.words();
    this.little="little".equalsIgnoreCase(area.endian());
    this.wire=com.amhs.integration.WordBuses.open(area.driver(),host,port,unitId,timeoutMs);
   }
@@ -152,6 +216,101 @@ public class EquipmentLinks {
     var seen=lastSeen.get(unit.unitId());
     if(seen==null||now-seen>silentFor) markOffline(unit);
    }
+  }
+
+  /**
+   * Says what each of this controller's ports is owed, one statement at a time.
+   *
+   * <p>One block, so one statement at a time: the port's own name is in it, which is how the same
+   * registers speak for several ports -- exactly the way the read block names which unit it is
+   * about. Each statement is acknowledged before the next is written, because a block overwritten
+   * mid-handshake is two statements the machine can read as one.
+   */
+  void tellOnce(List<Wired> units){
+   var out=mapping.outbound().get(INTENT);
+   if(out==null||out.slots().isEmpty()) return;    // a document with nothing to say
+   var hand=mapping.handshake();
+   if(hand==null||writeAt==null) return;           // refused at validation; belt and braces
+   for(var unit:units)
+    for(var due:intents.dueFor(unit.siteId(),unit.unitId(),refreshMs)) tell(unit,out,hand,due);
+  }
+
+  /** One statement: the values, then the request bit, then whatever the controller says about it. */
+  private void tell(Wired unit,DeviceMessageMapping.Outbound out,DeviceMessageMapping.Handshake hand,
+                    PortIntents.Due due){
+   var buffer=new byte[words*2];
+   try{
+    frames.write(mapping,out.slots(),view(unit,due),buffer,little);
+   }catch(SlotCodec.SlotRejected e){
+    // Nothing has been written: the statement does not fit the layout the document gave it, which
+    // is the document to fix. Said once per statement rather than every pass.
+    log.warn("statement for port {} does not fit the layout: {}",due.intent().portCode(),e.getMessage());
+    intents.told(due.intent(),due.statement(),due.sequence(),"NOT_TOLD","does not fit the layout: "+e.getMessage());
+    return;
+   }
+   try{ wire.open(); }
+   catch(IOException e){
+    intents.told(due.intent(),due.statement(),due.sequence(),"NOT_TOLD","not connected");
+    return;
+   }
+   try{
+    // The values first with the request bit clear, then the bit. A controller reading between the
+    // two sees a statement nobody has asked it to take, which is the one order that is always safe.
+    wire.write(writeAt,words(buffer,hand,false));
+    wire.write(writeAt,words(buffer,hand,true));
+   }catch(com.amhs.integration.WordBus.ControllerRefused e){
+    intents.told(due.intent(),due.statement(),due.sequence(),"NOT_TOLD","controller refused "+e.code());
+    return;
+   }catch(IOException e){
+    // Some of it may be in the registers, where it will stay until somebody looks. Said again next
+    // pass, which is safe here in the way it would not be for a movement command: the statement has
+    // not changed, so saying it twice says the same thing.
+    wire.close();
+    intents.told(due.intent(),due.statement(),due.sequence(),"IN_DOUBT","write failed: "+e.getMessage());
+    return;
+   }
+   boolean taken=awaitAcceptance(hand,due.sequence());
+   try{ if(hand.clear()!=null) wire.write(writeAt,words(buffer,hand,false)); }
+   catch(IOException e){ log.warn("request bit on {}:{} could not be cleared: {}",host,port,e.getMessage()); }
+   intents.told(due.intent(),due.statement(),due.sequence(),taken?"TOLD":"IN_DOUBT",
+    taken?null:"no acknowledgement");
+  }
+
+  /** The buffer as registers, with the request bit set or clear. */
+  private int[] words(byte[] buffer,DeviceMessageMapping.Handshake hand,boolean request){
+   var copy=buffer.clone();
+   var bit=mapping.layout().get(hand.thenSet());
+   if(bit!=null) codec.write(copy,bit,json.getNodeFactory().booleanNode(request),little);
+   var out=new int[words];
+   for(int i=0;i<words;i++) out[i]=(copy[i*2]&0xFF)<<8|(copy[i*2+1]&0xFF);
+   return out;
+  }
+
+  /**
+   * Waits for the controller's own bit, with the sequence it echoes saying which statement it took.
+   *
+   * <p>The echo is not a nicety. Without it, the bit left up from the statement before would read
+   * as acceptance of this one, and a port would be recorded as told something nobody ever took.
+   */
+  private boolean awaitAcceptance(DeviceMessageMapping.Handshake hand,int sequence){
+   long until=System.currentTimeMillis()+hand.timeoutMs();
+   while(System.currentTimeMillis()<until){
+    var slots=readBlock();
+    if(slots!=null){
+     var accepted=slots.get(hand.acceptedBit());
+     var echo=slots.get(hand.echoSlot());
+     if(accepted!=null&&accepted.asBoolean()&&echo!=null&&echo.asInt()==sequence) return true;
+    }
+    try{ Thread.sleep(25); }catch(InterruptedException e){ Thread.currentThread().interrupt(); return false; }
+   }
+   return false;
+  }
+
+  /** The statement as a mapping document reads it: the unit's own name, and what is true there. */
+  private MessageMapper.Command view(Wired unit,PortIntents.Due due){
+   return new MessageMapper.Command("intent-"+due.intent().portId()+"-"+due.sequence(),INTENT,null,
+    unit.unitId(),unit.externalId(),due.sequence(),java.time.OffsetDateTime.now().toString(),
+    intents.payload(due.intent()),Map.of());
   }
 
   /** The read block as named values, or null when it could not be read. */

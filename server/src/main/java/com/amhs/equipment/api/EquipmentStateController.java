@@ -16,4 +16,9 @@ class EquipmentStateController {
  EquipmentStateController(EquipmentStates states){ this.states=states; }
 
  @GetMapping("/states") List<EquipmentStates.State> list(@PathVariable long siteId){ return states.list(siteId); }
+
+ /** What the equipment has been told, which is the only place that can be seen. */
+ @GetMapping("/statements") List<EquipmentStates.Statement> told(@PathVariable long siteId){
+  return states.told(siteId);
+ }
 }

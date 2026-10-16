@@ -1,12 +1,13 @@
 {
   "mapping": "EQUIPMENT-MC-EXAMPLE",
   "adapter": "EQUIPMENT_WORD_V1",
-  "version": 1,
-  "notes": "가상의 설비(스토커) 예제입니다. 실제 현장 레지스터표가 아니며, 현장 값은 이 파일을 복사해 고친 뒤 설정 화면에서 올립니다. MELSEC(MC 프로토콜 3E 바이너리) D1000부터 8워드를 읽습니다. 쓰지 않습니다 — 이 관제는 설비를 몰고 가지 않고 참작합니다.",
+  "version": 2,
+  "notes": "가상의 설비(스토커) 예제입니다. 실제 현장 레지스터표가 아니며, 현장 값은 이 파일을 복사해 고친 뒤 설정 화면에서 올립니다. MELSEC(MC 프로토콜 3E 바이너리) D1000부터 8워드를 읽고 D1100부터 8워드에 포트 예고를 씁니다. 읽기만 하려면 outbound·handshake·area.write를 지우면 됩니다.",
 
   "area": {
     "driver": "mc",
     "read": "D1000",
+    "write": "D1100",
     "words": 8,
     "endian": "big",
     "poll-ms": 500
@@ -19,7 +20,17 @@
     "statusNow": { "word": 4, "type": "u16", "area": "read" },
     "ableBit":   { "word": 5, "bit": 0, "area": "read" },
     "callBit":   { "word": 5, "bit": 1, "area": "read" },
-    "heartbeat": { "word": 6, "type": "u16", "area": "read" }
+    "tookBit":   { "word": 5, "bit": 15, "area": "read" },
+    "heartbeat": { "word": 6, "type": "u16", "area": "read" },
+    "tookSeq":   { "word": 7, "type": "u16", "area": "read" },
+
+    "port":         { "word": 0, "type": "ascii", "length": 8 },
+    "seq":          { "word": 4, "type": "u16" },
+    "direction":    { "word": 5, "type": "u16" },
+    "reservedBit":  { "word": 6, "bit": 0 },
+    "transferBit":  { "word": 6, "bit": 1 },
+    "attentionBit": { "word": 6, "bit": 2 },
+    "requestBit":   { "word": 6, "bit": 15 }
   },
 
   "inbound": [
@@ -31,5 +42,28 @@
         "available":   { "from": "slot.ableBit" },
         "callEnabled": { "from": "slot.callBit" }
       }}
-  ]
+  ],
+
+  "outbound": {
+    "PORT_INTENT": {
+      "slots": {
+        "port":         { "from": "payload.port" },
+        "seq":          { "from": "command.sequence" },
+        "direction":    { "from": "payload.direction",
+                          "values": { "PICKUP": 1, "DROP": 2 }, "default": 0 },
+        "reservedBit":  { "from": "payload.reserved" },
+        "transferBit":  { "from": "payload.transferring" },
+        "attentionBit": { "from": "payload.attention" }
+      }
+    }
+  },
+
+  "handshake": {
+    "write": ["port", "seq", "direction", "reservedBit", "transferBit", "attentionBit"],
+    "then-set": "requestBit",
+    "accepted-bit": "tookBit",
+    "echo-slot": "tookSeq",
+    "clear": "requestBit",
+    "timeout-ms": 1500
+  }
 }

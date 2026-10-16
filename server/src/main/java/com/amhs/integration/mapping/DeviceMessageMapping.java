@@ -121,6 +121,14 @@ public record DeviceMessageMapping(String code,String adapter,int version,String
   * take a call now, what it is doing, and whether anybody has heard from it.
   */
  public static final Set<String> EQUIPMENT_FIELDS=Set.of("status","available","callEnabled","online");
+ /**
+  * The only thing this controller says to a piece of equipment.
+  *
+  * <p>A closed list of one, because there is one decision: a vehicle has been sent to that port.
+  * A document naming anything else has described a command nothing will ever send, and a dead
+  * command in a document is worse than none -- somebody wrote it believing it would go.
+  */
+ public static final Set<String> EQUIPMENT_COMMANDS=Set.of("PORT_INTENT");
 
  /** Adapters that address values by name in a structure. */
  public static final Set<String> NAMED=Set.of("JSON_LINE_V1","MQTT_JSON_V1");
@@ -179,7 +187,16 @@ public record DeviceMessageMapping(String code,String adapter,int version,String
   // Equipment is read. Where a document says nothing is read, there is nothing it can ever say.
   if(equipment&&inbound.isEmpty()) wrong.add("inbound: EQUIPMENT_WORD_V1은 설비가 무엇을 말하는지 적어야 합니다");
   if(equipment&&area!=null&&(area.read()==null||area.read().isBlank()))
-   wrong.add("area.read: 설비는 읽어서 알 수 있을 뿐이므로 읽을 블록이 있어야 합니다");
+   wrong.add("area.read: 설비가 무엇을 말하는지는 읽어서만 알 수 있으므로 읽을 블록이 있어야 합니다");
+  // Writing is the one statement, and only that one. A block to write it into is part of saying it.
+  if(equipment&&!outbound.isEmpty()){
+   if(area!=null&&(area.write()==null||area.write().isBlank()))
+    wrong.add("area.write: 설비에 알리려면 쓸 블록이 있어야 합니다");
+   outbound.keySet().forEach(command->{
+    if(!EQUIPMENT_COMMANDS.contains(command))
+     wrong.add("outbound."+command+": 이 관제가 설비에 말하는 것은 "+EQUIPMENT_COMMANDS+"뿐입니다");
+   });
+  }
 
   layout.forEach((name,slot)->{
    if(!TYPES.contains(slot.type())) wrong.add("layout."+name+": type "+slot.type()+"는 없습니다 "+TYPES);
@@ -229,8 +246,12 @@ public record DeviceMessageMapping(String code,String adapter,int version,String
    handshake.write().forEach(name->{
     if(!layout.containsKey(name)) wrong.add("handshake.write: layout에 없는 슬롯입니다 ("+name+")");
    });
-   for(var named_:List.of(handshake.thenSet(),handshake.acceptedBit(),handshake.clear()))
+   // Arrays.asList rather than List.of: every one of these may be absent, and a document that
+   // left one out has to be told so rather than throw on the way to being told.
+   for(var named_:java.util.Arrays.asList(handshake.thenSet(),handshake.acceptedBit(),handshake.clear()))
     if(named_!=null&&!layout.containsKey(named_)) wrong.add("handshake: layout에 없는 슬롯입니다 ("+named_+")");
+   if(handshake.thenSet()==null)
+    wrong.add("handshake.then-set: 무엇을 세워 요청하는지 적어야 합니다 (값만 써 두면 아무도 집어가지 않습니다)");
    if(handshake.acceptedBit()==null) wrong.add("handshake.accepted-bit: 무엇이 수락인지 적어야 합니다");
    if(handshake.echoSlot()==null)
     wrong.add("handshake.echo-slot: 수락이 어느 명령에 대한 것인지 가릴 수 없습니다 (시퀀스 에코가 필요합니다)");
