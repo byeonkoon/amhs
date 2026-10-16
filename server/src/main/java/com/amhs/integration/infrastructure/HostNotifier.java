@@ -18,6 +18,11 @@ import java.util.List;
  * <p>Apart from the writing, deliberately. A transition commits without waiting on somebody else's
  * web server, and a web server that is down does not stop vehicles from moving.
  *
+ * <p>A notice is <b>claimed before it is said</b> (SENDING), which is the device outbox's
+ * DISPATCHING in another costume and is there for the same reason: reading the due rows and
+ * settling them after the call leaves a window as wide as the call, and in it a second sweep reads
+ * the same row and the system upstairs is told the same thing twice.
+ *
  * <p>What an attempt may claim is the same three-valued problem a device command has, and the
  * answer has the same shape:
  *
@@ -35,7 +40,7 @@ import java.util.List;
 @Component
 public class HostNotifier {
  private static final Logger log=LoggerFactory.getLogger(HostNotifier.class);
- private final JdbcTemplate jdbc; private final HttpClient http; private final int batch;
+ private final JdbcTemplate jdbc; private final HttpClient http; private final int batch; private final int staleClaimMs;
  /**
   * The thread that waits on somebody else's web server.
   *
@@ -53,8 +58,9 @@ public class HostNotifier {
  /** Whether a sweep is already running, so a slow one is not piled on by the next tick. */
  private final java.util.concurrent.atomic.AtomicBoolean sweeping=new java.util.concurrent.atomic.AtomicBoolean();
 
- HostNotifier(JdbcTemplate jdbc,@Value("${amhs.host.batch:20}") int batch){
-  this.jdbc=jdbc; this.batch=batch;
+ HostNotifier(JdbcTemplate jdbc,@Value("${amhs.host.batch:20}") int batch,
+              @Value("${amhs.host.stale-claim-ms:120000}") int staleClaimMs){
+  this.jdbc=jdbc; this.batch=batch; this.staleClaimMs=staleClaimMs;
   this.http=HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3))
    .followRedirects(HttpClient.Redirect.NEVER)   // a redirect would drop the auth header
    .build();
@@ -93,6 +99,8 @@ public class HostNotifier {
   * directly and see the result before it returns.
   */
  public void sweep(){
+  try{ reclaimStaleClaims(); }
+  catch(RuntimeException e){ log.warn("could not look for stale claims: {}",e.getMessage()); }
   List<Endpoint> endpoints;
   try{
    endpoints=jdbc.query("SELECT site_id,url,auth_header,auth_value,timeout_ms,max_attempts"
@@ -106,18 +114,28 @@ public class HostNotifier {
  }
 
  private void send(Endpoint endpoint){
-  // One order's notices leave in the order they were written, and that is not a nicety.
+  // Claimed, not merely read. Selecting the due rows and settling them after the HTTP call left a
+  // window as wide as the call itself: two sweeps that overlapped both read the same row and the
+  // system upstairs heard the same thing twice. SKIP LOCKED is what makes the claim exclusive --
+  // a row another sender is taking is skipped rather than waited for, so one slow host cannot
+  // hold up a second sweep either.
+  //
+  // One order's notices still leave in the order they were written, and that is not a nicety.
   //
   // RECOVERY_REQUIRED fails and backs off; COMPLETED is written next and goes straight through;
   // the retry of the first then succeeds. The system upstairs has just been told that an order it
   // saw finish needs recovering. Holding an order's later notices while an earlier one is still
   // owed is what stops it -- and once the earlier one is given up on (ABANDONED) or refused, it is
-  // no longer owed and the rest may go.
-  var due=jdbc.query("SELECT n.id,n.notice_key,n.body,n.attempts FROM integration.host_notice n"
-   +" WHERE n.site_id=? AND n.state='PENDING' AND n.next_attempt_at<=clock_timestamp()"
-   +" AND NOT EXISTS (SELECT 1 FROM integration.host_notice earlier"
-   +"  WHERE earlier.order_id=n.order_id AND earlier.state='PENDING' AND earlier.id<n.id)"
-   +" ORDER BY n.created_at,n.id LIMIT ?",
+  // no longer owed and the rest may go. A notice being sent right now is still owed, which is why
+  // SENDING holds the ones behind it exactly as PENDING does.
+  var due=jdbc.query("UPDATE integration.host_notice SET state='SENDING',attempts=attempts+1,"
+   +"claimed_at=clock_timestamp() WHERE id IN ("
+   +"  SELECT n.id FROM integration.host_notice n"
+   +"  WHERE n.site_id=? AND n.state='PENDING' AND n.next_attempt_at<=clock_timestamp()"
+   +"  AND NOT EXISTS (SELECT 1 FROM integration.host_notice earlier"
+   +"   WHERE earlier.order_id=n.order_id AND earlier.state IN ('PENDING','SENDING') AND earlier.id<n.id)"
+   +"  ORDER BY n.created_at,n.id LIMIT ? FOR UPDATE SKIP LOCKED)"
+   +" RETURNING id,notice_key,body,attempts",
    (r,n)->new Notice(r.getLong(1),r.getString(2),r.getString(3),r.getInt(4)),endpoint.siteId(),batch);
   // One bad notice must not stop the rest: the loop is what keeps a single unusable row from
   // holding up every other site and every later order.
@@ -128,7 +146,9 @@ public class HostNotifier {
  }
 
  private void attempt(Endpoint endpoint,Notice notice){
-  int attempts=notice.attempts()+1;
+  // Counted at the claim, so a sender that dies mid-attempt has still spent one. Counting it on
+  // the way out would let a notice that kills the sender every time be tried for ever.
+  int attempts=notice.attempts();
   HttpRequest built;
   try{
    var request=HttpRequest.newBuilder(URI.create(endpoint.url()))
@@ -170,9 +190,16 @@ public class HostNotifier {
   }
  }
 
+ /**
+  * The end of it, one way or another.
+  *
+  * <p>Only a notice this sender still holds is settled: {@code state='SENDING'} is the claim, and
+  * writing an answer for a row somebody else has since reclaimed would settle their attempt with
+  * this one's outcome.
+  */
  private void settle(long id,String state,int attempts,String error){
-  jdbc.update("UPDATE integration.host_notice SET state=?,attempts=?,last_error=?,"
-   +"settled_at=clock_timestamp() WHERE id=?",state,attempts,error,id);
+  jdbc.update("UPDATE integration.host_notice SET state=?,attempts=?,last_error=?,claimed_at=NULL,"
+   +"settled_at=clock_timestamp() WHERE id=? AND state='SENDING'",state,attempts,error,id);
  }
 
  /**
@@ -188,9 +215,29 @@ public class HostNotifier {
    return;
   }
   long seconds=Math.min(300,(long)Math.pow(2,Math.min(attempts,8)));
-  jdbc.update("UPDATE integration.host_notice SET attempts=?,last_error=?,"
-   +"next_attempt_at=clock_timestamp()+make_interval(secs=>?) WHERE id=?",
+  jdbc.update("UPDATE integration.host_notice SET state='PENDING',attempts=?,last_error=?,claimed_at=NULL,"
+   +"next_attempt_at=clock_timestamp()+make_interval(secs=>?) WHERE id=? AND state='SENDING'",
    attempts,cut(error),(double)seconds,id);
+ }
+
+ /**
+  * Claims nobody is working on any more.
+  *
+  * <p>A sender that was killed between the claim and the answer leaves a notice in SENDING with
+  * nothing coming. It is the same "nobody can say" a device command leaves behind, with one
+  * difference that matters: this attempt carries an {@code Idempotency-Key}, and the far side is
+  * expected to recognise a repeat of it. So it goes back to PENDING and is said again, which is
+  * what that key is for -- where a movement command, having no such key, may never be repeated.
+  *
+  * <p>The window is deliberately much longer than any request timeout. Reclaiming a notice a
+  * living sender is still waiting on would send it twice, which is the thing this is all for.
+  */
+ private void reclaimStaleClaims(){
+  int taken=jdbc.update("UPDATE integration.host_notice SET state='PENDING',claimed_at=NULL,"
+   +"last_error='the sender stopped before answering for this; said again with the same key'"
+   +" WHERE state='SENDING' AND claimed_at<clock_timestamp()-make_interval(secs=>?)",
+   (double)staleClaimMs/1000);
+  if(taken>0) log.warn("{} notice(s) were claimed and never answered for; they will be said again",taken);
  }
  private static String cut(String s){ return s==null?null:s.length()<=256?s:s.substring(0,256); }
 }

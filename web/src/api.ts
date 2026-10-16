@@ -107,7 +107,7 @@ export type HostEndpointSettings = {
 /** One notice and what became of saying it. */
 export type HostNotice = {
   id: number; orderId: number; orderStatus: string;
-  state: 'PENDING' | 'SENT' | 'REFUSED' | 'ABANDONED';
+  state: 'PENDING' | 'SENDING' | 'SENT' | 'REFUSED' | 'ABANDONED';
   attempts: number; lastError: string | null; createdAt: string; settledAt: string | null;
 };
 export const hostApi = {

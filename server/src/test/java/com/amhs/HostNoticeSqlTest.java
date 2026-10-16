@@ -42,13 +42,26 @@ class HostNoticeSqlTest {
   volatile int answer=200;
   /** Answers this many times before switching to `answer`, which is how a flaky host is played. */
   final AtomicInteger failFirst=new AtomicInteger(0);
+  /** Set to keep an attempt in flight: the request is recorded, then waits here to be let go. */
+  volatile CountDownLatch gate=null;
+  /**
+   * Several at once, deliberately.
+   *
+   * <p>A host that answers one request at a time would queue a second attempt instead of
+   * recording it, and a test asking whether something was said twice would then pass by
+   * accident.
+   */
+  private final ExecutorService pool=Executors.newFixedThreadPool(4);
   Upstairs() throws IOException {
    server=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
+   server.setExecutor(pool);
    server.createContext("/notices",exchange->{
     var body=new String(exchange.getRequestBody().readAllBytes(),StandardCharsets.UTF_8);
     heard.add(body);
     var key=exchange.getRequestHeaders().getFirst("Idempotency-Key");
     if(key!=null) keys.add(key);
+    var held=gate;
+    if(held!=null) try{ held.await(5,TimeUnit.SECONDS); }catch(InterruptedException ignored){ }
     int code=failFirst.getAndUpdate(n->n>0?n-1:0)>0?500:answer;
     exchange.sendResponseHeaders(code,-1);
     exchange.close();
@@ -56,7 +69,7 @@ class HostNoticeSqlTest {
    server.start();
   }
   String url(){ return "http://127.0.0.1:"+server.getAddress().getPort()+"/notices"; }
-  public void close(){ server.stop(0); }
+  public void close(){ server.stop(0); pool.shutdownNow(); }
  }
 
  @BeforeEach void anOrderToTalkAbout(){
@@ -280,6 +293,70 @@ class HostNoticeSqlTest {
     order.add(body.contains("RECOVERY_REQUIRED")?"RECOVERY_REQUIRED":"COMPLETED");
    assertThat(order).as("recovery before completion, never the other way")
     .containsExactly("RECOVERY_REQUIRED","COMPLETED");
+  }
+ }
+
+ /**
+  * Two sweeps at once say it once.
+  *
+  * <p>This is the one the fault injection found. The sweep used to read every due notice and
+  * settle it after the HTTP call, so for as long as that call took, the row still looked due:
+  * another sweep read it and the system upstairs heard the same thing twice. One instance kept
+  * its own ticks apart with a flag, which is why it only showed up where two sweeps really can
+  * overlap -- and two instances of this application in a plant are exactly that.
+  *
+  * <p>So one attempt is held in flight while a second sweep runs. The second must find nothing to
+  * claim.
+  */
+ @Test void twosweepsAtOnceSayItOnce() throws Exception {
+  try(var upstairs=new Upstairs()){
+   sendTo(upstairs);
+   orderEnded("COMPLETED");
+   var held=new CountDownLatch(1);
+   upstairs.gate=held;
+
+   var inFlight=Executors.newSingleThreadExecutor();
+   try{
+    var first=inFlight.submit(()->{ notifier.sweep(); return null; });
+    // The attempt is now at the host and waiting to be let go.
+    for(int i=0;i<100&&upstairs.heard.isEmpty();i++) Thread.sleep(20);
+    assertThat(upstairs.heard).as("an attempt is in flight").hasSize(1);
+
+    notifier.sweep();                              // the second sweep, while the first is waiting
+    notifier.sweep();
+    assertThat(upstairs.heard).as("the second sweep found nothing to claim").hasSize(1);
+    assertThat(stateNow()).as("claimed while it is being said").isEqualTo("SENDING");
+
+    upstairs.gate=null; held.countDown();
+    first.get(5,TimeUnit.SECONDS);
+   }finally{ inFlight.shutdownNow(); }
+
+   assertThat(stateNow()).isEqualTo("SENT");
+   assertThat(upstairs.heard).as("said once, by one of them").hasSize(1);
+   assertThat(jdbc.queryForObject("SELECT attempts FROM integration.host_notice WHERE site_id=?",
+    Integer.class,SITE)).as("one attempt, counted once").isEqualTo(1);
+  }
+ }
+
+ /**
+  * A claim nobody is working on any more is said again, with the same key.
+  *
+  * <p>A sender killed between claiming a notice and answering for it leaves one in SENDING with
+  * nothing coming. That is the same "nobody can say" a device command leaves behind, with the one
+  * difference that matters: this carries an {@code Idempotency-Key} the far side is expected to
+  * recognise, so saying it again is the right thing rather than the forbidden thing.
+  */
+ @Test void aclaimNobodyIsWorkingOnIsSaidAgain() throws Exception {
+  try(var upstairs=new Upstairs()){
+   sendTo(upstairs);
+   orderEnded("COMPLETED");
+   // As a sender that died mid-attempt would have left it: claimed, counted, long ago.
+   jdbc.update("UPDATE integration.host_notice SET state='SENDING',attempts=1,"
+    +"claimed_at=clock_timestamp()-make_interval(mins=>10) WHERE site_id=?",SITE);
+
+   assertThat(waitFor(()->"SENT".equals(stateNow()))).as("it was said again").isTrue();
+   assertThat(upstairs.keys.poll(2,TimeUnit.SECONDS)).as("the same key, so a repeat is recognisable")
+    .isEqualTo("order-"+orderId+"-COMPLETED");
   }
  }
 

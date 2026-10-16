@@ -1209,8 +1209,8 @@ function HostNoticeTab({ canWrite }: { canWrite: boolean }) {
 }
 /** 거절과 불명을 나눠 보여줍니다 — "아니라고 했다"와 "알 수 없다"는 다른 사실입니다. */
 const NOTICE_STATE: Record<HostNotice['state'], string> = {
-  PENDING: '대기', SENT: '전달', REFUSED: '거절', ABANDONED: '도달 불명',
+  PENDING: '대기', SENDING: '전송 중', SENT: '전달', REFUSED: '거절', ABANDONED: '도달 불명',
 };
 const NOTICE_TONE: Record<HostNotice['state'], string> = {
-  PENDING: 'wr', SENT: 'ok', REFUSED: 'er', ABANDONED: 'er',
+  PENDING: 'wr', SENDING: 'wr', SENT: 'ok', REFUSED: 'er', ABANDONED: 'er',
 };
