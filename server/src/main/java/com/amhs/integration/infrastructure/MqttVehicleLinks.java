@@ -39,24 +39,25 @@ import java.util.concurrent.ConcurrentHashMap;
 class MqttVehicleLinks implements DeviceChannel {
  private static final Logger log=LoggerFactory.getLogger(MqttVehicleLinks.class);
  private final JdbcTemplate jdbc; private final FleetState fleet; private final MappingLibrary mappings;
- private final ObjectMapper json; private final MessageMapper mapper;
+ private final ObjectMapper json; private final MessageMapper mapper; private final DeviceTls tls;
  private final Map<Long,Broker> brokers=new ConcurrentHashMap<>();
  private final int connectTimeoutS,publishTimeoutMs,retryAfterMs;
  private final String clientPrefix;
 
- MqttVehicleLinks(JdbcTemplate jdbc,FleetState fleet,MappingLibrary mappings,ObjectMapper json,
+ MqttVehicleLinks(JdbcTemplate jdbc,FleetState fleet,MappingLibrary mappings,ObjectMapper json,DeviceTls tls,
                   @Value("${amhs.device.mqtt.connect-timeout-s:3}") int connectTimeoutS,
                   @Value("${amhs.device.mqtt.publish-timeout-ms:3000}") int publishTimeoutMs,
                   @Value("${amhs.device.mqtt.retry-after-ms:2000}") int retryAfterMs,
                   @Value("${amhs.device.mqtt.client-prefix:amhs}") String clientPrefix){
   this.jdbc=jdbc; this.fleet=fleet; this.mappings=mappings; this.json=json; this.mapper=new MessageMapper(json);
+  this.tls=tls;
   this.connectTimeoutS=connectTimeoutS; this.publishTimeoutMs=publishTimeoutMs; this.retryAfterMs=retryAfterMs;
   this.clientPrefix=clientPrefix;
  }
 
  /** One vehicle on a broker: where it is, what it is called there, and which document speaks for it. */
  private record Wired(long siteId,long profileId,String host,int port,long vehicleId,String mappingCode,
-                      Map<String,String> identity){}
+                      Map<String,String> identity,boolean tls,String peerName){}
 
  @Override public Verdict send(DeviceCommand command){
   if(command.vehicleId()==null) return Verdict.notDelivered("COMMAND_NAMES_NO_VEHICLE");
@@ -72,13 +73,17 @@ class MqttVehicleLinks implements DeviceChannel {
   // than dropped: an operator can see that the document is missing a command the controller sends.
   if(message==null) return Verdict.notDelivered("COMMAND_NOT_IN_MAPPING");
   var broker=brokers.compute(wired.profileId(),(id,open)->
-   open!=null&&open.reaches(wired.host(),wired.port())?open:replace(open,wired));
+   open!=null&&open.reaches(wired.host(),wired.port())&&open.secureAs(wired.tls(),wired.peerName())
+    ?open:replace(open,wired));
   return broker.publish(wired,mapping,message);
  }
 
+ /** An empty name and no name are the same thing: the address dialled, and nothing else. */
+ private static String blank(String name){ return name==null||name.isBlank()?null:name; }
+
  private Broker replace(Broker open,Wired wired){
   if(open!=null) open.close();
-  return new Broker(wired.host(),wired.port());
+  return new Broker(wired.host(),wired.port(),wired.tls(),wired.peerName());
  }
 
  private MessageMapper.Command view(DeviceCommand command,Wired wired){
@@ -99,14 +104,14 @@ class MqttVehicleLinks implements DeviceChannel {
   */
  private Wired wiring(long siteId,long vehicleId){
   return jdbc.query("SELECT c.id,c.host,c.port,p.adapter_key,p.proto_version,v.manufacturer,"
-   +"COALESCE(v.serial_number,v.external_vehicle_id),COALESCE(v.interface_name,'uagv')"
+   +"COALESCE(v.serial_number,v.external_vehicle_id),COALESCE(v.interface_name,'uagv'),c.tls,c.peer_name"
    +" FROM integration.vehicle_communication v"
    +" JOIN integration.connection_profile c ON c.site_id=v.site_id AND c.id=v.connection_profile_id"
    +" JOIN integration.protocol_profile p ON p.site_id=v.site_id AND p.id=v.protocol_profile_id"
    +" WHERE v.site_id=? AND v.vehicle_id=? AND v.enabled AND c.enabled AND c.comm_type='MQTT' AND c.role='BROKER'",
    (r,n)->new Wired(siteId,r.getLong(1),r.getString(2),r.getInt(3),vehicleId,r.getString(4),
     Map.of("manufacturer",r.getString(6),"serial",r.getString(7),"prefix",r.getString(8),
-     "version","v"+r.getString(5).split("\\.")[0])),
+     "version","v"+r.getString(5).split("\\.")[0]),r.getBoolean(9),r.getString(10)),
    siteId,vehicleId).stream().findFirst().orElse(null);
  }
 
@@ -127,12 +132,21 @@ class MqttVehicleLinks implements DeviceChannel {
  /** One broker connection, and the vehicles subscribed on it. */
  private final class Broker implements MqttCallback {
   private final String host; private final int port;
+  /** Whether the broker is reached over TLS, and the name its certificate must carry. */
+  private final boolean secure; private final String peerName;
   private final Map<String,Listening> listening=new ConcurrentHashMap<>();
   private volatile MqttClient client; private volatile long nextAttemptAt;
   private record Listening(long siteId,long profileId,DeviceMessageMapping mapping){}
 
-  Broker(String host,int port){ this.host=host; this.port=port; }
+  Broker(String host,int port,boolean secure,String peerName){
+   this.host=host; this.port=port; this.secure=secure; this.peerName=peerName;
+  }
   boolean reaches(String otherHost,int otherPort){ return host.equals(otherHost)&&port==otherPort; }
+  /** Whether an open connection is still the one the configuration describes. */
+  boolean secureAs(boolean otherSecure,String otherPeer){
+   return secure==otherSecure
+    &&java.util.Objects.equals(blank(peerName),blank(otherPeer));
+  }
 
   synchronized Verdict publish(Wired wired,DeviceMessageMapping mapping,MessageMapper.Message message){
    var open=connect();
@@ -159,12 +173,25 @@ class MqttVehicleLinks implements DeviceChannel {
     var options=new MqttConnectOptions();
     options.setAutomaticReconnect(true); options.setCleanSession(true);
     options.setConnectionTimeout(connectTimeoutS); options.setKeepAliveInterval(30);
-    var fresh=new MqttClient("tcp://"+host+":"+port,clientPrefix+"-"+UUID.randomUUID(),new MemoryPersistence());
+    // The broker's own certificate is checked the same way a controller's is, against the name the
+    // profile gave or the address dialled. A client certificate goes with it where the site has
+    // one, which is how a broker can require this controller to prove who it is in turn.
+    if(secure) options.setSocketFactory(tls.factoryFor(peerName));
+    var fresh=new MqttClient((secure?"ssl://":"tcp://")+host+":"+port,
+     clientPrefix+"-"+UUID.randomUUID(),new MemoryPersistence());
     fresh.setCallback(this);
     fresh.connect(options);
     client=fresh;
-    log.info("broker {}:{} connected",host,port);
+    log.info("broker {}:{} connected{}",host,port,secure?" over TLS":"");
     return null;
+   }catch(DeviceTls.TlsUnavailable e){
+    // Asked for a secured broker connection and there is nothing to secure it with. Nothing is
+    // published, and nothing goes out in plaintext instead.
+    log.error("broker {}:{} asks for TLS: {}",host,port,e.getMessage());
+    return e.getMessage();
+   }catch(java.io.IOException e){
+    log.warn("broker {}:{} could not be secured: {}",host,port,e.getMessage());
+    return "BROKER_REFUSED";
    }catch(MqttException e){
     log.warn("broker {}:{} refused: {}",host,port,e.getMessage());
     return "BROKER_REFUSED";

@@ -185,7 +185,16 @@ export type PortSettings = {
   accessVehicleType: 'OHT' | 'AGV'; linkedNodeId: number;
   equipmentUnitId?: number | null;
 };
-export type ConnectionSettings = { commType: 'TCP' | 'MQTT'; role: string; host: string; port: number; enabled: boolean };
+/**
+ * 링크 하나와, 그 반대편에 누가 있어야 하는지.
+ *
+ * `tls`를 켜면 평문으로 내려가는 일이 없습니다 — 확인되지 않으면 링크가 열리지 않습니다.
+ * `peerName`은 상대 인증서에 적혀 있어야 하는 이름이고, 비우면 접속한 주소입니다.
+ */
+export type ConnectionSettings = {
+  commType: 'TCP' | 'MQTT'; role: string; host: string; port: number; enabled: boolean;
+  tls: boolean; peerName: string | null;
+};
 export type ProtocolSettings = { protoType: 'PC' | 'PLC' | 'VDA5050'; protoVersion: string; adapterKey: string };
 /**
  * Site-wide options. Every field changes behaviour that exists: the communication type applies to

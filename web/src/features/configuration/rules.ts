@@ -95,6 +95,10 @@ export function connectionIssues(c: ConnectionSettings): string[] {
   else if (!/^[a-zA-Z0-9.:%_-]+$/.test(c.host)) out.push('호스트에 사용할 수 없는 문자가 있습니다.');
   if (!(c.port >= 1 && c.port <= 65535)) out.push('포트는 1~65535 범위여야 합니다.');
   if (!roleOptions(c.commType).includes(c.role)) out.push(`${c.commType} 연결의 역할은 ${roleOptions(c.commType).join(' 또는 ')}입니다.`);
+  if (c.peerName) {
+    if (!c.tls) out.push('상대 이름을 확인하려면 TLS를 켜야 합니다.');
+    else if (!/^[a-zA-Z0-9.*_-]+$/.test(c.peerName)) out.push('상대 이름에 사용할 수 없는 문자가 있습니다.');
+  }
   return out;
 }
 
@@ -196,6 +200,14 @@ export function explainCode(code: string): string {
     INVALID_HOME_RETURN_SECONDS: '홈 복귀 대기 시간은 0~3600초여야 합니다.',
     INVALID_CHARGE_LEVELS: '충전 기준은 위험 < 요청 < 해제 ≤ 100 이어야 합니다.',
     INVALID_RUN_MODE: '운전 모드는 SIMULATION 또는 OPERATION입니다.',
+    // 링크 보안. 상세 절차는 docs/link-security.md입니다.
+    INVALID_PEER_NAME: '상대 이름은 영문·숫자와 . * _ - 만 쓸 수 있습니다.',
+    PEER_NAME_NEEDS_TLS: '상대 이름을 확인하려면 TLS를 켜야 합니다. 평문 링크에서는 확인할 방법이 없습니다.',
+    TLS_NOT_CONFIGURED: 'TLS를 켠 링크가 있는데 서버에 키 자료가 없습니다. amhs.device.tls.* 설정이 필요합니다.',
+    TLS_TRUSTSTORE_REQUIRED: '신뢰할 인증서 목록(truststore)이 없습니다. 어느 인증기관을 믿을지 정해야 합니다.',
+    TLS_TRUSTSTORE_MISSING: '지정한 truststore 파일을 찾을 수 없습니다.',
+    TLS_KEYSTORE_MISSING: '지정한 keystore 파일을 찾을 수 없습니다.',
+    TLS_MATERIAL_UNREADABLE: '키 자료를 읽지 못했습니다. 비밀번호나 파일 형식을 확인해 주세요.',
     // A mapping document: the dialect one family of vehicles is spoken to in.
     MAPPING_NOT_JSON: 'JSON 형식이 아닙니다. 파일 내용을 확인해 주세요.',
     MAPPING_NOT_FOUND: '이 사이트에 그런 매핑 문서가 없습니다.',

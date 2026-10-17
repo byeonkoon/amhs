@@ -16,11 +16,13 @@ public class CommunicationConfigurationCheck {
  private final ConnectionConfiguration connections;
  private final ProtocolConfiguration protocols;
  private final VdaProfileConfiguration profiles;
+ private final com.amhs.integration.infrastructure.DeviceTls tls;
  public CommunicationConfigurationCheck(OperationOptionConfiguration options,VehicleConfiguration vehicles,
    CommunicationConfiguration communications,ConnectionConfiguration connections,
-   ProtocolConfiguration protocols,VdaProfileConfiguration profiles){
+   ProtocolConfiguration protocols,VdaProfileConfiguration profiles,
+   com.amhs.integration.infrastructure.DeviceTls tls){
   this.options=options;this.vehicles=vehicles;this.communications=communications;
-  this.connections=connections;this.protocols=protocols;this.profiles=profiles;
+  this.connections=connections;this.protocols=protocols;this.profiles=profiles;this.tls=tls;
  }
  public record Issue(long vehicleId,String code){}
  public record Report(String scope,int vehiclesChecked,boolean consistent,boolean activationSupported,List<Issue> issues){}
@@ -52,6 +54,13 @@ public class CommunicationConfigurationCheck {
    String expectedProtocol=option.usesVda()?"VDA5050":option.commType();
    if(!expectedTransport.equals(connection.commType())||!expectedProtocol.equals(protocol.protoType()))
     issues.add(new Issue(id,"SITE_COMMUNICATION_MISMATCH"));
+   // A link that asks for TLS the server has nothing to provide will not open at all, and will not
+   // quietly open in plaintext either. Said here because this is where somebody looks before a
+   // shift rather than after a vehicle has stopped answering.
+   if(connection.tls()){
+    var problem=tls.problem();
+    if(problem!=null) issues.add(new Issue(id,problem));
+   }
    if(profile!=null){
     if(!profile.manufacturer().equals(binding.manufacturer())||!profile.interfaceName().equals(binding.interfaceName()))
      issues.add(new Issue(id,"VDA_IDENTITY_MISMATCH"));

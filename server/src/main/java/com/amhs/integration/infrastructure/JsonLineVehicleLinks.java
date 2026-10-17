@@ -80,25 +80,29 @@ class JsonLineVehicleLinks implements DeviceChannel,com.amhs.integration.Vehicle
   */
  private final Map<String,Link> arrived=new ConcurrentHashMap<>();
  private final int connectTimeoutMs,ackTimeoutMs,retryAfterMs,identifyTimeoutMs;
+ private final DeviceTls tls;
 
- JsonLineVehicleLinks(JdbcTemplate jdbc,FleetState fleet,MappingLibrary mappings,
+ JsonLineVehicleLinks(JdbcTemplate jdbc,FleetState fleet,MappingLibrary mappings,DeviceTls tls,
                       @Value("${amhs.device.tcp.connect-timeout-ms:2000}") int connectTimeoutMs,
                       @Value("${amhs.device.tcp.ack-timeout-ms:3000}") int ackTimeoutMs,
                       @Value("${amhs.device.tcp.retry-after-ms:1000}") int retryAfterMs,
                       @Value("${amhs.device.tcp.identify-timeout-ms:10000}") int identifyTimeoutMs){
-  this.jdbc=jdbc; this.fleet=fleet; this.mappings=mappings;
+  this.jdbc=jdbc; this.fleet=fleet; this.mappings=mappings; this.tls=tls;
   this.connectTimeoutMs=connectTimeoutMs; this.ackTimeoutMs=ackTimeoutMs; this.retryAfterMs=retryAfterMs;
   this.identifyTimeoutMs=identifyTimeoutMs;
  }
 
  /** One vehicle as the far side knows it, and how its connection is made. */
- private record Target(long siteId,long profileId,String host,int port,String role,String externalId,String adapterKey){
+ private record Target(long siteId,long profileId,String host,int port,String role,String externalId,
+                       String adapterKey,boolean tls,String peerName){
   /** The document this vehicle is described by, where it is described by one. */
   String mappingCode(){ return adapterKey; }
   /** Whether this controller makes the connection, or waits for it. */
   boolean dialsOut(){ return !"SERVER".equals(role); }
  }
  private static String claimKey(long profileId,String externalId){ return profileId+"/"+externalId; }
+ /** An empty name and no name are the same thing: the address dialled, and nothing else. */
+ private static String blankToNull(String name){ return name==null||name.isBlank()?null:name; }
 
  @Override public Verdict send(DeviceCommand command){
   if(command.vehicleId()==null) return Verdict.notDelivered("COMMAND_NAMES_NO_VEHICLE");
@@ -112,9 +116,11 @@ class JsonLineVehicleLinks implements DeviceChannel,com.amhs.integration.Vehicle
    // repoints a controller has repointed it, and a link held open to where it used to be would send
    // commands to a machine nobody is talking about any more.
    link=links.compute(target.profileId(),(id,open)->{
-    if(open!=null&&open.reaches(target.host(),target.port())) return open;
+    if(open!=null&&open.reaches(target.host(),target.port())&&open.secureAs(target.tls(),target.peerName()))
+     return open;
     if(open!=null) open.close();
-    var fresh=new Link(target.host(),target.port(),FRAME.equals(dialect(target)),true);
+    var fresh=new Link(target.host(),target.port(),FRAME.equals(dialect(target)),true,
+     target.tls(),target.peerName());
     fresh.mappingCode=target.mappingCode();
     return fresh;
    });
@@ -147,12 +153,14 @@ class JsonLineVehicleLinks implements DeviceChannel,com.amhs.integration.Vehicle
   * worse than a command delayed by one query.
   */
  private Target targetOf(long siteId,long vehicleId){
-  return jdbc.query("SELECT c.id,c.host,c.port,c.role,v.external_vehicle_id,p.adapter_key FROM integration.vehicle_communication v"
+  return jdbc.query("SELECT c.id,c.host,c.port,c.role,v.external_vehicle_id,p.adapter_key,c.tls,c.peer_name"
+   +" FROM integration.vehicle_communication v"
    +" JOIN integration.connection_profile c ON c.site_id=v.site_id AND c.id=v.connection_profile_id"
    +" JOIN integration.protocol_profile p ON p.site_id=v.site_id AND p.id=v.protocol_profile_id"
    +" WHERE v.site_id=? AND v.vehicle_id=? AND v.enabled AND c.enabled AND c.comm_type='TCP'"
    +" AND c.role IN ('CLIENT','SERVER')",
-   (r,n)->new Target(siteId,r.getLong(1),r.getString(2),r.getInt(3),r.getString(4),r.getString(5),r.getString(6)),
+   (r,n)->new Target(siteId,r.getLong(1),r.getString(2),r.getInt(3),r.getString(4),r.getString(5),
+    r.getString(6),r.getBoolean(7),r.getString(8)),
    siteId,vehicleId).stream().findFirst().orElse(null);
  }
 
@@ -176,6 +184,8 @@ class JsonLineVehicleLinks implements DeviceChannel,com.amhs.integration.Vehicle
   */
  private final class Link {
   private final String host; private final int port; private final boolean framed; private final boolean dialsOut;
+  /** Whether this link is TLS, and the name the far side's certificate has to carry. */
+  private final boolean secure; private final String peerName;
   private volatile String mappingCode;
   private final ReentrantLock write=new ReentrantLock();
   private final Map<String,CompletableFuture<Void>> awaiting=new ConcurrentHashMap<>();
@@ -184,10 +194,21 @@ class JsonLineVehicleLinks implements DeviceChannel,com.amhs.integration.Vehicle
   private volatile Socket socket; private volatile OutputStream out; private volatile Thread reader;
   private volatile long nextAttemptAt;
 
-  Link(String host,int port,boolean framed,boolean dialsOut){
+  Link(String host,int port,boolean framed,boolean dialsOut,boolean secure,String peerName){
    this.host=host; this.port=port; this.framed=framed; this.dialsOut=dialsOut;
+   this.secure=secure; this.peerName=peerName;
   }
   boolean reaches(String otherHost,int otherPort){ return host.equals(otherHost)&&port==otherPort; }
+  /**
+   * Whether an open link is still the link the configuration now describes.
+   *
+   * <p>Asked beside the address, and for the same reason: an operator who has just turned TLS on
+   * meant the next command to go down a secured link, not down the plaintext one that was already
+   * open.
+   */
+  boolean secureAs(boolean otherSecure,String otherPeer){
+   return secure==otherSecure&&java.util.Objects.equals(blankToNull(peerName),blankToNull(otherPeer));
+  }
 
   /**
    * Takes over a connection somebody made to us and starts reading it.
@@ -304,13 +325,31 @@ class JsonLineVehicleLinks implements DeviceChannel,com.amhs.integration.Vehicle
    if(System.currentTimeMillis()<nextAttemptAt) return "LINK_DOWN";
    nextAttemptAt=System.currentTimeMillis()+retryAfterMs;
    try{
-    var s=new Socket();
-    s.connect(new InetSocketAddress(host,port),connectTimeoutMs);
+    Socket s;
+    if(secure){
+     // The handshake is part of connecting. A certificate that is not trusted, or is for another
+     // machine, fails here -- before a byte of any command has been written, which is why this is
+     // a plain "nothing was written" rather than anything in doubt.
+     s=tls.connect(host,port,connectTimeoutMs,peerName);
+     log.info("vehicle link to {}:{} open to {} over TLS",host,port,
+      DeviceTls.peerName((javax.net.ssl.SSLSocket)s));
+    }else{
+     s=new Socket();
+     s.connect(new InetSocketAddress(host,port),connectTimeoutMs);
+     log.info("vehicle link to {}:{} open",host,port);
+    }
     s.setTcpNoDelay(true);
     socket=s; out=s.getOutputStream();
-    reader=Thread.ofVirtual().name("vehicle-link-"+host+":"+port).start(()->read(target.siteId(),target.profileId(),s));
-    log.info("vehicle link to {}:{} open",host,port);
+    final Socket opened=s;
+    reader=Thread.ofVirtual().name("vehicle-link-"+host+":"+port)
+     .start(()->read(target.siteId(),target.profileId(),opened));
     return null;
+   }catch(DeviceTls.TlsUnavailable e){
+    // The site asked for a secured link and the server has nothing to secure it with. Nothing is
+    // written, and nothing is sent in plaintext instead -- a quiet downgrade is the one outcome
+    // nothing above the link could notice.
+    log.error("vehicle link to {}:{} asks for TLS: {}",host,port,e.getMessage());
+    return e.getMessage();
    }catch(IOException e){
     log.warn("vehicle link to {}:{} refused: {}",host,port,e.getMessage());
     return "LINK_REFUSED";
@@ -461,28 +500,45 @@ class JsonLineVehicleLinks implements DeviceChannel,com.amhs.integration.Vehicle
  private final class Listener {
   private final long siteId,profileId; private final String bind; private final int port;
   private final boolean framed; private final String mappingCode;
+  /** Whether arriving here means proving who you are, and the name that must be proved. */
+  private final boolean secure; private final String peerName;
   private volatile java.net.ServerSocket server; private volatile Thread accepting;
   private final java.util.List<Link> accepted=new java.util.concurrent.CopyOnWriteArrayList<>();
 
-  Listener(long siteId,long profileId,String bind,int port,boolean framed,String mappingCode){
+  Listener(long siteId,long profileId,String bind,int port,boolean framed,String mappingCode,
+           boolean secure,String peerName){
    this.siteId=siteId; this.profileId=profileId; this.bind=bind; this.port=port;
-   this.framed=framed; this.mappingCode=mappingCode;
+   this.framed=framed; this.mappingCode=mappingCode; this.secure=secure; this.peerName=peerName;
   }
-  boolean matches(String otherBind,int otherPort,boolean otherFramed,String otherMapping){
+  boolean matches(String otherBind,int otherPort,boolean otherFramed,String otherMapping,
+                  boolean otherSecure,String otherPeer){
    return bind.equals(otherBind)&&port==otherPort&&framed==otherFramed
-    &&java.util.Objects.equals(mappingCode,otherMapping);
+    &&java.util.Objects.equals(mappingCode,otherMapping)
+    &&secure==otherSecure&&java.util.Objects.equals(blankToNull(peerName),blankToNull(otherPeer));
   }
 
   /** Opens the port. Returns false when it could not be had, which is said and then left alone. */
   boolean open(){
    try{
-    var s=new java.net.ServerSocket();
-    s.setReuseAddress(true);
-    s.bind(new InetSocketAddress(bind,port));
+    java.net.ServerSocket s;
+    if(secure){
+     s=tls.listen(bind,port);
+     log.info("listening for vehicle connections on {}:{} ({}) over TLS; a certificate is required{}",
+      bind,port,framed?FRAME:JSON,peerName==null||peerName.isBlank()?"":" and must say "+peerName);
+    }else{
+     s=new java.net.ServerSocket();
+     s.setReuseAddress(true);
+     s.bind(new InetSocketAddress(bind,port));
+     log.info("listening for vehicle connections on {}:{} ({})",bind,port,framed?FRAME:JSON);
+    }
     server=s;
     accepting=Thread.ofVirtual().name("vehicle-listener-"+bind+":"+port).start(this::accept);
-    log.info("listening for vehicle connections on {}:{} ({})",bind,port,framed?FRAME:JSON);
     return true;
+   }catch(DeviceTls.TlsUnavailable e){
+    // The port is not opened in plaintext instead. A gateway that could not connect is a problem
+    // somebody will fix; a gateway that connected to an unprotected port is one nobody will.
+    log.error("not listening on {}:{}: this profile asks for TLS and {}",bind,port,e.getMessage());
+    return false;
    }catch(IOException e){
     log.error("cannot listen for vehicles on {}:{}: {}",bind,port,e.getMessage());
     return false;
@@ -494,15 +550,50 @@ class JsonLineVehicleLinks implements DeviceChannel,com.amhs.integration.Vehicle
    while(s!=null&&!s.isClosed()){
     try{
      var socket=s.accept();
-     var link=new Link(socket.getInetAddress().getHostAddress(),socket.getPort(),framed,false);
-     link.mappingCode=mappingCode;
-     accepted.add(link);
-     link.adopt(siteId,profileId,socket);
-     log.info("vehicle connection from {}:{} on profile {}",socket.getInetAddress().getHostAddress(),socket.getPort(),profileId);
+     // Each arrival is taken up on its own thread: the handshake waits on the far side, and one
+     // gateway that connects and then says nothing must not hold the door shut for the rest.
+     Thread.ofVirtual().name("vehicle-arrival-"+socket.getInetAddress().getHostAddress()).start(()->welcome(socket));
     }catch(IOException e){
      if(server!=null&&!server.isClosed()) log.warn("accept on {}:{} failed: {}",bind,port,e.getMessage());
      return;
     }
+   }
+  }
+
+  /**
+   * Finds out who arrived, and then lets them speak.
+   *
+   * <p>Two questions, in this order, and they are different questions. <b>Who are you</b> is the
+   * certificate: signed by an authority this site trusts, and carrying the name this profile
+   * expects. <b>What may you speak for</b> is the vehicle the connection then claims, which has to
+   * be one wired to this profile. A gateway with a good certificate still cannot claim a vehicle
+   * that is not its own, and a gateway that knows a vehicle's name -- which is written in the map
+   * file and on every screen -- cannot do anything with it without the certificate.
+   */
+  private void welcome(Socket socket){
+   String from=socket.getInetAddress().getHostAddress();
+   try{
+    if(secure){
+     var ssl=(javax.net.ssl.SSLSocket)socket;
+     // Fails here when there is no trusted certificate -- and gives up when the far side simply
+     // never answers, which would otherwise hold this arrival's thread open for ever.
+     DeviceTls.handshake(ssl,identifyTimeoutMs);
+     if(!DeviceTls.presents(ssl,peerName)){
+      log.warn("connection from {} presents {} and this profile expects {}; closed",
+       from,DeviceTls.peerName(ssl),peerName);
+      socket.close();
+      return;
+     }
+     log.info("vehicle connection from {} on profile {}, certified as {}",from,profileId,
+      DeviceTls.peerName(ssl));
+    }else log.info("vehicle connection from {}:{} on profile {}",from,socket.getPort(),profileId);
+    var link=new Link(from,socket.getPort(),framed,false,secure,peerName);
+    link.mappingCode=mappingCode;
+    accepted.add(link);
+    link.adopt(siteId,profileId,socket);
+   }catch(IOException e){
+    log.warn("connection from {} was not taken up: {}",from,e.getMessage());
+    try{ socket.close(); }catch(IOException ignored){ }
    }
   }
 
@@ -529,12 +620,13 @@ class JsonLineVehicleLinks implements DeviceChannel,com.amhs.integration.Vehicle
  public void listen(){
   var wanted=new java.util.HashMap<Long,Listener>();
   try{
-   jdbc.query("SELECT c.id,c.site_id,c.host,c.port,min(p.adapter_key) AS one,max(p.adapter_key) AS other"
+   jdbc.query("SELECT c.id,c.site_id,c.host,c.port,min(p.adapter_key) AS one,max(p.adapter_key) AS other,"
+    +"c.tls,c.peer_name"
     +" FROM integration.connection_profile c"
     +" JOIN integration.vehicle_communication v ON v.site_id=c.site_id AND v.connection_profile_id=c.id AND v.enabled"
     +" JOIN integration.protocol_profile p ON p.site_id=v.site_id AND p.id=v.protocol_profile_id"
     +" WHERE c.enabled AND c.comm_type='TCP' AND c.role='SERVER'"
-    +" GROUP BY c.id,c.site_id,c.host,c.port",(r,n)->{
+    +" GROUP BY c.id,c.site_id,c.host,c.port,c.tls,c.peer_name",(r,n)->{
      long profileId=r.getLong(1),siteId=r.getLong(2);
      String one=r.getString(5),other=r.getString(6);
      if(!one.equals(other)){
@@ -545,7 +637,8 @@ class JsonLineVehicleLinks implements DeviceChannel,com.amhs.integration.Vehicle
      String spoken=JSON.equals(one)?JSON
       :mappings.byCode(siteId,one).filter(m->FRAME.equals(m.adapter())).map(m->FRAME).orElse(null);
      if(spoken==null) return null;     // another adapter's key, or a document nobody could read
-     wanted.put(profileId,new Listener(siteId,profileId,r.getString(3),r.getInt(4),FRAME.equals(spoken),one));
+     wanted.put(profileId,new Listener(siteId,profileId,r.getString(3),r.getInt(4),FRAME.equals(spoken),one,
+      r.getBoolean("tls"),r.getString("peer_name")));
      return null;
     });
   }catch(RuntimeException e){
@@ -556,7 +649,8 @@ class JsonLineVehicleLinks implements DeviceChannel,com.amhs.integration.Vehicle
   }
   listeners.entrySet().removeIf(open->{
    var want=wanted.get(open.getKey());
-   if(want!=null&&open.getValue().matches(want.bind,want.port,want.framed,want.mappingCode)) return false;
+   if(want!=null&&open.getValue().matches(want.bind,want.port,want.framed,want.mappingCode,
+    want.secure,want.peerName)) return false;
    open.getValue().close();
    return true;
   });

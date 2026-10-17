@@ -661,6 +661,35 @@ function ConnectionTab({ canWrite }: { canWrite: boolean }) {
                   : '사용으로 두면 보낼 것이 생길 때 이 주소로 접속합니다.'}</span>
               </div>
             </div>
+            <div style={row}>
+              <label>TLS</label>
+              <div>
+                <label style={{ fontSize: 12, color: canWrite ? 'var(--ink2)' : 'var(--mut)' }}>
+                  <input type="checkbox" checked={s.tls} disabled={!canWrite}
+                    onChange={e => set({ tls: e.target.checked, peerName: e.target.checked ? s.peerName : null })} /> 사용
+                </label>
+                <span className="hint">{s.role === 'SERVER'
+                  ? '켜면 접속해 온 쪽이 인증서로 자기를 증명해야 합니다. 차량 이름은 비밀이 아니므로(지도 파일과 화면에 있습니다) 이름만으로는 들어올 수 없게 됩니다.'
+                  : '켜면 상대의 인증서를 확인한 뒤에 보냅니다. 평문으로 대신 보내는 일은 없습니다 — 켜 둔 링크는 확인되지 않으면 열리지 않습니다.'}</span>
+              </div>
+            </div>
+            <div style={row}>
+              <label htmlFor="c-peer">상대 이름</label>
+              <div>
+                <input id="c-peer" style={field} value={s.peerName ?? ''} disabled={!s.tls}
+                  onChange={e => set({ peerName: e.target.value === '' ? null : e.target.value })} />
+                <span className="hint">{!s.tls
+                  ? 'TLS를 켜면 확인할 이름을 적을 수 있습니다.'
+                  : s.role === 'SERVER'
+                    ? '접속해 온 쪽 인증서에 적혀 있어야 하는 이름(CN)입니다. 비우면 신뢰하는 인증기관이 발급한 인증서면 모두 받습니다.'
+                    : '상대 인증서에 적혀 있어야 하는 이름입니다. 비우면 위의 호스트와 같아야 합니다 — 주소로 접속하면서 이름으로 발급된 인증서를 쓸 때 여기에 그 이름을 적습니다.'}</span>
+              </div>
+            </div>
+            <p className="hint" style={{ marginTop: 6 }}>
+              인증서와 키는 서버의 파일에 두고 <span className="mono">amhs.device.tls.*</span>로 가리킵니다 —
+              데이터베이스에 넣지 않습니다. 설비 쪽(Modbus·MELSEC)은 프로토콜에 인증이 없어 이 설정으로 보호할 수
+              없습니다. 절차는 저장소의 <span className="mono">docs/link-security.md</span>를 봅니다.
+            </p>
             <SaveBar issues={connectionIssues(s)} canWrite={canWrite} busy={busy} message={message} onSave={save} />
           </>
         )}

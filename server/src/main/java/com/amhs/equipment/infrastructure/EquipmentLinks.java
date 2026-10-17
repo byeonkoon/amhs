@@ -160,7 +160,7 @@ public class EquipmentLinks {
  /** Every unit in use, by the connection profile that reaches it. */
  private Map<Long,List<Wired>> wiring(){
   var out=new LinkedHashMap<Long,List<Wired>>();
-  jdbc.query("SELECT e.site_id,e.unit_id,c.id,c.host,c.port,e.external_unit_id,p.adapter_key"
+  jdbc.query("SELECT e.site_id,e.unit_id,c.id,c.host,c.port,e.external_unit_id,p.adapter_key,c.tls"
    +" FROM equipment.communication e"
    +" JOIN integration.connection_profile c ON c.site_id=e.site_id AND c.id=e.connection_profile_id"
    +" JOIN integration.protocol_profile p ON p.site_id=e.site_id AND p.id=e.protocol_profile_id"
@@ -169,6 +169,16 @@ public class EquipmentLinks {
    +" ORDER BY c.id,e.unit_id",(r,n)->{
     var wired=new Wired(r.getLong(1),r.getLong(2),r.getLong(3),r.getString(4),r.getInt(5),
      r.getString(6),r.getString(7));
+    // Modbus and MELSEC have no TLS and no authentication of any kind: the protocols predate the
+    // question. A profile that asks for TLS and is used for a word block is therefore left alone
+    // rather than opened in plaintext -- the whole point of the setting is that nobody has to
+    // wonder which of the two happened. Where a machine like this has to be protected, it is
+    // protected by what stands in front of it; docs/link-security.md says what that means.
+    if(r.getBoolean(8)){
+     log.error("equipment unit {} is on a profile that asks for TLS, which a word block cannot speak;"
+      +" not connecting (see docs/link-security.md)",wired.unitId());
+     return null;
+    }
     out.computeIfAbsent(wired.profileId(),id->new ArrayList<>()).add(wired);
     return null;
    });

@@ -1,0 +1,157 @@
+# 링크 보안과 상대 확인
+
+장비 링크를 TLS로 감싸고, **반대편이 누구인지** 확인하는 방법입니다. 서버에서 할 일과 **연동되는 쪽에서
+할 일**을 나눠 적습니다.
+
+## 왜 이름만으로는 안 되는가
+
+접속을 받는 구성(SERVER)에서 게이트웨이는 지금까지 **차량 이름을 말하면** 받아들여졌습니다. 그런데 차량
+이름은 비밀이 아닙니다 — 지도 파일에 있고, 화면에 있고, 와이어의 모든 프레임에 있습니다. 그러니 그 포트에
+닿을 수 있는 것이면 무엇이든 차량을 몰 수 있었고, 경로 중간에 있는 것이면 무엇이든 주고받는 내용을 읽고
+바꿀 수 있었습니다.
+
+그래서 질문을 둘로 나눕니다. **순서가 중요합니다.**
+
+| 질문 | 답하는 것 | 어디에 있는가 |
+|---|---|---|
+| **누구인가** | 인증서. 이 사이트가 믿는 인증기관이 발급했고, 프로파일이 적은 이름을 담고 있어야 합니다 | 연결 프로파일의 `TLS` · `상대 이름` |
+| **무엇을 말할 수 있는가** | 접속한 뒤 자기가 어느 차량인지 말하고, 그 차량이 **이 프로파일에 배선된** 차량이어야 합니다 | 차량 통신 행(전부터 있던 규칙) |
+
+인증서가 좋아도 자기 것이 아닌 차량은 가져갈 수 없고, 차량 이름을 알아도 인증서가 없으면 아무것도 할 수
+없습니다.
+
+## 정하고 가는 것들
+
+- **키 자료는 데이터베이스에 넣지 않습니다.** 행에 들어간 개인키는 모든 백업·복제·덤프에 들어간
+  개인키입니다. 서버의 파일에 두고 설정으로 가리킵니다.
+- **평문으로 내려가지 않습니다.** TLS를 켠 링크가 TLS를 쓸 수 없으면 **열리지 않습니다**. 조용히 평문으로
+  보내면 그 위의 어떤 것도 차이를 알 수 없고, 그러면 이 설정이 전부 무의미해집니다.
+- **인증서를 바꿔도 재기동하지 않습니다.** 파일이 바뀌면 다음 사용 때 다시 읽습니다. 갱신 때마다 재기동이
+  필요하면 현장은 재기동과 만료 사이에서 고르게 되고, 링크가 멈출 때까지 아무것도 고르지 않습니다.
+- **이름은 인증서의 CN 또는 SAN**으로 확인합니다. 비우면 **접속한 주소**가 인증서에 있어야 합니다(브라우저와
+  같은 규칙). 현장은 이름보다 IP로 접속하는 일이 많아, 이름으로 발급된 인증서를 쓰려면 그 이름을 적습니다.
+
+## 서버에서 할 일
+
+### 1. 자료 만들기
+
+현장 CA가 있으면 그것을 씁니다. 없으면 이 관제용 CA를 하나 만들어 쓰는 것이 가장 단순합니다. 아래는
+JDK에 들어 있는 `keytool`만으로 하는 예입니다(파일 이름·비밀번호는 현장 규칙에 맞춥니다).
+
+```bash
+# 1) 이 관제의 CA
+keytool -genkeypair -alias amhs-ca -keyalg RSA -keysize 3072 -validity 3650 \
+  -dname "CN=AMHS Link CA" -ext bc:c=ca:true -keystore ca.p12 -storetype PKCS12 \
+  -storepass "$CA_PASS"
+
+# 2) 관제 서버의 인증서 (SAN에 실제로 쓰는 주소·이름을 모두 넣습니다)
+keytool -genkeypair -alias server -keyalg RSA -keysize 2048 -validity 825 \
+  -dname "CN=amhs-controller" -ext "san=dns:amhs-controller,ip:10.0.0.10" \
+  -keystore server.p12 -storetype PKCS12 -storepass "$SRV_PASS"
+
+# 3) CA에 서명 요청하고 받아 넣기
+keytool -certreq -alias server -keystore server.p12 -storepass "$SRV_PASS" -file server.csr
+keytool -gencert -alias amhs-ca -keystore ca.p12 -storepass "$CA_PASS" \
+  -infile server.csr -outfile server.crt -validity 825 \
+  -ext "san=dns:amhs-controller,ip:10.0.0.10"
+keytool -exportcert -alias amhs-ca -keystore ca.p12 -storepass "$CA_PASS" -file ca.crt
+keytool -importcert -alias amhs-ca -keystore server.p12 -storepass "$SRV_PASS" \
+  -file ca.crt -noprompt
+keytool -importcert -alias server -keystore server.p12 -storepass "$SRV_PASS" -file server.crt
+
+# 4) 믿을 인증서 목록: CA 하나만 넣습니다
+keytool -importcert -alias amhs-ca -keystore trust.p12 -storetype PKCS12 \
+  -storepass "$TRUST_PASS" -file ca.crt -noprompt
+```
+
+### 2. 서버에 알려주기
+
+```properties
+amhs.device.tls.keystore=/etc/amhs/tls/server.p12
+amhs.device.tls.keystore-password=...
+amhs.device.tls.key-password=...          # 생략하면 keystore 비밀번호와 같다고 봅니다
+amhs.device.tls.truststore=/etc/amhs/tls/trust.p12
+amhs.device.tls.truststore-password=...
+```
+
+비밀번호는 저장소에 넣지 않습니다. 환경변수나 현장의 비밀 관리 수단으로 주입합니다.
+
+**truststore는 필수입니다.** 없으면 공용 웹의 인증기관만 믿게 되는데, 그들은 이 현장의 게이트웨이를 들어
+본 적이 없습니다. 그래서 자료가 없는 상태는 "전부 믿는다"가 아니라 **쓸 수 없다**로 답합니다.
+
+### 3. 프로파일 켜기
+
+`자원 구성 → 연결`에서 프로파일마다 **TLS**와 **상대 이름**을 둡니다. 유지보수 상태에서만 바꿀 수 있고,
+차량이 붙어 있는 프로파일은 먼저 떼야 합니다(전부터 있던 규칙입니다).
+
+켰는데 서버에 자료가 없으면 **통신 설정 점검**에 그대로 뜹니다(`TLS_NOT_CONFIGURED` 등) — 교대 전에 보는
+자리에서 보이고, 차량이 답을 안 하기 시작한 뒤에 찾는 일이 없습니다.
+
+## 연동되는 쪽에서 할 일
+
+### 차량 게이트웨이가 접속해 오는 구성 (TCP · SERVER)
+
+관제가 포트를 열고 기다립니다. **접속해 오는 쪽이 인증서를 내야 합니다**(요청이 아니라 필수입니다 —
+"있으면 받는다"로 두면 인증서 없는 접속이 통과하고, 그건 지금 고치려는 그 상태입니다).
+
+1. 키와 인증서 요청을 **게이트웨이에서** 만듭니다. 개인키는 게이트웨이를 떠나지 않습니다.
+   ```bash
+   keytool -genkeypair -alias gateway -keyalg RSA -keysize 2048 -validity 825 \
+     -dname "CN=oht-gateway-1" -keystore gateway.p12 -storetype PKCS12 -storepass "$GW_PASS"
+   keytool -certreq -alias gateway -keystore gateway.p12 -storepass "$GW_PASS" -file gateway.csr
+   ```
+2. `gateway.csr`을 관제 담당자에게 주고, 서명된 `gateway.crt`와 `ca.crt`를 받습니다.
+3. 둘을 게이트웨이의 키 저장소에 넣고, **접속할 때 그 인증서를 제시**하도록 설정합니다. 관제의 인증서를
+   확인하려면 `ca.crt`를 게이트웨이의 신뢰 목록에도 넣습니다(양방향 확인).
+4. 관제의 연결 프로파일에 **상대 이름**으로 `CN`에 적은 값(`oht-gateway-1`)을 적습니다. 비워 두면 CA가
+   발급한 인증서면 모두 받습니다 — **쓸 수 있지만 권장하지 않습니다.** 게이트웨이 한 대가 다른 라인의
+   프로파일로도 들어올 수 있게 됩니다.
+5. 접속한 뒤에는 전부터 하던 것을 그대로 합니다: **어느 차량인지 먼저 말합니다**([차량 TCP
+   계약](vehicle-tcp-contract.md)). 그 차량이 이 프로파일에 배선돼 있지 않으면 연결은 끊깁니다.
+
+실패하면 이렇게 보입니다.
+
+| 상황 | 관제 쪽 | 게이트웨이 쪽 |
+|---|---|---|
+| 인증서 없음 | 핸드셰이크 실패로 끊김 | TLS 오류 |
+| 우리 CA가 발급하지 않은 인증서 | 핸드셰이크 실패로 끊김 | TLS 오류(신뢰 실패) |
+| 이름이 프로파일과 다름 | `presents ... and this profile expects ...` 로그 후 끊음 | 접속은 됐다가 바로 끊김 |
+| 인증서는 맞고 남의 차량을 주장 | `names a vehicle this profile does not use` 로그 후 끊음 | 같음 |
+
+### 관제가 접속하는 구성 (TCP · CLIENT)
+
+상대 컨트롤러가 TLS 서버가 됩니다. 컨트롤러의 인증서는 **관제가 믿는 CA**가 발급해야 하고, 접속하는
+주소나 **상대 이름**에 적은 이름이 인증서에 있어야 합니다. 컨트롤러가 접속해 오는 쪽(관제)을 확인하려면
+관제의 클라이언트 인증서를 요구하면 됩니다 — keystore가 설정돼 있으면 그대로 제시합니다.
+
+### MQTT 브로커 (MQTT · BROKER)
+
+`ssl://`로 접속하고 브로커 인증서를 같은 규칙으로 확인합니다. 브로커가 클라이언트 인증서를 요구하면
+관제의 것이 제시됩니다. 사용자 이름·비밀번호 인증은 이 빌드에 없습니다.
+
+### 설비 (Modbus TCP · MELSEC MC)
+
+**이 프로토콜들에는 인증이 없고 TLS도 없습니다.** 질문이 생기기 전에 만들어진 프로토콜이라, 와이어에서
+"누가 썼는가"를 말할 방법이 아예 없습니다. 그래서 이 관제는 **그런 프로파일에 TLS가 켜져 있으면 접속하지
+않고 로그로 말합니다** — 평문으로 조용히 접속하면, 보호되고 있다고 믿는 설정이 남습니다.
+
+설비 쪽을 보호해야 하면 방법은 **설비 앞에 무엇을 두는가**입니다.
+
+| 방법 | 무엇이 보장되는가 | 비고 |
+|---|---|---|
+| **게이트웨이를 둔다** (설계상의 목표 경계) | 게이트웨이와 관제 사이는 인증서로 상호 확인. 게이트웨이와 설비 사이는 그 구간 설계대로 | [설비 OPC UA 계약](equipment-opcua-contract.md)의 경로입니다. OPC UA는 인증서 기반 인증·서명·암호화를 프로토콜에 가지고 있습니다 |
+| **망 분리·접근 제어** | 그 구간에 닿을 수 있는 것을 제한 | 설비 PLC는 보통 이렇게 합니다. "인증"이 아니라 "도달 제한"임을 섞지 않습니다 |
+| **IPsec·VPN 등 하위 계층** | 구간 암호화와 양끝 확인 | PLC가 지원하는 경우에 한합니다 |
+
+그리고 이것이 설계에 미치는 영향을 분명히 해 둡니다. **설비가 말한 상태는 인증되지 않은 정보입니다.**
+이 관제는 그것을 **참작**하는 데에만 씁니다(고장·콜금지면 반송을 보내지 않음) — 설비가 말한 것으로
+반송물의 위치를 바꾸거나 작업을 완료시키지 않습니다. 완료 증거는 작업 원장의 별도 계약입니다.
+
+## 아직 아닌 것
+
+- 인증서 **폐기 확인**(CRL·OCSP). 지금은 만료와 서명만 봅니다. 떼어낸 게이트웨이는 CA를 바꾸거나 이름을
+  프로파일에서 지우는 것으로 막습니다.
+- 사용자 이름·비밀번호나 토큰 기반 장비 인증. 인증서 하나로 통일했습니다 — 두 가지를 두면 둘 다 약한
+  쪽으로 맞춰집니다.
+- 설비 쪽 OPC UA 경로의 실구현. 위 표의 첫 줄은 **확정된 설계**이고 구현은 후속입니다.
+- 실장비·실제 게이트웨이 검증. 지금까지 상대는 모두 시험용 소켓입니다.
