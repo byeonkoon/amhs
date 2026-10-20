@@ -60,8 +60,9 @@ public class EquipmentLinks {
  private final JdbcTemplate jdbc; private final MappingLibrary mappings; private final ObjectMapper json;
  private final FrameMapper frames; private final SlotCodec codec; private final MessageMapper rules;
  private final PortIntents intents; private final OperationOptionConfiguration options;
+ private final com.amhs.platform.ControlTiming timing;
  private final Map<Long,Controller> controllers=new ConcurrentHashMap<>();
- private final int timeoutMs,unitId; private final long refreshMs;
+ private final int timeoutMs,unitId; private final long refreshMs,tickMs;
  /**
   * The thread that waits on controllers.
   *
@@ -79,14 +80,15 @@ public class EquipmentLinks {
  private final java.util.concurrent.atomic.AtomicBoolean passing=new java.util.concurrent.atomic.AtomicBoolean();
 
  EquipmentLinks(JdbcTemplate jdbc,MappingLibrary mappings,ObjectMapper json,PortIntents intents,
-                OperationOptionConfiguration options,
+                OperationOptionConfiguration options,com.amhs.platform.ControlTiming timing,
+                @Value("${amhs.device.equipment.tick-ms:200}") long tickMs,
                 @Value("${amhs.device.plc.timeout-ms:1500}") int timeoutMs,
                 @Value("${amhs.device.plc.unit-id:1}") int unitId,
                 @Value("${amhs.device.equipment.refresh-ms:30000}") long refreshMs){
   this.jdbc=jdbc; this.mappings=mappings; this.json=json;
   this.rules=new MessageMapper(json); this.codec=new SlotCodec(json);
   this.frames=new FrameMapper(json,rules,codec);
-  this.intents=intents; this.options=options;
+  this.intents=intents; this.options=options; this.timing=timing; this.tickMs=tickMs;
   this.timeoutMs=timeoutMs; this.unitId=unitId; this.refreshMs=refreshMs;
  }
 
@@ -100,7 +102,7 @@ public class EquipmentLinks {
   if(!passing.compareAndSet(false,true)) return;
   try{
    worker.execute(()->{
-    try{ poll(); }
+    try(var pass=timing.begin("equipment-links",tickMs)){ poll(); }
     catch(RuntimeException e){ log.error("equipment pass failed",e); }
     finally{ passing.set(false); }
    });

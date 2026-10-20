@@ -79,8 +79,14 @@ class LinkSecuritySqlTest {
   Files.createDirectories(dir);
   // Kept between runs because keytool is slow, and stamped because material made for an older
   // version of this test is worse than none: it fails in a way that looks like the code.
+  //
+  // Remade when it is getting old, too. The first run of this made two-day certificates and the
+  // suite failed three days later with a handshake error -- a test that passes on Friday and fails
+  // on Monday for a reason that has nothing to do with the code is worse than no test.
   var stamp=dir.resolve("made-for.txt");
-  if(Files.exists(stamp)&&Files.readString(stamp).equals(SHAPE)) return;
+  if(Files.exists(stamp)&&Files.readString(stamp).equals(SHAPE)
+   &&Files.getLastModifiedTime(stamp).toInstant().isAfter(java.time.Instant.now().minus(java.time.Duration.ofDays(30))))
+   return;
   try(var old=Files.list(dir)){ for(var file:old.toList()) Files.deleteIfExists(file); }
   ca();
   // Every name this certificate is used by, which is what the document tells an operator to do:
@@ -90,15 +96,15 @@ class LinkSecuritySqlTest {
   signed("gateway",GATEWAY,null);
   signed("stranger","other-gateway",null);
   // Signed by nobody this site trusts, which is a different failure from the wrong name.
-  keytool("-genkeypair","-alias","rogue","-keyalg","RSA","-keysize","2048","-validity","2",
+  keytool("-genkeypair","-alias","rogue","-keyalg","RSA","-keysize","2048","-validity","90",
    "-dname","CN=rogue-controller","-ext","san=dns:"+CONTROLLER+",dns:localhost,ip:127.0.0.1",
    "-keystore",p12("rogue"),"-storetype","PKCS12","-storepass",PASS);
   Files.writeString(dir.resolve("made-for.txt"),SHAPE);
  }
  /** What the material above is made for. Changing the shape changes this. */
- private static final String SHAPE="ca+server("+CONTROLLER+")+gateway("+GATEWAY+")+stranger+rogue v1";
+ private static final String SHAPE="ca+server("+CONTROLLER+")+gateway("+GATEWAY+")+stranger+rogue v2, 90 days";
  private static void ca() throws Exception {
-  keytool("-genkeypair","-alias","ca","-keyalg","RSA","-keysize","2048","-validity","2",
+  keytool("-genkeypair","-alias","ca","-keyalg","RSA","-keysize","2048","-validity","90",
    "-dname","CN=AMHS Link CA","-ext","bc:c=ca:true",
    "-keystore",p12("ca"),"-storetype","PKCS12","-storepass",PASS);
   keytool("-exportcert","-alias","ca","-keystore",p12("ca"),"-storepass",PASS,
@@ -108,13 +114,13 @@ class LinkSecuritySqlTest {
  }
  /** One key pair, signed by the CA, in a store that also trusts the CA. */
  private static void signed(String alias,String commonName,String extension) throws Exception {
-  keytool("-genkeypair","-alias",alias,"-keyalg","RSA","-keysize","2048","-validity","2",
+  keytool("-genkeypair","-alias",alias,"-keyalg","RSA","-keysize","2048","-validity","90",
    "-dname","CN="+commonName,"-keystore",p12(alias),"-storetype","PKCS12","-storepass",PASS);
   keytool("-certreq","-alias",alias,"-keystore",p12(alias),"-storepass",PASS,
    "-file",dir.resolve(alias+".csr").toString());
   var sign=new java.util.ArrayList<String>(List.of("-gencert","-alias","ca","-keystore",p12("ca"),
    "-storepass",PASS,"-infile",dir.resolve(alias+".csr").toString(),
-   "-outfile",dir.resolve(alias+".crt").toString(),"-validity","2","-rfc"));
+   "-outfile",dir.resolve(alias+".crt").toString(),"-validity","90","-rfc"));
   if(extension!=null){ sign.add("-ext"); sign.add(extension); }
   keytool(sign.toArray(String[]::new));
   keytool("-importcert","-alias","ca","-keystore",p12(alias),"-storepass",PASS,

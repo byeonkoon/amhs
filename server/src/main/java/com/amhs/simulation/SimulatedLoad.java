@@ -40,20 +40,22 @@ public class SimulatedLoad {
  private final OperationOptionConfiguration options; private final TransportOrders orders;
  private final TransportLedger ledger; private final TopologyQuery topology; private final FleetState fleet;
  private final TrafficControl traffic;
- private final double perMinute; private final Random random;
+ private final double perMinute; private final int perVehicle; private final Random random;
  private final Map<Long,Watch> watches=new ConcurrentHashMap<>();
  private long lastTick=System.nanoTime();
 
  public SimulatedLoad(OperationOptionConfiguration options,TransportOrders orders,TransportLedger ledger,TopologyQuery topology,
                       FleetState fleet,TrafficControl traffic,
                       @Value("${amhs.simulation.load.per-minute:0}") double perMinute,
+                      @Value("${amhs.simulation.load.per-vehicle:1}") int perVehicle,
                       @Value("${amhs.simulation.load.seed:42}") long seed){
   this.options=options; this.orders=orders; this.ledger=ledger; this.topology=topology; this.fleet=fleet;
-  this.traffic=traffic; this.perMinute=perMinute; this.random=new Random(seed);
+  this.traffic=traffic; this.perMinute=perMinute; this.perVehicle=Math.max(1,perVehicle);
+  this.random=new Random(seed);
  }
 
  /** What a run has seen so far, from when the load started on this site. */
- public record Report(boolean enabled,double perMinute,OffsetDateTime startedAt,long written,long refused,long samples,
+ public record Report(boolean enabled,double perMinute,int perVehicle,OffsetDateTime startedAt,long written,long refused,long samples,
                       long sameNodeSamples,long unheldNodeSamples,long deadlockSamples,int maxQueued,
                       int completed,int cancelled,int failed,int recovery,Long medianSeconds,Long p95Seconds,int measured){}
 
@@ -93,8 +95,13 @@ public class SimulatedLoad {
   var open=new EnumMap<VehicleType,Integer>(VehicleType.class);
   for(TransportOrder o:orders.listActive(siteId,500)) open.merge(o.vehicleType(),1,Integer::sum);
   w.maxQueued=Math.max(w.maxQueued,open.values().stream().mapToInt(Integer::intValue).sum());
+  // How much may be open at once per kind. One per vehicle keeps every vehicle busy and the queue
+  // empty, which is the steady state a plant hopes for; more than one is the state it actually
+  // meets at a shift change, where work arrives faster than it can be carried and the queue is
+  // what decides who goes first.
   var kinds=new ArrayList<VehicleType>();
-  for(var e:working.entrySet()) if(open.getOrDefault(e.getKey(),0)<e.getValue()) kinds.add(e.getKey());
+  for(var e:working.entrySet())
+   if(open.getOrDefault(e.getKey(),0)<e.getValue()*perVehicle) kinds.add(e.getKey());
   if(kinds.isEmpty()) return;
   var kind=kinds.get(random.nextInt(kinds.size()));
   var ports=map.ports().stream().filter(p->p.accessVehicleType()==kind).map(MapSnapshot.Port::code).sorted().toList();
@@ -124,7 +131,7 @@ public class SimulatedLoad {
 
  public Report report(long siteId){
   var w=watches.get(siteId);
-  if(w==null) return new Report(perMinute>0,perMinute,null,0,0,0,0,0,0,0,0,0,0,0,null,null,0);
+  if(w==null) return new Report(perMinute>0,perMinute,perVehicle,null,0,0,0,0,0,0,0,0,0,0,0,null,null,0);
   int completed=0,cancelled=0,failed=0;
   var durations=new ArrayList<Long>();
   for(var o:ledger.finishedSince(siteId,w.startedAt)){
@@ -145,7 +152,7 @@ public class SimulatedLoad {
   Long median=durations.isEmpty()?null:durations.get((durations.size()-1)/2);
   // Nearest rank: the smallest value with at least 95% of the measured at or below it.
   Long p95=durations.isEmpty()?null:durations.get((int)Math.ceil(0.95*durations.size())-1);
-  return new Report(perMinute>0,perMinute,w.startedAt,w.written,w.refused,w.samples,w.sameNode,w.unheld,w.deadlocks,
+  return new Report(perMinute>0,perMinute,perVehicle,w.startedAt,w.written,w.refused,w.samples,w.sameNode,w.unheld,w.deadlocks,
    w.maxQueued,completed,cancelled,failed,recovery,median,p95,durations.size());
  }
 }

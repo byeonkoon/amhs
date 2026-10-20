@@ -14,6 +14,7 @@ import com.amhs.transport.TransportOrders;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
@@ -72,11 +73,20 @@ class SimulationConfiguration {
  static class Loop {
   private final SiteSweep sweep; private final SimulatedVehicles vehicles; private final OperationOptionConfiguration options;
   private final VehicleConfiguration configuration;
-  Loop(SiteSweep sweep,SimulatedVehicles vehicles,OperationOptionConfiguration options,VehicleConfiguration configuration){
+  private final com.amhs.platform.ControlTiming timing;
+  private final long tickMs,motionMs;
+  Loop(SiteSweep sweep,SimulatedVehicles vehicles,OperationOptionConfiguration options,VehicleConfiguration configuration,
+       com.amhs.platform.ControlTiming timing,
+       @Value("${amhs.simulation.tick-ms:1500}") long tickMs,
+       @Value("${amhs.simulation.motion-ms:100}") long motionMs){
    this.sweep=sweep; this.vehicles=vehicles; this.options=options; this.configuration=configuration;
+   this.timing=timing; this.tickMs=tickMs; this.motionMs=motionMs;
   }
   @Scheduled(fixedDelayString="${amhs.simulation.tick-ms:1500}")
   void tick(){
+   try(var pass=timing.begin("simulation-sweep",tickMs)){ sweepOnce(); }
+  }
+  private void sweepOnce(){
    var simulated=new HashSet<>(options.simulatedSites());
    vehicles.clearExcept(simulated);
    for(long siteId:simulated){
@@ -99,6 +109,9 @@ class SimulationConfiguration {
   /** Drives for the time that actually passed, so a slow tick does not slow the vehicles down. */
   @Scheduled(fixedDelayString="${amhs.simulation.motion-ms:100}")
   void motion(){
+   try(var pass=timing.begin("simulation-motion",motionMs)){ motionOnce(); }
+  }
+  private void motionOnce(){
    long now=System.nanoTime();
    double seconds=Math.min(1.0,(now-lastMotion)/1e9);
    lastMotion=now;

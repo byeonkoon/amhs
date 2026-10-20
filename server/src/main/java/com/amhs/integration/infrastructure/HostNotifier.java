@@ -41,6 +41,7 @@ import java.util.List;
 public class HostNotifier {
  private static final Logger log=LoggerFactory.getLogger(HostNotifier.class);
  private final JdbcTemplate jdbc; private final HttpClient http; private final int batch; private final int staleClaimMs;
+ private final com.amhs.platform.ControlTiming timing; private final long tickMs;
  /**
   * The thread that waits on somebody else's web server.
   *
@@ -58,9 +59,11 @@ public class HostNotifier {
  /** Whether a sweep is already running, so a slow one is not piled on by the next tick. */
  private final java.util.concurrent.atomic.AtomicBoolean sweeping=new java.util.concurrent.atomic.AtomicBoolean();
 
- HostNotifier(JdbcTemplate jdbc,@Value("${amhs.host.batch:20}") int batch,
+ HostNotifier(JdbcTemplate jdbc,com.amhs.platform.ControlTiming timing,
+              @Value("${amhs.host.tick-ms:1000}") long tickMs,
+              @Value("${amhs.host.batch:20}") int batch,
               @Value("${amhs.host.stale-claim-ms:120000}") int staleClaimMs){
-  this.jdbc=jdbc; this.batch=batch; this.staleClaimMs=staleClaimMs;
+  this.jdbc=jdbc; this.timing=timing; this.tickMs=tickMs; this.batch=batch; this.staleClaimMs=staleClaimMs;
   this.http=HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3))
    .followRedirects(HttpClient.Redirect.NEVER)   // a redirect would drop the auth header
    .build();
@@ -78,7 +81,7 @@ public class HostNotifier {
   if(!sweeping.compareAndSet(false,true)) return;
   try{
    sender.execute(()->{
-    try{ sweep(); }
+    try(var pass=timing.begin("host-notices",tickMs)){ sweep(); }
     catch(RuntimeException e){ log.error("host notice sweep failed",e); }
     finally{ sweeping.set(false); }
    });

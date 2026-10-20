@@ -297,16 +297,16 @@ let ohtTopPath = ohtTop.path, ohtLowPath = ohtLow.path;
 // across.
 const topPlan = planBays(ohtTop.runs, [
   { each: [
-    { span: 4, depth: 26000 },
-    { span: 4, depth: 26000 },
+    { span: 4, depth: 26000, laneNodes: 8 },
+    { span: 4, depth: 26000, laneNodes: 8 },
     { span: 4, depth: 30000, label: 'OHT-INSP', laneNodes: 3 },
   ] },
   { bays: 0, span: 4, depth: 0 },
 ], 'OHT-B');
 const lowPlan = planBays(ohtLow.runs, [
-  { bays: 2, span: 4, depth: 24000 },
+  { bays: 2, span: 4, depth: 24000, laneNodes: 8 },
   { each: [
-    { span: 4, depth: 26000 },
+    { span: 4, depth: 26000, laneNodes: 8 },
     { span: 4, depth: 26000, label: 'OHT-WAIT', extras: { waitFor: 'OHT' }, laneNodes: 2 },
   ] },
 ], 'OHT-D');
@@ -347,11 +347,21 @@ function joinLoops(upper, lower) {
 }
 joinLoops(ohtTopPath, ohtLowPath);
 
-[...topPlan, ...lowPlan].filter(p => /^OHT-[BD]/.test(p.label)).forEach((p, i) => {
-  const lane = ohtLanes.get(p.label) ?? [];
-  if (lane.length) ports.push({
-    code: `BAY-O${String(i + 1).padStart(2, '0')}`, node: lane[0],
-    portType: i % 2 === 0 ? 'LOAD' : 'UNLOAD', accessVehicleType: 'OHT',
+// A port at every stall of a bay, not one per bay.
+//
+// A bay is a row of tools and every tool has a face the vehicle hands over at; one port per bay
+// would be a floor with four places to deliver to. It is also what decides how much work a floor
+// can carry: an order holds its two ports from the moment it is dispatched, so a layout with four
+// ports can run two jobs at a time however many vehicles it has. The first load run on this layout
+// queued forty-three of fifty orders on PORT_IN_USE, which is that arithmetic and nothing else.
+let ohtPorts = 0;
+[...topPlan, ...lowPlan].filter(p => /^OHT-[BD]/.test(p.label)).forEach((p, bay) => {
+  (ohtLanes.get(p.label) ?? []).forEach(node => {
+    ohtPorts++;
+    ports.push({
+      code: `BAY-O${String(bay + 1).padStart(2, '0')}-${String(ohtPorts).padStart(2, '0')}`,
+      node, portType: ohtPorts % 2 === 1 ? 'LOAD' : 'UNLOAD', accessVehicleType: 'OHT',
+    });
   });
 });
 const ohtPath = [...ohtTopPath, ...ohtLowPath];
@@ -375,10 +385,10 @@ const stalls = i => i < 4
 // An oval has two straights, so the bays are shared between them: work on the near side, the
 // charging and parking area on the far one, where a vehicle standing is out of everybody's way.
 const agvSides = [
-  { bays: 3, span: 4, depth: 22000 },
+  { bays: 3, span: 4, depth: 22000, laneNodes: 6 },
   { each: [
     { span: 8, depth: 26000, label: 'AGV-PARK', extras: stalls, laneNodes: 12 },
-    { span: 4, depth: 22000 },
+    { span: 4, depth: 22000, laneNodes: 6 },
   ] },
 ];
 const agvPlan = planBays(agvRing.runs, agvSides, 'AGV-B');
@@ -389,11 +399,14 @@ for (const plan of agvPlan.slice().sort((x, y) => y.at - x.at)) {
   agvPath = made.path;
   agvLanes.set(plan.label, made.lane);
 }
-agvPlan.filter(p => p.label.startsWith('AGV-B')).forEach((p, i) => {
-  const lane = agvLanes.get(p.label) ?? [];
-  if (lane.length) ports.push({
-    code: `BAY-A${String(i + 1).padStart(2, '0')}`, node: lane[0],
-    portType: i % 2 === 0 ? 'LOAD' : 'UNLOAD', accessVehicleType: 'AGV',
+let agvPorts = 0;
+agvPlan.filter(p => p.label.startsWith('AGV-B')).forEach((p, bay) => {
+  (agvLanes.get(p.label) ?? []).forEach(node => {
+    agvPorts++;
+    ports.push({
+      code: `BAY-A${String(bay + 1).padStart(2, '0')}-${String(agvPorts).padStart(2, '0')}`,
+      node, portType: agvPorts % 2 === 1 ? 'LOAD' : 'UNLOAD', accessVehicleType: 'AGV',
+    });
   });
 });
 

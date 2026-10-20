@@ -6,8 +6,21 @@ import org.springframework.web.bind.annotation.*;
 @RestController
 @RequestMapping("/api/v1/sites/{siteId}/diagnostics")
 class DiagnosticsController {
- private final HostDiagnostics diagnostics;
- DiagnosticsController(HostDiagnostics diagnostics){ this.diagnostics=diagnostics; }
+ private final HostDiagnostics diagnostics; private final com.amhs.platform.ControlTiming timing;
+ DiagnosticsController(HostDiagnostics diagnostics,com.amhs.platform.ControlTiming timing){
+  this.diagnostics=diagnostics; this.timing=timing;
+ }
  @GetMapping("/host")
  HostDiagnostics.Report host(@PathVariable long siteId){ return diagnostics.report(siteId); }
+
+ /**
+  * How the loops that drive the plant are keeping their periods.
+  *
+  * <p>Not per site, because the loops are not: one scheduler drives every site this server holds,
+  * and a loop that is late is late for all of them.
+  */
+ @GetMapping("/timing")
+ java.util.List<com.amhs.platform.ControlTiming.Loop> timing(@PathVariable long siteId){
+  return timing.loops();
+ }
 }

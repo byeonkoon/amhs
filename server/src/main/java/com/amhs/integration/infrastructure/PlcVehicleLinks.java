@@ -46,13 +46,17 @@ class PlcVehicleLinks implements DeviceChannel {
  private final SlotCodec codec;
  private final Map<Long,Controller> controllers=new ConcurrentHashMap<>();
  private final int timeoutMs,unitId;
+ private final com.amhs.platform.ControlTiming timing; private final long tickMs;
 
  PlcVehicleLinks(JdbcTemplate jdbc,FleetState fleet,MappingLibrary mappings,ObjectMapper json,
+                 com.amhs.platform.ControlTiming timing,
+                 @Value("${amhs.device.plc.tick-ms:100}") long tickMs,
                  @Value("${amhs.device.plc.timeout-ms:1500}") int timeoutMs,
                  @Value("${amhs.device.plc.unit-id:1}") int unitId){
   this.jdbc=jdbc; this.fleet=fleet; this.mappings=mappings; this.json=json;
   this.rules=new MessageMapper(json); this.codec=new SlotCodec(json);
   this.frames=new FrameMapper(json,rules,codec);
+  this.timing=timing; this.tickMs=tickMs;
   this.timeoutMs=timeoutMs; this.unitId=unitId;
  }
 
@@ -81,10 +85,13 @@ class PlcVehicleLinks implements DeviceChannel {
  /** Every controller is read on its own interval, which the mapping sets. */
  @Scheduled(fixedDelayString="${amhs.device.plc.tick-ms:100}")
  void poll(){
-  controllers.forEach((profileId,controller)->{
-   try{ controller.pollOnce(); }
-   catch(RuntimeException e){ log.debug("plc poll {}: {}",profileId,e.getMessage()); }
-  });
+  if(controllers.isEmpty()) return;   // nothing wired to a PLC: not a loop worth counting
+  try(var pass=timing.begin("plc-read",tickMs)){
+   controllers.forEach((profileId,controller)->{
+    try{ controller.pollOnce(); }
+    catch(RuntimeException e){ log.debug("plc poll {}: {}",profileId,e.getMessage()); }
+   });
+  }
  }
 
  /** One PLC: the registers it is given, the registers it shows, and who is listening. */
