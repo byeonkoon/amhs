@@ -168,6 +168,27 @@ class SequenceHaltSqlTest {
   fleet.reportModeAndStatus(SITE,1,OHT,"REMOTE","IDLE");
   sweep.run(SITE,"test",null);
   assertThat(ledger.openRelocations(SITE)).isEmpty();
+  // The move is closed and the road ahead is still the vehicle's. It was told to go to 102 and a
+  // stop cannot take that back -- while the plant is stopped nothing can even be sent to say
+  // otherwise -- and a vehicle standing between two legs of a move looks exactly like one that has
+  // finished. So the road waits for the vehicle to arrive, or for somebody to release it in the
+  // restart check. Handing it to the vehicle behind is what stalled a load run.
+  assertThat(jdbc.queryForObject("SELECT count(*) FROM traffic.node_reservation WHERE site_id=? AND vehicle_id=? AND node_id=102 AND released_at IS NULL",Integer.class,SITE,OHT)).isPositive();
+ }
+
+ /**
+  * A move that never left is taken back, road and all.
+  *
+  * <p>The other half of the rule above. Nothing told the vehicle to go anywhere, so nobody will,
+  * and road held for a move that was never made is road blocking everybody else for nothing.
+  */
+ @Test void astopHandsBackTheRoadOfAMoveThatNeverLeft(){
+  simulator.place(SITE,OHT,101L);
+  moves.moveTo(SITE,OHT,102L);
+  assertThat(jdbc.queryForObject("SELECT count(*) FROM traffic.node_reservation WHERE site_id=? AND vehicle_id=? AND node_id=102 AND released_at IS NULL",Integer.class,SITE,OHT)).isPositive();
+  options.setSequenceRunning(SITE,false);
+  sweep.run(SITE,"test",null);
+  assertThat(ledger.openRelocations(SITE)).isEmpty();
   assertThat(jdbc.queryForObject("SELECT count(*) FROM traffic.node_reservation WHERE site_id=? AND vehicle_id=? AND node_id=102 AND released_at IS NULL",Integer.class,SITE,OHT)).isZero();
  }
 

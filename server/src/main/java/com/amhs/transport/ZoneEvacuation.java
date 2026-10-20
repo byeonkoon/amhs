@@ -382,7 +382,23 @@ public class ZoneEvacuation {
    if(withdrawal.delivered()&&!vehicle.reportedAt().isAfter(stopAt)) continue;
    if(!outbox.unresolvedForVehicle(siteId,relocation.vehicleId()).isEmpty()) continue;
    ledger.finishRelocation(relocation.id(),"SEQUENCE_STOPPED");
-   traffic.releaseAhead(siteId,relocation.vehicleId(),vehicle.nodeId(),"SEQUENCE_STOPPED");
+   // Closing the move and handing back its road are two different acts, and only the first one is
+   // safe here.
+   //
+   // A move that never left may be taken back: nothing told the vehicle to go, so nobody will, and
+   // holding the road would block others for nothing. A move that was delivered is another matter.
+   // The vehicle has it, a stop cannot take back what has already gone out, and while the plant is
+   // stopped nothing can be sent to say otherwise -- not even a STOP, because publication is
+   // stopped too. "Standing and idle" is not evidence against it either: a vehicle between two
+   // legs of a move looks exactly like one that has finished.
+   //
+   // So the road stays the vehicle's until it arrives and says so, which releases what is behind in
+   // the ordinary way, or until somebody releases it in the restart check. A load run found what
+   // the other answer costs: the road went to the vehicle behind, this one rolled onto it anyway,
+   // and the follower then waited for a node nobody would ever hand back. It is not a cycle, so
+   // nothing called it a deadlock, and the floor did not recover.
+   if(!withdrawal.delivered())
+    traffic.releaseAhead(siteId,relocation.vehicleId(),vehicle.nodeId(),"SEQUENCE_STOPPED");
    out.add(none(relocation.vehicleId(),"MOVE_ENDED_BY_STOP"));
   }
   return out;

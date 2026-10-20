@@ -83,15 +83,39 @@ class PlcVehicleLinks implements DeviceChannel {
  }
 
  /** Every controller is read on its own interval, which the mapping sets. */
+ /**
+  * The read loop's own thread.
+  *
+  * <p>This is the 100ms loop everything above it trusts for where a vehicle is, and it was sharing
+  * one scheduler thread with every other scheduled method here. Under load that meant waiting
+  * behind a simulation sweep that took 479ms: a position report arriving late is traffic deciding
+  * on an old position, which is the one thing this loop exists to prevent.
+  */
+ private final java.util.concurrent.ExecutorService reader=
+  java.util.concurrent.Executors.newSingleThreadExecutor(r->{
+   var thread=new Thread(r,"plc-read");
+   thread.setDaemon(true);
+   return thread;
+  });
+ private final java.util.concurrent.atomic.AtomicBoolean reading=new java.util.concurrent.atomic.AtomicBoolean();
+
  @Scheduled(fixedDelayString="${amhs.device.plc.tick-ms:100}")
  void poll(){
   if(controllers.isEmpty()) return;   // nothing wired to a PLC: not a loop worth counting
-  try(var pass=timing.begin("plc-read",tickMs)){
-   controllers.forEach((profileId,controller)->{
-    try{ controller.pollOnce(); }
-    catch(RuntimeException e){ log.debug("plc poll {}: {}",profileId,e.getMessage()); }
+  if(!reading.compareAndSet(false,true)) return;    // its own last pass is still going
+  try{
+   reader.execute(()->{
+    try(var pass=timing.begin("plc-read",tickMs)){ readAll(); }
+    catch(RuntimeException e){ log.warn("plc read pass failed: {}",e.getMessage()); }
+    finally{ reading.set(false); }
    });
-  }
+  }catch(RuntimeException e){ reading.set(false); throw e; }
+ }
+ private void readAll(){
+  controllers.forEach((profileId,controller)->{
+   try{ controller.pollOnce(); }
+   catch(RuntimeException e){ log.debug("plc poll {}: {}",profileId,e.getMessage()); }
+  });
  }
 
  /** One PLC: the registers it is given, the registers it shows, and who is listening. */
@@ -260,5 +284,8 @@ class PlcVehicleLinks implements DeviceChannel {
    .stream().findFirst().orElse(null);
  }
 
- @PreDestroy void closeAll(){ controllers.values().forEach(Controller::close); controllers.clear(); }
+ @PreDestroy void closeAll(){
+  reader.shutdownNow();
+  controllers.values().forEach(Controller::close); controllers.clear();
+ }
 }

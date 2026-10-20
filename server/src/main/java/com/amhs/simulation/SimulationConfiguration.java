@@ -82,10 +82,39 @@ class SimulationConfiguration {
    this.sweep=sweep; this.vehicles=vehicles; this.options=options; this.configuration=configuration;
    this.timing=timing; this.tickMs=tickMs; this.motionMs=motionMs;
   }
-  @Scheduled(fixedDelayString="${amhs.simulation.tick-ms:1500}")
-  void tick(){
-   try(var pass=timing.begin("simulation-sweep",tickMs)){ sweepOnce(); }
+  /**
+   * The simulation's own thread, so a simulated floor cannot slow a real link down.
+   *
+   * <p>Measured rather than guessed at: under load the sweep took 479ms of its 1500ms period, and
+   * every {@code @Scheduled} method in this application shares one scheduler thread by default --
+   * so the PLC read, which is meant to run every 100ms, was waiting behind a simulator. The
+   * simulation keeps one thread for both of its loops, because the sweep and the motion step work
+   * on the same vehicles and have always taken turns.
+   */
+  private final java.util.concurrent.ExecutorService worker=
+   java.util.concurrent.Executors.newSingleThreadExecutor(r->{
+    var thread=new Thread(r,"simulation");
+    thread.setDaemon(true);
+    return thread;
+   });
+  private final java.util.concurrent.atomic.AtomicBoolean sweeping=new java.util.concurrent.atomic.AtomicBoolean();
+  private final java.util.concurrent.atomic.AtomicBoolean moving=new java.util.concurrent.atomic.AtomicBoolean();
+  @jakarta.annotation.PreDestroy void stopWorker(){ worker.shutdownNow(); }
+
+  /** Hands a pass to the simulation's thread, or drops this tick if its own last one is still going. */
+  private void hand(java.util.concurrent.atomic.AtomicBoolean busy,String name,long targetMs,Runnable pass){
+   if(!busy.compareAndSet(false,true)) return;
+   try{
+    worker.execute(()->{
+     try(var measured=timing.begin(name,targetMs)){ pass.run(); }
+     catch(RuntimeException e){ log.warn("{} failed: {}",name,e.getMessage()); }
+     finally{ busy.set(false); }
+    });
+   }catch(RuntimeException e){ busy.set(false); throw e; }
   }
+
+  @Scheduled(fixedDelayString="${amhs.simulation.tick-ms:1500}")
+  void tick(){ hand(sweeping,"simulation-sweep",tickMs,this::sweepOnce); }
   private void sweepOnce(){
    var simulated=new HashSet<>(options.simulatedSites());
    vehicles.clearExcept(simulated);
@@ -108,9 +137,7 @@ class SimulationConfiguration {
   private long lastMotion=System.nanoTime();
   /** Drives for the time that actually passed, so a slow tick does not slow the vehicles down. */
   @Scheduled(fixedDelayString="${amhs.simulation.motion-ms:100}")
-  void motion(){
-   try(var pass=timing.begin("simulation-motion",motionMs)){ motionOnce(); }
-  }
+  void motion(){ hand(moving,"simulation-motion",motionMs,this::motionOnce); }
   private void motionOnce(){
    long now=System.nanoTime();
    double seconds=Math.min(1.0,(now-lastMotion)/1e9);
