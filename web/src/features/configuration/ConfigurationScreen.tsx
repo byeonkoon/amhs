@@ -1102,7 +1102,8 @@ function HostNoticeTab({ canWrite }: { canWrite: boolean }) {
         // A credential never comes back, so the field starts empty and an empty field means "leave it".
         setDraft(found.endpoint
           ? { ...found.endpoint.settings, authValue: null }
-          : { url: '', authHeader: null, authValue: null, timeoutMs: 3000, maxAttempts: 8, enabled: false });
+          : { url: '', authHeader: null, authValue: null, timeoutMs: 3000, maxAttempts: 8, enabled: false,
+              progressNotices: false, mappingCode: null });
       })
       .catch(cause => { if ((cause as Error).name !== 'AbortError') setError(cause); });
     return () => ac.abort();
@@ -1203,6 +1204,32 @@ function HostNoticeTab({ canWrite }: { canWrite: boolean }) {
               onChange={e => set({ enabled: e.target.checked })} /> 사용
           </label>
           <span className="hint">꺼 두면 아무것도 나가지 않고 <b>쌓입니다</b>. 잃지는 않으므로 켜면 그때 나갑니다.</span>
+        </div>
+      </div>
+      <div style={row}>
+        <label>진행 중 알림</label>
+        <div>
+          <label style={{ fontSize: 12, color: canWrite ? 'var(--ink2)' : 'var(--mut)' }}>
+            <input type="checkbox" checked={draft.progressNotices} disabled={!canWrite}
+              onChange={e => set({ progressNotices: e.target.checked })} /> 보냄
+          </label>
+          <span className="hint">
+            끝났을 때만 알리면 <b>20분 걸리는 작업과 아직 시작도 못 한 작업이 위에서 똑같이 보입니다</b>.
+            켜면 차량이 정해졌을 때(배차)와 반송물이 차량에 실렸을 때(픽업)도 보냅니다.
+            꺼 두면 그 전이는 <b>기록조차 하지 않습니다</b> — 적어 두고 나중에 걸러내면 켜는 순간 지난 이력이 쏟아집니다.
+          </span>
+        </div>
+      </div>
+      <div style={row}>
+        <label htmlFor="h-map">상위 말로 바꾸기</label>
+        <div>
+          <input id="h-map" style={field} value={draft.mappingCode ?? ''} placeholder="매핑 문서 이름 (비우면 그대로)"
+            onChange={e => set({ mappingCode: e.target.value === '' ? null : e.target.value })} />
+          <span className="hint">
+            상위가 쓰는 필드 이름·값으로 바꿔 보냅니다. <b>매핑 문서</b> 탭에 올린 <span className="mono">HOST_JSON_V1</span> 문서의
+            이름을 적습니다. 비우면 이 관제의 모양 그대로 나갑니다. 보낼 때 바꾸므로 문서를 고치면 다음 시도부터 반영되고,
+            읽을 수 없는 이름이면 이 관제의 모양으로 보내고 로그에 남깁니다.
+          </span>
         </div>
       </div>
       <SaveBar issues={hostEndpointIssues(draft)} canWrite={canWrite} busy={busy} message={message} onSave={save} />

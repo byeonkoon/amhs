@@ -116,6 +116,10 @@ export const equipmentApi = {
 export type HostEndpointSettings = {
   url: string; authHeader: string | null; authValue: string | null;
   timeoutMs: number; maxAttempts: number; enabled: boolean;
+  /** 진행 중 알림(배차·픽업)도 보냅니다. 켜지 않으면 기록조차 하지 않습니다. */
+  progressNotices: boolean;
+  /** 이 상위의 말로 바꿔 줄 매핑 문서 이름. 비우면 이 관제의 모양 그대로 나갑니다. */
+  mappingCode: string | null;
 };
 /** One notice and what became of saying it. */
 export type HostNotice = {

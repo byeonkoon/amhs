@@ -132,6 +132,16 @@ public record DeviceMessageMapping(String code,String adapter,int version,String
 
  /** Adapters that address values by name in a structure. */
  public static final Set<String> NAMED=Set.of("JSON_LINE_V1","MQTT_JSON_V1");
+ /**
+  * Documents that describe the system upstairs rather than a machine.
+  *
+  * <p>Their own family because almost nothing else in a document applies: there is no vehicle to
+  * identify, no topic, no layout, no handshake, and nothing arrives. What one says is how a notice
+  * this controller has already decided to send is spelled for that host.
+  */
+ public static final Set<String> HOST=Set.of("HOST_JSON_V1");
+ /** The one thing a host document spells. A notice is the only thing this controller sends one. */
+ public static final Set<String> HOST_MESSAGES=Set.of("NOTICE");
  /** Adapters that address values by position in bytes. */
  public static final Set<String> POSITIONAL=Set.of("PC_FRAME_V1","PLC_WORD_V1","EQUIPMENT_WORD_V1");
  /** Adapters that work a block of words: the same arrangement, a vehicle behind it or a machine. */
@@ -162,6 +172,10 @@ public record DeviceMessageMapping(String code,String adapter,int version,String
    wrong.add("adapter: 어떤 어댑터가 읽는 문서인지 없습니다");
    throw new MappingRejected(wrong);     // without it, nothing else can be judged
   }
+  // A host document is judged on its own, and then nothing else here applies to it. It describes
+  // no machine: there is no vehicle or unit to identify, no topic to publish on, no layout, and
+  // nothing comes back. All it says is how one notice is spelled.
+  if(HOST.contains(adapter)){ validateHost(wrong); if(!wrong.isEmpty()) throw new MappingRejected(wrong); return; }
   boolean named=NAMED.contains(adapter), positional=POSITIONAL.contains(adapter);
   boolean words=WORD_BLOCK.contains(adapter), equipment="EQUIPMENT_WORD_V1".equals(adapter);
   if(!named&&!positional) wrong.add("adapter: "+adapter+"를 읽는 어댑터가 없습니다 "+union(NAMED,POSITIONAL));
@@ -258,6 +272,33 @@ public record DeviceMessageMapping(String code,String adapter,int version,String
   }
   if(!wrong.isEmpty()) throw new MappingRejected(wrong);
  }
+ /**
+  * What a host document must say, and what it may not.
+  *
+  * <p>One message, named {@code NOTICE}, whose body is built from the notice this controller
+  * wrote: {@code payload.status}, {@code payload.orderId}, {@code payload.sourcePortCode} and the
+  * rest of what {@code docs/host-notice-contract.md} lists. Everything else a document can carry
+  * belongs to a machine, and a block the reader has no use for is refused rather than ignored --
+  * a layout in a host document is somebody believing their host is addressed by byte offset.
+  */
+ private void validateHost(List<String> wrong){
+  if(!layout.isEmpty()) wrong.add("layout: 상위 통보는 이름으로 적습니다 (자리가 없습니다)");
+  if(frame!=null) wrong.add("frame: 상위 통보는 프레임이 아닙니다");
+  if(area!=null) wrong.add("area: 상위 통보에는 레지스터 블록이 없습니다");
+  if(handshake!=null) wrong.add("handshake: 상위 통보는 HTTP 응답이 수락입니다");
+  if(!inbound.isEmpty()) wrong.add("inbound: 상위에서 오는 것은 이 문서가 다루지 않습니다 (지시는 REST로 받습니다)");
+  if(identity!=null) wrong.add("identity: 통보는 차량이 아니라 작업에 대한 것입니다");
+  if(outbound.isEmpty()) wrong.add("outbound: NOTICE 하나를 적어야 합니다");
+  outbound.forEach((message,out)->{
+   if(!HOST_MESSAGES.contains(message))
+    wrong.add("outbound."+message+": 상위에 보내는 것은 "+HOST_MESSAGES+"뿐입니다");
+   if(out.topic()!=null) wrong.add("outbound."+message+".topic: 보낼 주소는 상위 통보 설정이 정합니다");
+   if(!out.slots().isEmpty()) wrong.add("outbound."+message+".slots: 상위 통보는 body를 씁니다");
+   if(out.body().isEmpty()) wrong.add("outbound."+message+": body가 없습니다");
+   out.body().forEach((field,rule)->check(wrong,"outbound."+message+"."+field,rule));
+  });
+ }
+
  private static Set<String> union(Set<String> a,Set<String> b){
   var all=new java.util.TreeSet<>(a); all.addAll(b); return all;
  }

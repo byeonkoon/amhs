@@ -360,6 +360,70 @@ class HostNoticeSqlTest {
   }
  }
 
+ /**
+  * A progress report nobody asked for is not even written down.
+  *
+  * <p>Deciding it when the transition happens rather than when a notice is sent is the point: a row
+  * written and filtered later would sit in the queue, and switching the setting on would send a
+  * morning's worth of history to a host that had just asked to hear about today.
+  */
+ @Test void progressIsNotWrittenUnlessTheHostAsksForIt() throws Exception {
+  try(var upstairs=new Upstairs()){
+   sendTo(upstairs);                                // progress notices off, which is the default
+   orderEnded("ASSIGNED");
+   assertThat(stateNow()).as("nothing was written").isNull();
+
+   // And turning it on does not reach back for what happened before.
+   hosts.save(SITE,new HostEndpointSettings(upstairs.url(),"X-Test-Auth",null,2000,4,true,true,null));
+   notifier.sweep();
+   assertThat(upstairs.heard.poll(300,TimeUnit.MILLISECONDS)).as("no history was sent").isNull();
+
+   orderEnded("ASSIGNED");
+   assertThat(waitFor(()->"SENT".equals(stateNow()))).as("from now on it hears it").isTrue();
+   assertThat(upstairs.heard.poll(2,TimeUnit.SECONDS)).contains("\"status\":\"ASSIGNED\"");
+  }
+ }
+
+ /**
+  * Told in the host's own words, where the host has a document for it.
+  *
+  * <p>Translated when it is sent, so the stored notice stays this controller's own record of what
+  * it had to say -- and fixing the document fixes the next attempt rather than a queue of rows
+  * spelled the old way.
+  */
+ @Test void anoticeIsSpelledTheWayTheHostsDocumentSaysIt() throws Exception {
+  try(var upstairs=new Upstairs()){
+   hosts.save(SITE,new HostEndpointSettings(upstairs.url(),null,null,2000,4,true,false,"HOST-EXAMPLE"));
+   orderEnded("COMPLETED");
+   assertThat(waitFor(()->"SENT".equals(stateNow()))).isTrue();
+
+   var body=upstairs.heard.poll(2,TimeUnit.SECONDS);
+   assertThat(body).isNotNull()
+    .contains("\"MSG\":\"MOVE_RESULT\"")            // a constant the document writes
+    .contains("\"RESULT\":\"OK\"")                  // COMPLETED, in the host's word for it
+    .contains("\"CARRIER\":\"CAR-NOTICE\"")
+    .doesNotContain("\"status\"");                  // and not in this controller's words
+   // The record keeps this controller's own words, whatever went out.
+   assertThat(jdbc.queryForObject("SELECT body FROM integration.host_notice WHERE site_id=?",
+    String.class,SITE)).contains("\"status\":\"COMPLETED\"");
+  }
+ }
+
+ /**
+  * A document named and unreadable sends the plain shape and says so.
+  *
+  * <p>Holding the notice back would leave the host hearing nothing and knowing nothing about why.
+  * An unfamiliar shape arriving is at least visible.
+  */
+ @Test void anunreadableDocumentDoesNotStopTheNotice() throws Exception {
+  try(var upstairs=new Upstairs()){
+   hosts.save(SITE,new HostEndpointSettings(upstairs.url(),null,null,2000,4,true,false,"NO-SUCH-DOCUMENT"));
+   orderEnded("COMPLETED");
+   assertThat(waitFor(()->"SENT".equals(stateNow()))).isTrue();
+   assertThat(upstairs.heard.poll(2,TimeUnit.SECONDS)).contains("\"status\":\"COMPLETED\"");
+  }
+ }
+
  /** Which transition it is, so a host that reorders them for its own reasons can still tell. */
  @Test void anoticeSaysWhichTransitionOfTheOrderItIs() throws Exception {
   try(var upstairs=new Upstairs()){

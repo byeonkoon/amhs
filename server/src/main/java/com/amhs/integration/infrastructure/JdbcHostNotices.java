@@ -26,9 +26,24 @@ class JdbcHostNotices implements HostNotices {
   * exact thing this is meant to prevent. Being told at startup is better than finding out when an
   * order ends and nobody upstairs hears.
   */
+ /**
+  * The transitions that are a progress report rather than an ending.
+  *
+  * <p>A vehicle was given to the order, and the carrier is on it. Both are things a system
+  * upstairs can act on -- showing a job as started, releasing the next one -- and neither is a
+  * thing it needs by default, which is why they are asked for.
+  */
+ private static final java.util.Set<String> PROGRESS=java.util.Set.of("ASSIGNED","TO_DESTINATION");
+
  @Override
  @Transactional(propagation=Propagation.MANDATORY)
  public boolean announce(long siteId,long orderId,String orderStatus,String reason){
+  // Nothing is written for a progress report the system upstairs has not asked for. Deciding it
+  // here rather than when sending matters: a notice written and filtered later would be a row
+  // waiting in the queue, and switching the setting on would send a morning's worth of history.
+  if(PROGRESS.contains(orderStatus)&&!Boolean.TRUE.equals(jdbc.queryForObject(
+   "SELECT EXISTS(SELECT 1 FROM integration.host_endpoint WHERE site_id=? AND enabled AND progress_notices)",
+   Boolean.class,siteId))) return false;
   // One notice per order and status. A transition recorded twice, or a retried caller, says the
   // same thing -- and saying it twice is what the key is here to prevent.
   String key="order-"+orderId+"-"+orderStatus;
@@ -44,6 +59,14 @@ class JdbcHostNotices implements HostNotices {
    Integer.class,orderId);
   body.put("sequence",sequence==null?0:sequence);
   if(reason!=null&&!reason.isBlank()) body.put("reason",reason);
+  // Which vehicle is carrying it, by the name on its side. A progress notice without it says only
+  // that something started; with it, the system upstairs can show who has the carrier -- and the
+  // code is the site's own name for the vehicle, not an id of this database's.
+  var carrier=jdbc.query("SELECT v.code FROM transport.assignment a"
+   +" JOIN fleet.vehicle_profile v ON v.id=a.vehicle_id"
+   +" WHERE a.order_id=? ORDER BY a.id DESC LIMIT 1",(r,n)->r.getString(1),orderId)
+   .stream().findFirst().orElse(null);
+  if(carrier!=null) body.put("vehicleCode",carrier);
   // Said in the words the request came in: port codes, and the caller's own idempotency key, which
   // is how the system upstairs recognises which of its orders this is. Ids here are this database's
   // and mean nothing to anybody else.

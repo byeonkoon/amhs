@@ -1,0 +1,26 @@
+{
+  "mapping": "HOST-EXAMPLE",
+  "adapter": "HOST_JSON_V1",
+  "version": 1,
+  "notes": "가상의 상위 시스템 예제입니다. 실제 현장 계약이 아니며, 현장 값은 이 파일을 복사해 고친 뒤 매핑 문서 화면에서 올리고 상위 통보 설정에서 이름으로 가리킵니다. 보낼 주소·인증·재시도는 이 문서가 아니라 상위 통보 설정이 정합니다.",
+
+  "outbound": {
+    "NOTICE": {
+      "body": {
+        "MSG": "MOVE_RESULT",
+        "JOB_ID": { "from": "payload.idempotencyKey" },
+        "CARRIER": { "from": "payload.carrierCode" },
+        "FROM_LOC": { "from": "payload.sourcePortCode" },
+        "TO_LOC": { "from": "payload.destinationPortCode" },
+        "RESULT": { "from": "payload.status",
+                    "values": { "ASSIGNED": "START", "TO_DESTINATION": "PICKED",
+                                "COMPLETED": "OK", "CANCELLED": "CANCEL", "FAILED": "NG",
+                                "RECOVERY_REQUIRED": "HOLD" } },
+        "CARRIED_BY": { "from": "payload.vehicleCode" },
+        "SEQ": { "from": "payload.sequence" },
+        "NOTE": { "from": "payload.reason" },
+        "AT": { "from": "command.sentAt" }
+      }
+    }
+  }
+}

@@ -31,6 +31,15 @@ public final class DeviceAdapters {
   */
  public static final String EQUIPMENT_WORD_V1="EQUIPMENT_WORD_V1";
  /**
+  * Not a machine at all: the system upstairs, and the words it wants a notice in.
+  *
+  * <p>It is here because it is the same problem as a vehicle's dialect and has the same answer. A
+  * host that calls a transfer job a MOVE_REQ with a FROM_LOC is not going to be rewritten for this
+  * controller, and writing an adapter per host would put every site's upstairs into this
+  * repository. What is said and when stays here; the spelling is a document at the site.
+  */
+ public static final String HOST_JSON_V1="HOST_JSON_V1";
+ /**
   * Adapters a vehicle may be put in use on without a mapping document. The rest -- a frame, a
   * register block, a broker -- are named by the document that describes them, and configuration
   * accepts those keys when a document of that name has been read.

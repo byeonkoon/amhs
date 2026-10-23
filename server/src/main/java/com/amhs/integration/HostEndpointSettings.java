@@ -10,8 +10,15 @@ import com.amhs.platform.ConfigurationInput;
  * the URL does not silently wipe the credential the site is authenticating with.
  */
 public record HostEndpointSettings(String url,String authHeader,String authValue,
-                                   int timeoutMs,int maxAttempts,boolean enabled){
+                                   int timeoutMs,int maxAttempts,boolean enabled,
+                                   boolean progressNotices,String mappingCode){
+ /** The form these settings had before a host could ask for progress or for its own words. */
+ public HostEndpointSettings(String url,String authHeader,String authValue,
+                             int timeoutMs,int maxAttempts,boolean enabled){
+  this(url,authHeader,authValue,timeoutMs,maxAttempts,enabled,false,null);
+ }
  public void validate(){
+  if(mappingCode!=null&&!mappingCode.isBlank()) ConfigurationInput.text(mappingCode,64,"HOST_MAPPING_CODE");
   ConfigurationInput.text(url,512,"HOST_URL");
   // Only what this can actually open. A scheme nobody dials is a setting that looks configured.
   ConfigurationException.require(url.startsWith("http://")||url.startsWith("https://"),"HOST_URL_NOT_HTTP");
@@ -30,6 +37,6 @@ public record HostEndpointSettings(String url,String authHeader,String authValue
  }
  /** The same settings with the secret removed, which is the only form that leaves this server. */
  public HostEndpointSettings withoutSecret(){
-  return new HostEndpointSettings(url,authHeader,null,timeoutMs,maxAttempts,enabled);
+  return new HostEndpointSettings(url,authHeader,null,timeoutMs,maxAttempts,enabled,progressNotices,mappingCode);
  }
 }

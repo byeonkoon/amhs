@@ -22,10 +22,11 @@ public class HostEndpointConfiguration {
  @Transactional(readOnly=true)
  public Optional<ConfigurationRecord<HostEndpointSettings>> get(long site){
   guard.requireSite(site);
-  return jdbc.query("SELECT id,version,url,auth_header,timeout_ms,max_attempts,enabled"
+  return jdbc.query("SELECT id,version,url,auth_header,timeout_ms,max_attempts,enabled,progress_notices,mapping_code"
    +" FROM integration.host_endpoint WHERE site_id=?",
    (r,n)->new ConfigurationRecord<>(r.getLong(1),r.getLong(2),
-    new HostEndpointSettings(r.getString(3),r.getString(4),null,r.getInt(5),r.getInt(6),r.getBoolean(7))),
+    new HostEndpointSettings(r.getString(3),r.getString(4),null,r.getInt(5),r.getInt(6),r.getBoolean(7),
+     r.getBoolean(8),r.getString(9))),
    site).stream().findFirst();
  }
 
@@ -43,8 +44,9 @@ public class HostEndpointConfiguration {
   var existing=get(site);
   if(existing.isEmpty()){
    jdbc.update("INSERT INTO integration.host_endpoint(id,site_id,url,auth_header,auth_value,timeout_ms,"
-    +"max_attempts,enabled) VALUES(?,?,?,?,?,?,?,?)",guard.nextId(),site,settings.url(),
-    settings.authHeader(),settings.authValue(),settings.timeoutMs(),settings.maxAttempts(),settings.enabled());
+    +"max_attempts,enabled,progress_notices,mapping_code) VALUES(?,?,?,?,?,?,?,?,?,?)",guard.nextId(),site,settings.url(),
+    settings.authHeader(),settings.authValue(),settings.timeoutMs(),settings.maxAttempts(),settings.enabled(),
+    settings.progressNotices(),blank(settings.mappingCode()));
   }else{
    // Three cases, and they have to be three: null keeps what is stored, an empty string clears it,
    // anything else replaces it. Without the middle one there would be no way to take a credential
@@ -52,12 +54,16 @@ public class HostEndpointConfiguration {
    String secret=settings.authValue();
    guard.changed(jdbc.update("UPDATE integration.host_endpoint SET url=?,auth_header=?,"
     +"auth_value=CASE WHEN CAST(? AS VARCHAR) IS NULL THEN auth_value ELSE CAST(? AS VARCHAR) END,"
-    +"timeout_ms=?,max_attempts=?,enabled=?,version=version+1 WHERE site_id=?",
+    +"timeout_ms=?,max_attempts=?,enabled=?,progress_notices=?,mapping_code=?,version=version+1"
+    +" WHERE site_id=?",
     settings.url(),settings.authHeader(),secret,secret==null||secret.isEmpty()?null:secret,
-    settings.timeoutMs(),settings.maxAttempts(),settings.enabled(),site));
+    settings.timeoutMs(),settings.maxAttempts(),settings.enabled(),settings.progressNotices(),
+    blank(settings.mappingCode()),site));
   }
   return get(site).orElseThrow(()->new ConfigurationException(500,"HOST_ENDPOINT_NOT_SAVED"));
  }
+ /** An empty name and no name are the same thing: this controller's own words. */
+ private static String blank(String name){ return name==null||name.isBlank()?null:name; }
 
  /** One notice as a screen may show it. The body is included; it holds nothing secret. */
  public record Notice(long id,long orderId,String orderStatus,String state,int attempts,

@@ -312,6 +312,37 @@ MELSEC 주소의 진법은 **제조사 관례 그대로**입니다 — 워드 �
 - 무엇을 말했고 전달됐는지는 `equipment.port_intent`에 남고, 설비 화면의 **설비에 알린 것**에서 봅니다.
   `결과 불명`인 포트는 설비가 알 수도 모를 수도 있는 포트이고, 다른 어디에도 그 사실은 나타나지 않습니다.
 
+## 상위 시스템 (`HOST_JSON_V1`)
+
+기계가 아닙니다. **상위 시스템이 통보를 받고 싶은 말**입니다. 차량의 방언과 같은 문제라 같은 자리에
+둡니다 — 상위마다 어댑터를 쓰면 현장의 상위 시스템이 저장소로 들어옵니다.
+
+```json
+{
+  "mapping": "HOST-EXAMPLE",
+  "adapter": "HOST_JSON_V1",
+  "outbound": {
+    "NOTICE": {
+      "body": {
+        "MSG": "MOVE_RESULT",
+        "JOB_ID":   { "from": "payload.idempotencyKey" },
+        "RESULT":   { "from": "payload.status",
+                      "values": { "COMPLETED": "OK", "CANCELLED": "CANCEL", "FAILED": "NG" } },
+        "AT":       { "from": "command.sentAt" }
+      }
+    }
+  }
+}
+```
+
+- `payload.*`가 **이 관제가 쓴 통보 본문**입니다([상위 통보 계약](host-notice-contract.md)의 그 본문).
+  `status` · `orderId` · `idempotencyKey` · `sourcePortCode` · `destinationPortCode` · `carrierCode` ·
+  `vehicleCode` · `sequence` · `reason` · `endedAt` · `requestSource`.
+- 적을 수 있는 메시지는 **`NOTICE` 하나**입니다. 이 관제가 상위에 보내는 것이 그것뿐입니다.
+- `identity` · `layout` · `frame` · `area` · `handshake` · `inbound`는 **쓰지 않습니다**(적으면 거절).
+  통보는 차량이 아니라 작업에 대한 것이고, 들어오는 지시는 REST 계약이 받습니다.
+- **주소·인증·재시도는 이 문서가 정하지 않습니다.** 상위 통보 설정이 정합니다.
+
 ## 토픽 패턴
 
 `{이름}`은 한 레벨을 잡아 `topic.이름`으로 쓸 수 있게 하고, MQTT의 `+`(한 레벨)·`#`(나머지)도 그대로

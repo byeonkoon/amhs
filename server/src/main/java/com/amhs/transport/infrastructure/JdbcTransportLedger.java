@@ -201,10 +201,16 @@ class JdbcTransportLedger implements TransportLedger {
    +"evidence_kind,command_id,carrier_location) VALUES(?,?,?,?,?,?,?,?,?,?)",
    orderId,seq,current.name(),target.name(),reason,actorCode,traceId,
    evidence.kind().name(),evidence.commandId(),established==null?null:established.name());
-  // The system that asked for this work hears when it stops moving by itself: it ended, or it is
-  // waiting for a person. Written here, in this transaction, so a rolled back transition cannot
-  // announce something that did not happen and a committed one cannot fail to.
-  if(target.isTerminal()||target==OrderStatus.RECOVERY_REQUIRED)
+  // The system that asked for this work hears when it stops moving by itself -- it ended, or it is
+  // waiting for a person -- and, where that system has asked to be kept posted, when it starts
+  // moving: a vehicle was given to it, and the carrier is now on that vehicle. Written here, in
+  // this transaction, so a rolled back transition cannot announce something that did not happen
+  // and a committed one cannot fail to.
+  //
+  // Which of these a site actually sends is the notice side's to decide, not this one's: it knows
+  // what the system upstairs asked for, and an announcement nobody wants is never written.
+  if(target.isTerminal()||target==OrderStatus.RECOVERY_REQUIRED
+   ||target==OrderStatus.ASSIGNED||target==OrderStatus.TO_DESTINATION)
    notices.announce(siteId,orderId,target.name(),reason);
   return find(siteId,orderId).orElseThrow();
  }

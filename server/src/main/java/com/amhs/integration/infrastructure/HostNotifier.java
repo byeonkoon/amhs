@@ -10,6 +10,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import com.amhs.integration.mapping.MessageMapper;
 import java.util.List;
 
 /**
@@ -42,6 +43,10 @@ public class HostNotifier {
  private static final Logger log=LoggerFactory.getLogger(HostNotifier.class);
  private final JdbcTemplate jdbc; private final HttpClient http; private final int batch; private final int staleClaimMs;
  private final com.amhs.platform.ControlTiming timing; private final long tickMs;
+ /** For putting a notice into a host's own words, where that host has a document. */
+ private final com.amhs.integration.mapping.MappingLibrary mappings;
+ private final com.fasterxml.jackson.databind.ObjectMapper json;
+ private final MessageMapper rules;
  /**
   * The thread that waits on somebody else's web server.
   *
@@ -60,10 +65,13 @@ public class HostNotifier {
  private final java.util.concurrent.atomic.AtomicBoolean sweeping=new java.util.concurrent.atomic.AtomicBoolean();
 
  HostNotifier(JdbcTemplate jdbc,com.amhs.platform.ControlTiming timing,
+              com.amhs.integration.mapping.MappingLibrary mappings,
+              com.fasterxml.jackson.databind.ObjectMapper json,
               @Value("${amhs.host.tick-ms:1000}") long tickMs,
               @Value("${amhs.host.batch:20}") int batch,
               @Value("${amhs.host.stale-claim-ms:120000}") int staleClaimMs){
   this.jdbc=jdbc; this.timing=timing; this.tickMs=tickMs; this.batch=batch; this.staleClaimMs=staleClaimMs;
+  this.mappings=mappings; this.json=json; this.rules=new MessageMapper(json);
   this.http=HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3))
    .followRedirects(HttpClient.Redirect.NEVER)   // a redirect would drop the auth header
    .build();
@@ -91,7 +99,8 @@ public class HostNotifier {
  @jakarta.annotation.PreDestroy void stop(){ sender.shutdownNow(); }
 
  /** One endpoint as configured, with the secret it authenticates with. */
- private record Endpoint(long siteId,String url,String authHeader,String authValue,int timeoutMs,int maxAttempts){}
+ private record Endpoint(long siteId,String url,String authHeader,String authValue,int timeoutMs,int maxAttempts,
+                         String mappingCode){}
  /** One thing waiting to be said. */
  private record Notice(long id,String key,String body,int attempts){}
 
@@ -106,9 +115,10 @@ public class HostNotifier {
   catch(RuntimeException e){ log.warn("could not look for stale claims: {}",e.getMessage()); }
   List<Endpoint> endpoints;
   try{
-   endpoints=jdbc.query("SELECT site_id,url,auth_header,auth_value,timeout_ms,max_attempts"
+   endpoints=jdbc.query("SELECT site_id,url,auth_header,auth_value,timeout_ms,max_attempts,mapping_code"
     +" FROM integration.host_endpoint WHERE enabled",
-    (r,n)->new Endpoint(r.getLong(1),r.getString(2),r.getString(3),r.getString(4),r.getInt(5),r.getInt(6)));
+    (r,n)->new Endpoint(r.getLong(1),r.getString(2),r.getString(3),r.getString(4),r.getInt(5),r.getInt(6),
+     r.getString(7)));
   }catch(RuntimeException e){ log.warn("could not read where to send notices: {}",e.getMessage()); return; }
   for(var endpoint:endpoints){
    try{ send(endpoint); }
@@ -160,7 +170,7 @@ public class HostNotifier {
     // The same courtesy this controller asks for when orders come in: a key the far side can use to
     // recognise a repeat, because a retry after a lost answer is exactly what it is for.
     .header("Idempotency-Key",notice.key())
-    .POST(HttpRequest.BodyPublishers.ofString(notice.body()));
+    .POST(HttpRequest.BodyPublishers.ofString(spell(endpoint,notice)));
    if(endpoint.authHeader()!=null&&!endpoint.authHeader().isBlank()&&endpoint.authValue()!=null)
     request.header(endpoint.authHeader(),endpoint.authValue());
    built=request.build();
@@ -200,6 +210,45 @@ public class HostNotifier {
   * writing an answer for a row somebody else has since reclaimed would settle their attempt with
   * this one's outcome.
   */
+ /**
+  * The notice in the words this host wants, or in this controller's own.
+  *
+  * <p>Translated when it is sent and not when it is written, which is the whole reason it can be
+  * translated at all: the stored notice is this controller's record of what it had to say, and an
+  * operator who fixes a mapping document fixes the next attempt rather than being stuck with a
+  * queue of rows spelled the old way.
+  *
+  * <p>A document named and unreadable is a document somebody is in the middle of fixing. The
+  * notice goes in this controller's own shape and says so in the log: a host that receives the
+  * plain shape can see that something is wrong, where a notice held back until the document is
+  * right is a host that hears nothing and does not know why.
+  */
+ private String spell(Endpoint endpoint,Notice notice){
+  if(endpoint.mappingCode()==null||endpoint.mappingCode().isBlank()) return notice.body();
+  try{
+   var mapping=mappings.byCode(endpoint.siteId(),endpoint.mappingCode()).orElse(null);
+   if(mapping==null||!com.amhs.integration.DeviceAdapters.HOST_JSON_V1.equals(mapping.adapter())){
+    log.warn("notice {} goes in this controller's own words: {} is not a readable host document",
+     notice.key(),endpoint.mappingCode());
+    return notice.body();
+   }
+   var said=json.readTree(notice.body());
+   var message=rules.toMessage(mapping,new MessageMapper.Command(notice.key(),"NOTICE",
+    said.path("orderId").isNumber()?said.get("orderId").asLong():null,0,null,notice.attempts(),
+    java.time.OffsetDateTime.now().toString(),said,java.util.Map.of())).orElse(null);
+   if(message==null){
+    log.warn("notice {}: {} describes no NOTICE message; sending this controller's own words",
+     notice.key(),endpoint.mappingCode());
+    return notice.body();
+   }
+   return json.writeValueAsString(message.body());
+  }catch(Exception e){
+   log.warn("notice {} could not be spelled by {}: {}; sending this controller's own words",
+    notice.key(),endpoint.mappingCode(),e.getMessage());
+   return notice.body();
+  }
+ }
+
  private void settle(long id,String state,int attempts,String error){
   jdbc.update("UPDATE integration.host_notice SET state=?,attempts=?,last_error=?,claimed_at=NULL,"
    +"settled_at=clock_timestamp() WHERE id=? AND state='SENDING'",state,attempts,error,id);

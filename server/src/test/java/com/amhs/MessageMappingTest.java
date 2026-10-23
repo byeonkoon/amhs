@@ -122,6 +122,55 @@ class MessageMappingTest {
   assertThat(MessageMapper.match("{prefix}/{version}/{maker}/{serial}/state","uagv/v3/ACME/state")).isNull();
  }
 
+ /** The shipped host example spells one notice and describes no machine. */
+ @Test void thehostSampleSpellsANoticeAndNothingElse() throws Exception {
+  var mapping=read(Files.readString(Path.of("../docs/sample-mappings/host-example.json")));
+  assertThat(mapping.adapter()).isEqualTo("HOST_JSON_V1");
+  assertThat(mapping.outbound()).containsOnlyKeys("NOTICE");
+  assertThat(mapping.identity()).as("a notice is about an order, not a machine").isNull();
+  assertThat(mapping.layout()).isEmpty();
+  assertThat(mapping.inbound()).isEmpty();
+
+  // And it does what it says: this controller's words in, the host's words out.
+  var notice=json.readTree("""
+   {"event":"transport-order","orderId":7,"status":"COMPLETED","idempotencyKey":"WMS-1",
+    "sourcePortCode":"BAY-O01","destinationPortCode":"BAY-O02","carrierCode":"CAR-1",
+    "vehicleCode":"OHT-07","sequence":4}
+   """);
+  var message=mapper.toMessage(mapping,new MessageMapper.Command("order-7-COMPLETED","NOTICE",7L,0,
+   null,1,"2026-10-23T09:00:00+09:00",notice,Map.of())).orElseThrow();
+  assertThat(message.body().get("MSG").asText()).isEqualTo("MOVE_RESULT");
+  assertThat(message.body().get("RESULT").asText()).isEqualTo("OK");
+  assertThat(message.body().get("JOB_ID").asText()).isEqualTo("WMS-1");
+  assertThat(message.body().get("CARRIED_BY").asText()).isEqualTo("OHT-07");
+  assertThat(message.body().has("status")).as("nothing of this controller's own vocabulary").isFalse();
+ }
+
+ /**
+  * A host document that describes a machine is refused.
+  *
+  * <p>A layout in one is somebody believing their host is addressed by byte offset, and an
+  * {@code inbound} rule is somebody believing orders arrive this way. Both are wrong in a way that
+  * only shows up when a notice does not arrive, which is the worst time to find out.
+  */
+ @Test void ahostDocumentMayNotDescribeAMachine() {
+  String wrong="""
+   {"mapping":"HOST-WRONG","adapter":"HOST_JSON_V1",
+    "identity":{"fromField":"serial"},
+    "layout":{"x":{"word":0,"type":"u16"}},
+    "inbound":[{"when":{"always":true},"report":{"status":{"from":"slot.x"}}}],
+    "outbound":{"ORDER":{"topic":"t","body":{"a":1}}}}
+   """;
+  assertThatThrownBy(()->read(wrong))
+   .isInstanceOfSatisfying(DeviceMessageMapping.MappingRejected.class,rejected->
+    assertThat(rejected.problems())
+     .anyMatch(p->p.contains("identity"))
+     .anyMatch(p->p.contains("layout"))
+     .anyMatch(p->p.contains("inbound"))
+     .anyMatch(p->p.contains("ORDER"))        // not a thing this controller sends a host
+     .anyMatch(p->p.contains("topic")));      // where it goes is the settings' business
+ }
+
  /** The shipped equipment example reads, writes the one statement, and has a handshake for it. */
  @Test void theequipmentSampleSaysTheOneThingItMay() throws Exception {
   var mapping=read(Files.readString(Path.of("../docs/sample-mappings/equipment-mc-example.json")));
