@@ -851,6 +851,9 @@ function MappingTab({ canWrite }: { canWrite: boolean }) {
   const [available, setAvailable] = React.useState<Record<string, string>>({});
   const [error, setError] = React.useState<unknown>(null);
   const [chosen, setChosen] = React.useState<string | null>(null);
+  // The text being edited. Null when nothing is open; a document's own text when one is, which is
+  // what makes "되돌리기" mean something and the unsaved mark honest.
+  const [draft, setDraft] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
   const [message, setMessage] = React.useState<{ tone: string; text: string } | null>(null);
   const [tick, setTick] = React.useState(0);
@@ -892,6 +895,27 @@ function MappingTab({ canWrite }: { canWrite: boolean }) {
       setMessage({ tone: 'er', text: explain(cause) });
     } finally { setBusy(false); }
   }
+  /**
+   * 화면에서 고친 문서를 그대로 저장합니다.
+   *
+   * <p>올리기와 같은 길입니다 — 같은 끝점, 같은 검사. 편집기가 따로 느슨한 길을 쓰면 파일로 올릴 때와
+   * 화면에서 고칠 때 받아들여지는 문서가 달라집니다.
+   */
+  async function saveDraft() {
+    if (draft === null) return;
+    setBusy(true); setMessage(null);
+    try {
+      const saved = await sendText<InstalledMapping>(cfgApi.mappings(), 'POST', draft, '매핑 문서 저장 (화면 편집)');
+      setMessage({
+        tone: 'ok',
+        text: `${saved.code}을(를) ${saved.version === 0 ? '등록했습니다' : `고쳤습니다 (rev${saved.version})`}`
+          + ` — ${saved.adapter}, 명령 ${saved.commands}종, 수신 규칙 ${saved.inboundRules}개.`,
+      });
+      setChosen(saved.code); setDraft(null); reload();
+    } catch (cause) {
+      setMessage({ tone: 'er', text: explain(cause) });
+    } finally { setBusy(false); }
+  }
   async function remove(m: InstalledMapping) {
     if (!window.confirm(`매핑 문서 ${m.code}을(를) 내립니다. 같은 이름이 서버에 기본으로 들어 있으면 그것이 다시 쓰입니다. 진행할까요?`)) return;
     setBusy(true); setMessage(null);
@@ -915,6 +939,7 @@ function MappingTab({ canWrite }: { canWrite: boolean }) {
   if (!items) return <Loading what="매핑 문서" />;
   const selected = items.find(m => m.code === chosen) ?? null;
   const shipped = Object.keys(available).filter(code => !items.some(m => m.code === code));
+  const dirty = draft !== null && draft !== (selected ? selected.document : SKELETON);
   return (
     <div>
       {message && <p style={{ margin: '0 0 9px', fontSize: 12 }}>
@@ -926,8 +951,12 @@ function MappingTab({ canWrite }: { canWrite: boolean }) {
           <input type="file" accept="application/json,.json" disabled={!canWrite || busy} style={{ display: 'none' }}
             onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) void upload(f); }} />
         </label>
+        <button type="button" disabled={!canWrite || busy}
+          onClick={() => { setChosen(null); setDraft(SKELETON); setMessage(null); }}
+          style={{ ...btn, cursor: canWrite && !busy ? 'pointer' : 'default' }}>새 문서</button>
         <span className="hint" style={{ margin: 0 }}>
           문서 안의 <span className="mono">mapping</span> 값이 이름입니다. 같은 이름을 다시 올리면 그 문서를 고치는 것이 됩니다.
+          화면에서 고칠 때도 같은 검사를 거칩니다.
         </span>
       </div>
       {items.length === 0
@@ -943,8 +972,16 @@ function MappingTab({ canWrite }: { canWrite: boolean }) {
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.notes ?? ''}</span>
                 <span className="mono">{m.updatedBy ?? ''} · rev{m.version}</span>
                 <span style={{ display: 'flex', gap: 6 }}>
-                  <button type="button" onClick={() => setChosen(m.code === chosen ? null : m.code)}
-                    style={{ ...btn, padding: '3px 9px' }}>{m.code === chosen ? '닫기' : '보기'}</button>
+                  <button type="button"
+                    onClick={() => {
+                      const closing = m.code === chosen && draft !== null;
+                      if (closing && dirty
+                        && !window.confirm('저장하지 않은 수정이 있습니다. 버리고 닫을까요?')) return;
+                      setChosen(closing ? null : m.code);
+                      setDraft(closing ? null : m.document);
+                      setMessage(null);
+                    }}
+                    style={{ ...btn, padding: '3px 9px' }}>{m.code === chosen && draft !== null ? '닫기' : '고치기'}</button>
                   <button type="button" disabled={busy} onClick={() => download(m)}
                     style={{ ...btn, padding: '3px 9px' }}>받기</button>
                   <button type="button" disabled={!canWrite || busy} onClick={() => void remove(m)}
@@ -964,16 +1001,60 @@ function MappingTab({ canWrite }: { canWrite: boolean }) {
           같은 이름으로 올리면 이 사이트에서는 올린 쪽이 쓰입니다.
         </p>
       )}
-      {selected && (
+      {draft !== null && (
         <div style={{ marginTop: 12 }}>
-          <div className="hint" style={{ marginBottom: 6 }}>{selected.code} — 저장된 그대로입니다. 고칠 때는 내려받아 고친 뒤 다시 올립니다.</div>
-          <textarea readOnly value={selected.document} spellCheck={false}
+          <div className="hint" style={{ marginBottom: 6 }}>
+            {selected
+              ? <>{selected.code} — 저장된 그대로입니다. 고쳐서 저장하면 <b>문서 안의 <span className="mono">mapping</span> 이름</b>으로 들어가고,
+                  그 이름을 어댑터 키로 쓰는 프로토콜 프로파일에 바로 적용됩니다.</>
+              : <>새 문서입니다. <span className="mono">mapping</span>이 이름, <span className="mono">adapter</span>가 이 문서를 읽는 어댑터입니다.
+                  무엇을 더 적어야 하는지는 저장하면 서버가 전부 말해 줍니다 — 틀린 것을 하나씩 알려 주는 것이 이 문서의 검사 방식입니다.</>}
+            {dirty && <> · <b style={{ color: 'var(--wr, inherit)' }}>저장하지 않은 수정</b></>}
+          </div>
+          <textarea value={draft} spellCheck={false} disabled={!canWrite || busy}
+            onChange={e => setDraft(e.target.value)}
             style={{ ...field, height: 320, fontFamily: 'var(--mono, monospace)', fontSize: 11, lineHeight: 1.5 }} />
+          <div style={{ display: 'flex', gap: 8, marginTop: 8, alignItems: 'center' }}>
+            <button type="button" disabled={!canWrite || busy || !dirty} onClick={() => void saveDraft()}
+              style={{ ...btn, cursor: canWrite && !busy && dirty ? 'pointer' : 'default' }}>저장</button>
+            <button type="button" disabled={busy || !dirty}
+              onClick={() => setDraft(selected ? selected.document : SKELETON)}
+              style={{ ...btn, cursor: busy || !dirty ? 'default' : 'pointer' }}>되돌리기</button>
+            <button type="button" disabled={busy} onClick={() => { setChosen(null); setDraft(null); }}
+              style={{ ...btn, cursor: busy ? 'default' : 'pointer' }}>닫기</button>
+            <span className="hint" style={{ margin: 0 }}>
+              저장은 전부 검사한 뒤에 들어갑니다. 절반만 맞는 문서는 저장되지 않습니다.
+            </span>
+          </div>
         </div>
       )}
     </div>
   );
 }
+
+/**
+ * 새 문서의 뼈대.
+ *
+ * <p>맞는 문서가 아니라 **시작점**입니다. 어댑터마다 더 적어야 하는 것이 다르고, 그것을 여기에 다 넣으면
+ * 무엇이 필수인지가 이 화면의 주장이 됩니다 — 그 판단은 서버에 있고, 저장하면 빠진 것을 전부 말해 줍니다.
+ */
+const SKELETON = `{
+  "mapping": "NEW-DIALECT",
+  "adapter": "JSON_LINE_V1",
+  "version": 1,
+  "notes": "",
+
+  "identity": { "fromField": "vehicle" },
+
+  "outbound": {
+    "MOVE": { "topic": "", "body": {} }
+  },
+
+  "inbound": [
+    { "when": { "topic": "" }, "report": {} }
+  ]
+}
+`;
 
 /**
  * Which equipment is wired to what.
