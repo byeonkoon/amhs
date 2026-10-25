@@ -132,6 +132,22 @@ try{
  # the ones to put into automatic work, and its ports are what the work is written between.
  if($Map){
   if(-not $User){ throw 'a map needs -User and -Password: putting a revision into use is an administrator act' }
+  # A revision cannot be put into use over open work, and rightly so -- swapping the ground under a
+  # job is the one change that cannot be undone by editing it back. So the previous run's work is
+  # ended first: on a layout that is about to be replaced it means nothing anyway, and a harness
+  # that cannot be run twice is not a harness. (The first attempt at a second run failed here, and
+  # the cleanup below hid which step had failed.)
+  $ending=Sql @"
+UPDATE transport.order SET status='CANCELLED',terminal_at=now(),cancel_reason='load-run: layout replaced'
+ WHERE site_id=$Site AND status NOT IN ('COMPLETED','CANCELLED','FAILED') RETURNING id
+"@
+  $null=Sql "UPDATE transport.assignment SET released_at=now(),release_reason='LOAD_RUN_RESET' WHERE released_at IS NULL"
+  # The controller's own moves too -- charging, giving way, going home. They are not orders and they
+  # hold the activation just as firmly (MOVES_STILL_OPEN).
+  $null=Sql "UPDATE transport.relocation SET finished_at=now(),finish_reason='LOAD_RUN_RESET' WHERE site_id=$Site AND finished_at IS NULL"
+  $null=Sql "UPDATE traffic.node_reservation SET released_at=now(),release_reason='LOAD_RUN_RESET' WHERE site_id=$Site AND released_at IS NULL"
+  $null=Sql "DELETE FROM traffic.reservation_wait WHERE site_id=$Site"
+  if($ending){ Write-Host "ended $(($ending | Measure-Object).Count) order(s) left by an earlier run" }
   $token=(Invoke-RestMethod "$base/session" -Method Post -ContentType 'application/json' `
    -Body (@{ code=$User; password=$Password } | ConvertTo-Json)).token
   $head=@{ Authorization="Bearer $token" }
@@ -140,7 +156,16 @@ try{
   Write-Host "imported $Map as revision $($revision.id): $($revision.nodes) nodes, $($revision.ports) ports, $($revision.vehicles) vehicles"
   $null=Invoke-RestMethod "$base/configuration/system/mode" -Method Put -Headers $head `
    -ContentType 'application/json' -Body '{"mode":"MAINTENANCE"}'
-  $null=Invoke-RestMethod "$base/configuration/topology/$($revision.id)/activate" -Method Post -Headers $head
+  # The refusal carries the reason and nothing else does, so it is read out rather than left as a
+  # bare 409: ORDERS_STILL_OPEN, MOVES_STILL_OPEN and ROADS_STILL_GRANTED each send you somewhere
+  # different.
+  try{
+   $null=Invoke-RestMethod "$base/configuration/topology/$($revision.id)/activate" -Method Post -Headers $head
+  }catch{
+   $said=''
+   try{ $said=(New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())).ReadToEnd() }catch{ }
+   throw "the revision could not be put into use: $said"
+  }
   $null=Invoke-RestMethod "$base/configuration/system/mode" -Method Put -Headers $head `
    -ContentType 'application/json' -Body '{"mode":"RUNNING"}'
   $token=$null; $head=$null
@@ -242,12 +267,22 @@ UPDATE traffic.node_reservation r SET released_at=now(),release_reason='LOAD_RUN
  $invariants | ForEach-Object { Write-Host $_ }
  Add-Content -LiteralPath $report -Value ("--- invariants ---`n"+($invariants -join "`n")) -Encoding utf8
 
- # The site goes back the way it was found.
- $parts=$before -split '\|'
- $null=Sql "UPDATE platform.site_operation SET run_mode='$($parts[0])',auto_dispatch=$($parts[1]),sequence_running=$($parts[2]) WHERE site_id=$Site"
- if($changedVehicles){
-  foreach($id in $changedVehicles){ if($id){ $null=Sql "UPDATE fleet.vehicle_profile SET assignment_enabled=FALSE WHERE id=$id" } }
-  Write-Host "put $(($changedVehicles | Measure-Object).Count) vehicle(s) back out of automatic work"
+ # The site goes back the way it was found -- and a tidy-up that fails says so instead of throwing.
+ # A cleanup step that throws replaces the error it was cleaning up after, which is how a run that
+ # failed at the map import was reported as a malformed UPDATE and took a while to understand.
+ try{
+  if($before -and ($before -split '\|').Count -ge 3){
+   $parts=$before -split '\|'
+   $null=Sql "UPDATE platform.site_operation SET run_mode='$($parts[0])',auto_dispatch=$($parts[1]),sequence_running=$($parts[2]) WHERE site_id=$Site"
+  }else{
+   Write-Host 'the site state was never read, so it is left as it stands'
+  }
+  if($changedVehicles){
+   foreach($id in $changedVehicles){ if($id){ $null=Sql "UPDATE fleet.vehicle_profile SET assignment_enabled=FALSE WHERE id=$id" } }
+   Write-Host "put $(($changedVehicles | Measure-Object).Count) vehicle(s) back out of automatic work"
+  }
+ }catch{
+  Write-Host "the site could not be handed back: $($_.Exception.Message)"
  }
  if($startedCluster){ & "$PostgresBin/pg_ctl.exe" -D $dataPath -m fast -w stop | Out-Null }
  $env:PGPASSWORD=''

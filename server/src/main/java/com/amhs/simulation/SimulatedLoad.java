@@ -41,14 +41,20 @@ public class SimulatedLoad {
  private final TransportLedger ledger; private final TopologyQuery topology; private final FleetState fleet;
  private final TrafficControl traffic;
  private final double perMinute; private final int perVehicle; private final Random random;
+ /** One snapshot for the questions that are about the vehicles and the road at the same moment. */
+ private final org.springframework.transaction.support.TransactionTemplate snapshotReads;
  private final Map<Long,Watch> watches=new ConcurrentHashMap<>();
  private long lastTick=System.nanoTime();
 
  public SimulatedLoad(OperationOptionConfiguration options,TransportOrders orders,TransportLedger ledger,TopologyQuery topology,
                       FleetState fleet,TrafficControl traffic,
+                      org.springframework.transaction.PlatformTransactionManager transactions,
                       @Value("${amhs.simulation.load.per-minute:0}") double perMinute,
                       @Value("${amhs.simulation.load.per-vehicle:1}") int perVehicle,
                       @Value("${amhs.simulation.load.seed:42}") long seed){
+  this.snapshotReads=new org.springframework.transaction.support.TransactionTemplate(transactions);
+  this.snapshotReads.setReadOnly(true);
+  this.snapshotReads.setIsolationLevel(org.springframework.transaction.TransactionDefinition.ISOLATION_REPEATABLE_READ);
   this.options=options; this.orders=orders; this.ledger=ledger; this.topology=topology; this.fleet=fleet;
   this.traffic=traffic; this.perMinute=perMinute; this.perVehicle=Math.max(1,perVehicle);
   this.random=new Random(seed);
@@ -85,7 +91,18 @@ public class SimulatedLoad {
    w.due+=perMinute*seconds/60.0;
    while(w.due>=1){ w.due-=1; write(siteId,revisionId,vehicles,w); }
   }
-  look(siteId,vehicles,w);
+  // The floor is looked at in one moment, not in two.
+  //
+  // What is being asked -- is a vehicle standing where it has no permission to be -- is a question
+  // about the vehicles and the road together. Reading them apart answers it about a floor that
+  // never existed: the snapshot above was taken before this pass wrote its orders, and the
+  // simulation now runs on a thread of its own, so by the time the road was read the vehicles had
+  // moved on. It counted a floor's worth of faults that were not there, and a watch that does that
+  // is worse than no watch at all.
+  //
+  // REPEATABLE READ rather than merely reading again: both reads have to come from one snapshot,
+  // and read-committed would give each statement its own.
+  snapshotReads.execute(status->{ look(siteId,fleet.snapshot(siteId,revisionId),w); return null; });
  }
 
  private void write(long siteId,long revisionId,List<VehicleSnapshot> vehicles,Watch w){
