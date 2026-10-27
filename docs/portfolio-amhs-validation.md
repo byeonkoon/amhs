@@ -82,7 +82,12 @@ A floor at its own size: **321 nodes, 64 handover ports, 25 vehicles**, work wri
 the way a host would write it, 15 minutes, with the queue deliberately saturated (50 open orders
 against 25 vehicles).
 
-All the numbers below come from **one run**, so they can be read together.
+All the numbers below come from **one run**, so they can be read together. A longer run of the same
+load — two hours asked for, of which the machine was awake for 66 minutes — carried 168 orders
+through with the same throughput (2.45 a minute) and the same three counters at zero over **4096
+samples**. Its control-loop figures are not usable and are not quoted: every loop lost an hour at
+once when the machine suspended, which the harness now says in the report rather than leaving it
+to be read as the system's own.
 
 | | |
 |---|---|

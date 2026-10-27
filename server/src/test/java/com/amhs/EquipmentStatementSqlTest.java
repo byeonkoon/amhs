@@ -13,6 +13,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.List;
 import java.util.ArrayList;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import static org.assertj.core.api.Assertions.*;
 
 /**
@@ -380,6 +381,53 @@ class EquipmentStatementSqlTest {
    assertThat(shown.carrier()).isEqualTo("CAR-STMT");
    assertThat(shown.state()).isEqualTo("TOLD");
    assertThat(shown.toldAt()).isNotNull();
+  }
+ }
+
+ /**
+  * A controller that does not take one statement is left alone for the rest of the pass.
+  *
+  * <p>Every statement waits for this controller to acknowledge it, up to the document's handshake
+  * timeout, and every controller on this link is read by the same thread. A shift change that
+  * changes a row of ports at once would otherwise hold that thread for as long as it takes to be
+  * refused by each of them in turn -- and what comes out the other side is every unit on every
+  * other controller marked offline for want of a read.
+  *
+  * <p>The one that was not taken is still owed. Nothing is lost by waiting a pass: a statement is
+  * what is true at that port now, and saying it later says the same thing.
+  */
+ @Test void acontrollerThatDoesNotTakeOneIsLeftAloneUntilTheNextPass() throws Exception {
+  var ports=jdbc.query("SELECT p.id FROM topology.port p"
+   +" JOIN topology.map_revision m ON m.id=p.revision_id AND m.status='ACTIVE'"
+   +" WHERE p.site_id=? AND p.equipment_unit_id=? ORDER BY p.id",(r,n)->r.getLong(1),SITE,unitId);
+  assumeTrue(ports.size()>1,"this unit has one port; the case needs two due at once");
+
+  try(var melsec=new FakeMelsec()){
+   melsec.name(0,"STK-01");
+   melsec.read[4]=1; melsec.read[5]=0b11;
+   melsec.takes=false;                             // it answers nothing
+   wire(melsec.port());
+   inOperation();
+   // Work at both of this unit's ports, so two statements are owed at once.
+   orderTo("TO_SOURCE",true);
+   long second=jdbc.queryForObject("INSERT INTO transport.order(site_id,revision_id,request_source,"
+    +"idempotency_key,request_fingerprint,source_port_id,destination_port_id,vehicle_type,carrier_code,"
+    +"priority,status) VALUES(?,(SELECT id FROM topology.map_revision WHERE site_id=? AND status='ACTIVE'),"
+    +"'statement-test',?,repeat('0',64),?,?,'OHT','CAR-STMT2',50,'TO_SOURCE') RETURNING id",
+    Long.class,SITE,SITE,"statement-test-2-"+System.nanoTime(),ports.get(1),ports.get(0));
+   try{
+    devices.poll();
+    assertThat(melsec.said()).as("it did not take the first, so the second was not tried").hasSize(1);
+
+    // The next pass tries again, and once it answers both are told.
+    melsec.takes=true;
+    assertThat(waitFor(()->jdbc.queryForObject("SELECT count(*) FROM equipment.port_intent i"
+     +" WHERE i.unit_id=? AND i.state='TOLD'",Integer.class,unitId)>=2))
+     .as("both ports were told in the end").isTrue();
+   }finally{
+    jdbc.update("DELETE FROM transport.order_event WHERE order_id=?",second);
+    jdbc.update("DELETE FROM transport.order WHERE id=?",second);
+   }
   }
  }
 

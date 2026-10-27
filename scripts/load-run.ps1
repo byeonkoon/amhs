@@ -257,6 +257,18 @@ UPDATE traffic.node_reservation r SET released_at=now(),release_reason='LOAD_RUN
  $summary+=($load | Format-List | Out-String).Trim()
  $summary+='--- control loops (ms) ---'
  $summary+=($timing | Select-Object name,passes,targetMs,meanMs,maxMs,meanGapMs,maxGapMs | Format-Table -AutoSize | Out-String).Trim()
+ # A machine that went to sleep says so here, in every loop at once.
+ #
+ # Nothing inside the server can tell a suspended machine from a very slow one, but a gap of
+ # minutes in *every* loop is not a slow pass -- it is wall-clock that moved while nothing ran. The
+ # first two-hour run spent an hour of it asleep, and without this line its loop figures looked
+ # like the system's own (one sweep "pass" of 3,638,883ms, and a mean dragged up with it).
+ $asleep=$timing | Where-Object { $_.maxGapMs -gt [Math]::Max(60000,$_.targetMs*30) }
+ if(($asleep | Measure-Object).Count -ge 2){
+  $longest=[int](($asleep | Measure-Object -Property maxGapMs -Maximum).Maximum/1000)
+  $summary+="NOT AWAKE THROUGHOUT: every loop lost up to $longest s at once, so this machine was asleep or suspended."
+  $summary+='  The counts and the invariants still hold; the loop timings from this run do not.'
+ }
  $summary | ForEach-Object { Write-Host $_ }
  Add-Content -LiteralPath $report -Value ($summary -join "`n") -Encoding utf8
 }finally{

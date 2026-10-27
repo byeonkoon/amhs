@@ -62,7 +62,7 @@ public class EquipmentLinks {
  private final PortIntents intents; private final OperationOptionConfiguration options;
  private final com.amhs.platform.ControlTiming timing;
  private final Map<Long,Controller> controllers=new ConcurrentHashMap<>();
- private final int timeoutMs,unitId; private final long refreshMs,tickMs;
+ private final int timeoutMs,unitId,statementsPerPass; private final long refreshMs,tickMs;
  /**
   * The thread that waits on controllers.
   *
@@ -84,12 +84,14 @@ public class EquipmentLinks {
                 @Value("${amhs.device.equipment.tick-ms:200}") long tickMs,
                 @Value("${amhs.device.plc.timeout-ms:1500}") int timeoutMs,
                 @Value("${amhs.device.plc.unit-id:1}") int unitId,
-                @Value("${amhs.device.equipment.refresh-ms:30000}") long refreshMs){
+                @Value("${amhs.device.equipment.refresh-ms:30000}") long refreshMs,
+                @Value("${amhs.device.equipment.statements-per-pass:8}") int statementsPerPass){
   this.jdbc=jdbc; this.mappings=mappings; this.json=json;
   this.rules=new MessageMapper(json); this.codec=new SlotCodec(json);
   this.frames=new FrameMapper(json,rules,codec);
   this.intents=intents; this.options=options; this.timing=timing; this.tickMs=tickMs;
   this.timeoutMs=timeoutMs; this.unitId=unitId; this.refreshMs=refreshMs;
+  this.statementsPerPass=Math.max(1,statementsPerPass);
  }
 
  /**
@@ -243,12 +245,30 @@ public class EquipmentLinks {
    if(out==null||out.slots().isEmpty()) return;    // a document with nothing to say
    var hand=mapping.handshake();
    if(hand==null||writeAt==null) return;           // refused at validation; belt and braces
+   int said=0;
    for(var unit:units)
-    for(var due:intents.dueFor(unit.siteId(),unit.unitId(),refreshMs)) tell(unit,out,hand,due);
+    for(var due:intents.dueFor(unit.siteId(),unit.unitId(),refreshMs)){
+     // A pass says a few statements, not a floor's worth.
+     //
+     // Each one waits for this controller to acknowledge it -- up to the document's handshake
+     // timeout -- and every controller on this link is read by the same thread. A shift change
+     // that changes thirty ports at once would otherwise hold that thread for half a minute, and
+     // what comes out the other side is every unit on every other controller marked offline for
+     // want of a read. The rest are still owed and the next pass says them.
+     if(++said>statementsPerPass) return;
+     // And a controller that did not take the last one is not going to take the next five. Trying
+     // costs the whole floor its reading, so this controller is left alone until the next pass.
+     if(!tell(unit,out,hand,due)) return;
+    }
   }
 
-  /** One statement: the values, then the request bit, then whatever the controller says about it. */
-  private void tell(Wired unit,DeviceMessageMapping.Outbound out,DeviceMessageMapping.Handshake hand,
+  /**
+   * One statement: the values, then the request bit, then whatever the controller says about it.
+   *
+   * @return whether the controller took it. False is the caller's signal to leave this controller
+   *         alone for the rest of the pass.
+   */
+  private boolean tell(Wired unit,DeviceMessageMapping.Outbound out,DeviceMessageMapping.Handshake hand,
                     PortIntents.Due due){
    var buffer=new byte[words*2];
    try{
@@ -258,12 +278,13 @@ public class EquipmentLinks {
     // is the document to fix. Said once per statement rather than every pass.
     log.warn("statement for port {} does not fit the layout: {}",due.intent().portCode(),e.getMessage());
     intents.told(due.intent(),due.statement(),due.sequence(),"NOT_TOLD","does not fit the layout: "+e.getMessage());
-    return;
+    // The document is wrong, not the controller: the next port may still be told.
+    return true;
    }
    try{ wire.open(); }
    catch(IOException e){
     intents.told(due.intent(),due.statement(),due.sequence(),"NOT_TOLD","not connected");
-    return;
+    return false;
    }
    try{
     // The values first with the request bit clear, then the bit. A controller reading between the
@@ -272,20 +293,21 @@ public class EquipmentLinks {
     wire.write(writeAt,words(buffer,hand,true));
    }catch(com.amhs.integration.WordBus.ControllerRefused e){
     intents.told(due.intent(),due.statement(),due.sequence(),"NOT_TOLD","controller refused "+e.code());
-    return;
+    return false;
    }catch(IOException e){
     // Some of it may be in the registers, where it will stay until somebody looks. Said again next
     // pass, which is safe here in the way it would not be for a movement command: the statement has
     // not changed, so saying it twice says the same thing.
     wire.close();
     intents.told(due.intent(),due.statement(),due.sequence(),"IN_DOUBT","write failed: "+e.getMessage());
-    return;
+    return false;
    }
    boolean taken=awaitAcceptance(hand,due.sequence());
    try{ if(hand.clear()!=null) wire.write(writeAt,words(buffer,hand,false)); }
    catch(IOException e){ log.warn("request bit on {}:{} could not be cleared: {}",host,port,e.getMessage()); }
    intents.told(due.intent(),due.statement(),due.sequence(),taken?"TOLD":"IN_DOUBT",
     taken?null:"no acknowledgement");
+   return taken;
   }
 
   /** The buffer as registers, with the request bit set or clear. */
