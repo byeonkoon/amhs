@@ -2,7 +2,13 @@
 
 현업에서 경험한 ACS·OCS·WMS 도메인에 대한 이해를 개인 프로젝트로 구현하는 종합 관제 시스템입니다. React + TypeScript / Java 21 + Spring Boot로 만들고 있으며 개발 DB는 **PostgreSQL**입니다. Docker와 Redis는 추후 검토합니다.
 
-지도·차량 설정, Fleet 2D/3D, 반송 접수·배차·경로·Traffic, 내부 AGV/OHT·설비 시뮬레이션, 재고 연계, 취소·복구 및 역할 권한·감사 기반을 구현했습니다. 실장비 통신 어댑터와 실제 연결·현장 검증은 후속 범위입니다. 구현 범위는 [진행 현황](docs/progress.md)과 [설계 결정](docs/design-decisions.md)에 정리합니다.
+지도·차량 설정, Fleet 2D/3D, 반송 접수·배차·경로·Traffic, 내부 AGV/OHT·설비 시뮬레이션, 재고 연계, 취소·복구 및 역할 권한·감사 기반을 구현했습니다.
+
+여기에 **바깥과 주고받는 길**을 더했습니다. 차량 링크는 TCP 양방향(JSON 한 줄·바이트 프레임)과 MQTT, PLC 워드 블록(Modbus·MELSEC)을 쓰고, 어느 말로 적는지는 **코드가 아니라 매핑 문서**가 정합니다. 설비는 상태를 읽고 포트 예고 한 가지를 씁니다. 상위 시스템에는 작업이 어떻게 끝났는지와(원하면) 진행 상황을 알리며, 그 모양도 매핑 문서가 정합니다. 링크는 TLS로 감싸고 반대편이 누구인지 인증서로 확인합니다.
+
+송신 판정은 어디서나 **세 가지**입니다 — 쓰지 못함(다시 보내도 됨), 수신 확인(수행이 아님), 썼는데 아무도 모름(스스로 다시 보내지 않음). 그 셋을 고장을 주입해 확인했고, 현장 규모(노드 321·포트 64·차량 25대)에서 부하를 걸어 불변식을 확인했습니다([검증 시나리오](docs/portfolio-amhs-validation.md)).
+
+**실장비·실제 상위 시스템과의 연결과 현장 검증은 후속 범위입니다.** 지금까지 상대는 모두 시험용 소켓이나 시험 안의 HTTP 서버입니다. 구현 범위는 [진행 현황](docs/progress.md)과 [설계 결정](docs/design-decisions.md)에 정리합니다.
 
 ## 준비 및 실행
 
@@ -45,8 +51,13 @@ cd ..
 - web 폴더의 `npm run build`: TypeScript + Vite production build.
 - `scripts/verify-postgres.sql`: psql에서 migration/seed/FK/CHECK 확인.
 - `scripts/verify-ui.cjs`: Playwright/Edge로 실행 중인 앱의 지도·선택·모바일·오류 표시 확인. AMHS_RUNTIME_MODULES에 playwright 설치 node_modules 경로를 지정합니다.
+- `scripts/load-run.ps1`: 격리 클러스터에 **전용 DB를 만들어** 서버를 띄우고, 지도를 API로 올려 적용하고, 작업을 흘리며 보고를 찍고, 끝나고 `scripts/load-invariants.sql`로 바닥에 남은 것을 묻습니다. 다른 응용이 그 DB에 붙어 있으면 거부하고, 측정 중 사이트가 진행을 멈추면 그 즉시 중단해 보고서에 적습니다.
 
-결과는 [검증 기록](docs/verification.md), API와 임시 쓰기 제한은 [A19 설정 계약](docs/A19-configuration.md)을 확인합니다. 테스트 통과가 실장비 반송·장비 연동 완료를 뜻하지 않습니다.
+```powershell
+.\scripts\load-run.ps1 -Minutes 15 -PerMinute 240 -PerVehicle 2 -Map docs/sample-maps/large-site.json -User <Lv4 계정> -Password <비밀번호>
+```
+
+결과는 [검증 기록](docs/verification.md), API와 임시 쓰기 제한은 [A19 설정 계약](docs/A19-configuration.md)을 확인합니다. **SQL 시험은 `AMHS_SQL_TEST=true` 없이 조용히 skip되므로 통과 여부는 skip 수까지 봅니다.** 테스트 통과가 실장비 반송·장비 연동 완료를 뜻하지 않습니다.
 
 ## 데이터베이스 구성
 
@@ -58,6 +69,7 @@ Flyway 활성 경로는 `server/src/main/resources/db/postgresql`입니다. `db/
 
 - [설계 결정 기록](docs/design-decisions.md): 각 구조를 왜 그렇게 정했는지와 현재 구현 상태.
 - [AMHS 공개 설계 개요](docs/portfolio-amhs-design.md): 개인 포트폴리오용으로 정리한 아키텍처와 설계 의도. [검증 시나리오](docs/portfolio-amhs-validation.md) 및 개념도 포함.
-- 운영 요구사항 → 도메인 계약 → 구현·검증 순서로 구체화합니다. 확장 범위는 실장비 Adapter, 상위 시스템별 연계 및 부하·장애 시나리오 검증입니다.
+- 계약 문서: [차량 TCP](docs/vehicle-tcp-contract.md) · [매핑 파일](docs/mapping-file.md) · [설비 OPC UA](docs/equipment-opcua-contract.md) · [상위 통보](docs/host-notice-contract.md) · [링크 보안](docs/link-security.md) · [지도 파일](docs/map-file.md).
+- 운영 요구사항 → 도메인 계약 → 구현·검증 순서로 구체화합니다. 남은 확장 범위는 실장비 Adapter와 실제 상위 시스템 연결, 인증서 폐기 확인, 더 긴 시간·더 큰 규모의 부하 자동 회귀입니다.
 - 구현 완료, 설계 확정, 후속 구현을 문서에서 구분합니다. 시뮬레이션 검증은 실제 장비 통신 및 현장 검증과 별개입니다.
 - 저장소에는 애플리케이션 소스, 설계 의도, 구현 범위와 검증 결과를 제공합니다. 고객·설비 식별 정보, 운영 데이터·백업·로그, 인증정보, 로컬 도구와 빌드 결과는 포함하지 않습니다.

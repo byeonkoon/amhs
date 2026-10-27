@@ -97,6 +97,26 @@ if($others -gt 0){
  throw "another application ($others connection(s)) is attached to $dbName; stop it first -- two servers drive the same site and the run would measure both"
 }
 
+# --- the floor the previous run left ------------------------------------------------------------
+# Before the server, not after it. A revision cannot be put into use over open work, and rightly
+# so -- swapping the ground under a job is the one change that cannot be undone by editing it
+# back -- so the previous run's work is ended first; on a layout about to be replaced it means
+# nothing anyway, and a harness that cannot be run twice is not a harness. Doing it with the
+# server already up deadlocked against its own sweep, which was working on those very rows.
+if($Map -and (Sql "SELECT to_regclass('transport.order') IS NOT NULL") -eq 't'){
+ $ending=Sql @"
+UPDATE transport.order SET status='CANCELLED',terminal_at=now(),cancel_reason='load-run: layout replaced'
+ WHERE site_id=$Site AND status NOT IN ('COMPLETED','CANCELLED','FAILED') RETURNING id
+"@
+ $null=Sql "UPDATE transport.assignment SET released_at=now(),release_reason='LOAD_RUN_RESET' WHERE released_at IS NULL"
+ # The controller's own moves too -- charging, giving way, going home. They are not orders and they
+ # hold the activation just as firmly (MOVES_STILL_OPEN).
+ $null=Sql "UPDATE transport.relocation SET finished_at=now(),finish_reason='LOAD_RUN_RESET' WHERE site_id=$Site AND finished_at IS NULL"
+ $null=Sql "UPDATE traffic.node_reservation SET released_at=now(),release_reason='LOAD_RUN_RESET' WHERE site_id=$Site AND released_at IS NULL"
+ $null=Sql "DELETE FROM traffic.reservation_wait WHERE site_id=$Site"
+ if($ending){ Write-Host "ended $(($ending | Measure-Object).Count) order(s) left by an earlier run" }
+}
+
 # --- the server for this run ---------------------------------------------------------------------
 $jdk=Get-ChildItem "$root/.tools" -Directory -Filter 'jdk-*' | Select-Object -First 1
 $env:JAVA_HOME=$jdk.FullName
@@ -132,22 +152,6 @@ try{
  # the ones to put into automatic work, and its ports are what the work is written between.
  if($Map){
   if(-not $User){ throw 'a map needs -User and -Password: putting a revision into use is an administrator act' }
-  # A revision cannot be put into use over open work, and rightly so -- swapping the ground under a
-  # job is the one change that cannot be undone by editing it back. So the previous run's work is
-  # ended first: on a layout that is about to be replaced it means nothing anyway, and a harness
-  # that cannot be run twice is not a harness. (The first attempt at a second run failed here, and
-  # the cleanup below hid which step had failed.)
-  $ending=Sql @"
-UPDATE transport.order SET status='CANCELLED',terminal_at=now(),cancel_reason='load-run: layout replaced'
- WHERE site_id=$Site AND status NOT IN ('COMPLETED','CANCELLED','FAILED') RETURNING id
-"@
-  $null=Sql "UPDATE transport.assignment SET released_at=now(),release_reason='LOAD_RUN_RESET' WHERE released_at IS NULL"
-  # The controller's own moves too -- charging, giving way, going home. They are not orders and they
-  # hold the activation just as firmly (MOVES_STILL_OPEN).
-  $null=Sql "UPDATE transport.relocation SET finished_at=now(),finish_reason='LOAD_RUN_RESET' WHERE site_id=$Site AND finished_at IS NULL"
-  $null=Sql "UPDATE traffic.node_reservation SET released_at=now(),release_reason='LOAD_RUN_RESET' WHERE site_id=$Site AND released_at IS NULL"
-  $null=Sql "DELETE FROM traffic.reservation_wait WHERE site_id=$Site"
-  if($ending){ Write-Host "ended $(($ending | Measure-Object).Count) order(s) left by an earlier run" }
   $token=(Invoke-RestMethod "$base/session" -Method Post -ContentType 'application/json' `
    -Body (@{ code=$User; password=$Password } | ConvertTo-Json)).token
   $head=@{ Authorization="Bearer $token" }
