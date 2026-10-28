@@ -134,6 +134,25 @@ $arguments=@(
  "-Dserver.port=$Port",
  "-Damhs.device.mappings=$root/docs/sample-mappings",
  '-jar',"$root/server/target/amhs-server-0.1.0.jar")
+# --- stay awake for the measurement ---------------------------------------------------------------
+# A measurement a sleeping machine can ruin should ask the machine to stay up. The first two-hour
+# run spent an hour of it suspended, and every loop in the report carried that hour.
+#
+# This is a request for the life of this script, not a setting: it is released in the `finally`
+# below and the machine's own power configuration is left exactly as it was. It holds off idle
+# sleep only -- a closed lid or somebody choosing Sleep still sleeps, and the report says so when
+# it happens.
+Add-Type -Namespace Amhs -Name Power -MemberDefinition @'
+[DllImport("kernel32.dll", SetLastError = true)]
+public static extern uint SetThreadExecutionState(uint esFlags);
+'@
+# 0x80000000 and 0x00000001 written as numbers: PowerShell reads a literal 0x80000000 as a
+# negative Int32, and the call refuses it.
+$ES_CONTINUOUS=[uint32]2147483648; $ES_SYSTEM_REQUIRED=[uint32]1
+$awake=[Amhs.Power]::SetThreadExecutionState($ES_CONTINUOUS -bor $ES_SYSTEM_REQUIRED)
+if($awake -eq 0){ Write-Host 'could not ask this machine to stay awake; it may sleep mid-run' }
+else{ Write-Host 'asked this machine to stay awake until the run ends' }
+
 $runStarted=(Sql 'SELECT clock_timestamp()').Trim()
 $changedVehicles=@()
 $server=Start-Process -FilePath "$($jdk.FullName)/bin/java.exe" -ArgumentList $arguments -PassThru `
@@ -301,6 +320,8 @@ UPDATE traffic.node_reservation r SET released_at=now(),release_reason='LOAD_RUN
   Write-Host "the site could not be handed back: $($_.Exception.Message)"
  }
  if($startedCluster){ & "$PostgresBin/pg_ctl.exe" -D $dataPath -m fast -w stop | Out-Null }
+ # The machine may go back to sleeping on its own schedule; nothing of its configuration was changed.
+ try{ $null=[Amhs.Power]::SetThreadExecutionState([uint32]2147483648) }catch{ }
  $env:PGPASSWORD=''
  Write-Host "report: $report"
 }

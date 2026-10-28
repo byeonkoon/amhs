@@ -14,7 +14,7 @@ a plant working.
 
 | | |
 |---|---|
-| Automated | **531 tests**, failures 0, errors 0, **skipped 0**, on an isolated PostgreSQL cluster the project starts for the run (`scripts/test-postgres.ps1`) |
+| Automated | **532 tests**, failures 0, errors 0, **skipped 0**, on an isolated PostgreSQL cluster the project starts for the run (`scripts/test-postgres.ps1`) |
 | Under load | A repeatable run on a floor of its own: `scripts/load-run.ps1` makes its own database, imports a layout through the same API the screens use, drives the site, and asks the invariants afterwards (`scripts/load-invariants.sql`) |
 | By hand | Screens are opened in the running application for anything a person has to read or act on |
 
@@ -82,12 +82,17 @@ A floor at its own size: **321 nodes, 64 handover ports, 25 vehicles**, work wri
 the way a host would write it, 15 minutes, with the queue deliberately saturated (50 open orders
 against 25 vehicles).
 
-All the numbers below come from **one run**, so they can be read together. A longer run of the same
-load — two hours asked for, of which the machine was awake for 66 minutes — carried 168 orders
-through with the same throughput (2.45 a minute) and the same three counters at zero over **4096
-samples**. Its control-loop figures are not usable and are not quoted: every loop lost an hour at
-once when the machine suspended, which the harness now says in the report rather than leaving it
-to be read as the system's own.
+All the numbers below come from **one run**, so they can be read together. The same load was then
+run for **two uninterrupted hours**: 267 orders completed, the same three counters at zero over
+**6899 samples**, the same throughput (2.2 a minute against 2.3 in the short run). An earlier
+two-hour attempt is not quoted, because the machine suspended and every loop lost an hour at once —
+the harness now says that in the report rather than leaving it to be read as the system's own.
+
+Over those two hours the three device-facing loops stayed on their periods — equipment links 210ms
+against 200, notices and the site sweep 1043 against 1000 — while the simulation sweep's own pass
+grew to 1145ms mean as the saturated queue put more vehicles in motion, pushing the motion step it
+shares a thread with to a 343ms gap. The loop that has to hold 100ms in operation is the device
+read, and it is not the one that drifted.
 
 | | |
 |---|---|
@@ -139,5 +144,5 @@ Not verified here, and not claimed:
 - certificate revocation (expiry and signature only), and any authentication for Modbus/MELSEC
   equipment, which have none in the protocol — what stands in front of such a machine is the
   answer, and it is written down rather than implemented;
-- sustained load beyond a single 15-minute run, and automated load regression. The numbers above
-  are one run, driven by hand.
+- load beyond two hours, a floor larger than 321 nodes, and automated load regression. The runs
+  above were started by hand, one at a time.
