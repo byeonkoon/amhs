@@ -133,7 +133,19 @@ Adding it found one more fault in the measuring. A second run of the same comman
 order in its first minute against the 240 a minute asked for: the previous run's fifty open orders
 were still there, filling the open-work cap, and then finishing during this run and being counted
 as its own — with durations that started in the run before. A run on the harness's own database now
-begins with a clear order book. The first judged run (ten minutes) passed: 59 written, 9 completed,
+begins with a clear order book.
+
+Because it decides for itself, nobody has to watch it: it is registered with the task scheduler,
+daily, and the exit code becomes the task's own result. Three things about that are chosen rather
+than defaulted — it runs **as the person who registered it, logged on, with no password asked for
+or stored** (the isolated cluster's password is kept under that account's own key, and a task that
+needs a stored password is a password in one more place); it does **not wake the machine**, a
+missed run starting at the next opportunity instead; and it will **not start on battery** while
+also not being killed mid-run if the power goes, because the verdict of a run that was stopped
+halfway means nothing either way. On a laptop that last one means the task waits, visibly, for the
+mains.
+
+The first judged run (ten minutes) passed: 59 written, 9 completed,
 three counters at zero over 578 samples, every "none expected" check empty, the device-facing loops
 inside their periods. Throughput is deliberately not compared with the longer runs — this one left
 the vehicles where the last one parked them, and only the invariants and the loop periods are
@@ -182,5 +194,5 @@ Not verified here, and not claimed:
 - any authentication for Modbus/MELSEC equipment, which have none in the protocol — what stands in
   front of such a machine is the answer, and it is written down rather than implemented. Revocation
   by OCSP is not missing but declined, for the reason above;
-- load beyond two hours and a floor larger than 321 nodes, and the judged run on a schedule. The
-  harness decides for itself now; every run above was still started by hand, one at a time.
+- load beyond two hours and a floor larger than 321 nodes. The judged run is on a daily schedule
+  now, but every run quoted above was started by hand, one at a time.

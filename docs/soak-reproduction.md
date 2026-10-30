@@ -15,6 +15,29 @@
 진행을 멈췄거나 PC가 자다 깼다). 판정 불가가 실패가 **아닌** 것이 중요합니다: 일어나지 않은 측정은
 결함의 증거가 아닙니다. 지도를 바꾸지 않더라도 하네스 전용 DB(`load`)에서는 **빈 바닥에서 시작**합니다.
 
+## 정기 실행
+
+판정이 붙었으므로 사람이 볼 필요가 없습니다. Windows 작업 스케줄러에 등록합니다.
+
+```powershell
+.\scripts\load-regression-schedule.ps1                      # 매일 03:30, 12분
+.\scripts\load-regression-schedule.ps1 -At 02:00 -Weekly Sunday
+.\scripts\load-regression-schedule.ps1 -Show                # 다음 실행과 마지막 판정
+.\scripts\load-regression-schedule.ps1 -Remove
+```
+
+작업이 실행하는 것은 [`scripts/load-regression-task.ps1`](../scripts/load-regression-task.ps1)이고,
+그 **종료 코드가 작업의 Last Run Result**가 됩니다. 실행한 내용 전체는 `.local/load-runs`에
+`scheduled-*.log`로, 보고서는 같은 자리에 `report-*.txt`로 남습니다(최근 14개만 보관).
+
+정하고 가는 것 셋.
+
+| | |
+|---|---|
+| **등록한 사람으로, 로그온 중에** 실행합니다. 비밀번호를 묻지도 저장하지도 않습니다 | 격리 클러스터 비밀번호는 그 계정의 키로 저장돼 있어 다른 계정은 읽지 못하고, 비밀번호를 요구하는 작업은 비밀번호가 한 군데 더 생기는 일입니다 |
+| **PC를 깨우지 않습니다.** 놓친 실행은 다음 기회에 시작합니다 | 회귀는 PC의 아침값은 되지만 밤값은 아닙니다. 일정이 더 중요하면 `-WakeToRun`을 씁니다 |
+| **배터리로는 시작하지 않고**, 시작한 뒤에 전원이 빠져도 죽이지 않습니다 | 12분 내내 바닥을 포화시키는 실행입니다. 노트북에서는 전원이 올 때까지 작업이 `Queued`로 기다립니다. 그래도 돌리려면 `-OnBatteryToo` |
+
 실장비나 실제 통신 어댑터 시험은 어느 쪽도 아닙니다.
 
 ## 무엇을 시험하는가
