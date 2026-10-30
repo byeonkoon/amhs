@@ -20,6 +20,8 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.security.KeyStore;
+import java.security.cert.X509CRL;
+import java.security.cert.X509Certificate;
 import java.util.List;
 import java.util.concurrent.*;
 import static org.assertj.core.api.Assertions.*;
@@ -33,6 +35,11 @@ import static org.assertj.core.api.Assertions.*;
  * are now separate and both are asked: <b>who are you</b> is the certificate, and <b>what may you
  * speak for</b> is still the vehicles wired to that profile.
  *
+ * <p>A certificate can also be <b>withdrawn</b>: a revocation list is read with the trust store,
+ * and a gateway on it does not get in however good its certificate is, while the gateways that are
+ * not on it are unaffected. That list has a date of its own, and what happens when it runs out is
+ * part of the answer rather than an oversight -- see the last tests here.
+ *
  * <p>The material is made with {@code keytool} the way {@code docs/link-security.md} tells an
  * operator and a gateway to make theirs, so what is tested is the procedure as written rather than
  * something assembled only in a test.
@@ -42,17 +49,30 @@ import static org.assertj.core.api.Assertions.*;
  * to exist before the context that reads it is built.
  */
 @SpringBootTest(properties={
- "spring.datasource.url=${AMHS_TEST_DB_URL:jdbc:postgresql://127.0.0.1:5432/amhs_test}"})
+ "spring.datasource.url=${AMHS_TEST_DB_URL:jdbc:postgresql://127.0.0.1:5432/amhs_test}",
+ // The test that owns a port is the only thing that opens it. Several contexts live at once in a
+ // test run, each with a five-second sweep that opens whatever the rows ask for, and a port can
+ // only be held by one of them -- so the one that happens to win answers this test's gateway with
+ // its own key material, and the handshake fails in a way that reads exactly like the defect.
+ "amhs.device.tcp.auto-listen=false"})
 @EnabledIfEnvironmentVariable(named="AMHS_SQL_TEST",matches="true")
 class LinkSecuritySqlTest {
  @Autowired @Qualifier("jsonLineVehicleLinks") DeviceChannel link;
  @Autowired VehicleListening listening;
  @Autowired CommandOutbox outbox; @Autowired JdbcTemplate jdbc; @Autowired TransactionTemplate tx;
  @Autowired EquipmentLinks equipment;
+ // For the communication check report, which is where an operator meets any of this.
+ @Autowired com.amhs.platform.OperationOptionConfiguration siteOptions;
+ @Autowired com.amhs.fleet.VehicleConfiguration fleet;
+ @Autowired com.amhs.integration.CommunicationConfiguration wiring;
+ @Autowired com.amhs.integration.ConnectionConfiguration connections;
+ @Autowired com.amhs.integration.ProtocolConfiguration protocols;
+ @Autowired com.amhs.integration.VdaProfileConfiguration vdaProfiles;
  private static final long SITE=1, AGV1=2, AGV2=3;
  private static final long PROFILE=9541, PROTOCOL=9541, LINKED=9541, LINKED2=9542;
  private static final String PASS="test-pass";
- private static final String GATEWAY="oht-gateway-1", CONTROLLER="amhs-controller";
+ private static final String GATEWAY="oht-gateway-1", CONTROLLER="amhs-controller",
+                            RETIRED="oht-gateway-gone";
  private static Path dir;
 
  // Made before the context is built, because the context reads these files as it starts.
@@ -65,14 +85,23 @@ class LinkSecuritySqlTest {
   registry.add("amhs.device.tls.keystore-password",()->PASS);
   registry.add("amhs.device.tls.truststore",()->dir.resolve("trust.p12").toString());
   registry.add("amhs.device.tls.truststore-password",()->PASS);
+  // The revocation list, in force for every test below. A directory, because a site with two
+  // authorities has two lists and the configuration should not grow a line for each.
+  //
+  // In force for every test is deliberate and not convenience: what the list must not do is
+  // change the answer for a gateway that is not on it, and the way to show that is to leave it
+  // switched on while the rest of this class asks its old questions.
+  registry.add("amhs.device.tls.crls",()->dir.resolve("revoked").toString());
  }
 
  /**
-  * A CA, a certificate for this controller, two gateway certificates and one nobody signed.
+  * A CA, a certificate for this controller, two gateway certificates, one nobody signed, one that
+  * has been withdrawn, and the list that withdrew it.
   *
   * <p>Exactly the keytool run in the document. The stranger matters as much as the gateway: it is
   * signed by the same authority and carries another name, which is the only way to tell "we trust
-  * this certificate" apart from "this is the machine the profile named".
+  * this certificate" apart from "this is the machine the profile named". The retired one is a
+  * third case again: trusted authority, its own name, and on the list.
   */
  private static void material() throws Exception {
   dir=Path.of("target","test-tls");
@@ -87,7 +116,11 @@ class LinkSecuritySqlTest {
   if(Files.exists(stamp)&&Files.readString(stamp).equals(SHAPE)
    &&Files.getLastModifiedTime(stamp).toInstant().isAfter(java.time.Instant.now().minus(java.time.Duration.ofDays(30))))
    return;
-  try(var old=Files.list(dir)){ for(var file:old.toList()) Files.deleteIfExists(file); }
+  try(var old=Files.walk(dir)){
+   for(var file:old.sorted(java.util.Comparator.reverseOrder()).toList())
+    if(!file.equals(dir)) Files.deleteIfExists(file);
+  }
+  Files.createDirectories(dir.resolve("revoked"));
   ca();
   // Every name this certificate is used by, which is what the document tells an operator to do:
   // the test dials 127.0.0.1 and asks for the name, and the gateway dials in and checks the name
@@ -99,10 +132,29 @@ class LinkSecuritySqlTest {
   keytool("-genkeypair","-alias","rogue","-keyalg","RSA","-keysize","2048","-validity","90",
    "-dname","CN=rogue-controller","-ext","san=dns:"+CONTROLLER+",dns:localhost,ip:127.0.0.1",
    "-keystore",p12("rogue"),"-storetype","PKCS12","-storepass",PASS);
+  // A gateway that was on this floor and is not any more. Its certificate is as good as the
+  // working one; the only thing wrong with it is the list.
+  signed("retired",RETIRED,"san=dns:"+CONTROLLER+",dns:localhost,ip:127.0.0.1");
+  revoke("retired");
   Files.writeString(dir.resolve("made-for.txt"),SHAPE);
  }
  /** What the material above is made for. Changing the shape changes this. */
- private static final String SHAPE="ca+server("+CONTROLLER+")+gateway("+GATEWAY+")+stranger+rogue v2, 90 days";
+ private static final String SHAPE="ca+server("+CONTROLLER+")+gateway("+GATEWAY+")+stranger+rogue"
+  +"+retired("+RETIRED+")+crl v3, 90 days";
+ /**
+  * The list, naming that certificate's serial number.
+  *
+  * <p>The operator's procedure and not a convenience of the test: a revocation list is made by the
+  * authority that issued the certificate, which here is the same {@code keytool} and the same CA
+  * store. The serial is read from the certificate rather than typed, because a number typed into a
+  * list by hand is a revocation of something else.
+  */
+ private static void revoke(String alias) throws Exception {
+  var certificate=(X509Certificate)load(p12(alias)).getCertificate(alias);
+  keytool("-gencrl","-alias","ca","-keystore",p12("ca"),"-storepass",PASS,
+   "-id",certificate.getSerialNumber()+":4",          // 4: superseded
+   "-validity","90","-rfc","-file",dir.resolve("revoked").resolve("ca.crl").toString());
+ }
  private static void ca() throws Exception {
   keytool("-genkeypair","-alias","ca","-keyalg","RSA","-keysize","2048","-validity","90",
    "-dname","CN=AMHS Link CA","-ext","bc:c=ca:true",
@@ -229,8 +281,15 @@ class LinkSecuritySqlTest {
     var parameters=ssl.getSSLParameters();
     parameters.setEndpointIdentificationAlgorithm("HTTPS");
     ssl.setSSLParameters(parameters);
-    ssl.startHandshake();                       // the gateway checks this controller too
     socket=ssl;
+    // The gateway checks this controller too -- and a gateway whose own certificate is refused
+    // hears about it here, as a fatal alert that closes the socket with nothing left to read or
+    // write. That is an answer rather than an accident, so this ends here and it counts as let go.
+    try{ ssl.startHandshake(); }
+    catch(IOException refused){
+     out=null; thread=null; gone.countDown();
+     return;
+    }
    }
    socket.setTcpNoDelay(true);
    out=new BufferedWriter(new OutputStreamWriter(socket.getOutputStream(),StandardCharsets.UTF_8));
@@ -249,9 +308,15 @@ class LinkSecuritySqlTest {
    });
   }
   void say(String frame) throws IOException { out.write(frame); out.write("\n"); out.flush(); }
-  void hello(String vehicle) throws IOException { say("{\"type\":\"hello\",\"vehicle\":\""+vehicle+"\"}"); }
+  void hello(String vehicle) throws IOException {
+   if(out==null) return;                      // refused at the handshake; nothing to say it to
+   say("{\"type\":\"hello\",\"vehicle\":\""+vehicle+"\"}");
+  }
   boolean wasLetGo() throws InterruptedException { return gone.await(3,TimeUnit.SECONDS); }
-  public void close() throws IOException { socket.close(); thread.interrupt(); }
+  public void close() throws IOException {
+   socket.close();
+   if(thread!=null) thread.interrupt();
+  }
  }
 
  /** A line controller this one dials out to, which may or may not be one anybody signed. */
@@ -392,13 +457,13 @@ class LinkSecuritySqlTest {
   * have never heard of this plant.
   */
  @Test void withoutMaterialASecuredLinkRefusesRatherThanFallsBack(){
-  assertThat(new DeviceTls("","","","","").problem()).isEqualTo("TLS_NOT_CONFIGURED");
-  assertThat(new DeviceTls(dir.resolve("server.p12").toString(),PASS,"","","").problem())
+  assertThat(new DeviceTls("","","","","","").problem()).isEqualTo("TLS_NOT_CONFIGURED");
+  assertThat(new DeviceTls(dir.resolve("server.p12").toString(),PASS,"","","","").problem())
    .isEqualTo("TLS_TRUSTSTORE_REQUIRED");
   assertThat(new DeviceTls(dir.resolve("nothing-here.p12").toString(),PASS,"",
-   dir.resolve("trust.p12").toString(),PASS).problem()).isEqualTo("TLS_KEYSTORE_MISSING");
+   dir.resolve("trust.p12").toString(),PASS,"").problem()).isEqualTo("TLS_KEYSTORE_MISSING");
   assertThat(new DeviceTls(dir.resolve("server.p12").toString(),"wrong-password","",
-   dir.resolve("trust.p12").toString(),PASS).problem()).isEqualTo("TLS_MATERIAL_UNREADABLE");
+   dir.resolve("trust.p12").toString(),PASS,"").problem()).isEqualTo("TLS_MATERIAL_UNREADABLE");
  }
 
  /**
@@ -449,5 +514,142 @@ class LinkSecuritySqlTest {
   assertThatThrownBy(()->new com.amhs.integration.ConnectionSettings("TCP","SERVER","127.0.0.1",
    5000,true,false,GATEWAY).validate())
    .hasMessageContaining("PEER_NAME_NEEDS_TLS");
+ }
+
+ /**
+  * The gateway that was taken off the floor cannot get back in, and its name is never reached.
+  *
+  * <p>Until this, a link read a signature and an expiry date. So a gateway that was removed,
+  * replaced or lost kept a working certificate until it expired -- over two years with the
+  * material the document tells an operator to make. The only way to stop it was to change the
+  * authority, which means issuing new material to every other gateway on the floor as well: a
+  * procedure nobody carries out for one retired box, which means in practice it was not stopped.
+  *
+  * <p>This certificate is signed by this site's authority and carries the name a profile would
+  * expect of it. The only thing wrong with it is that it is on the list, and that is enough.
+  */
+ @Test void aretiredGatewayCertificateIsNotLetIn() throws Exception {
+  int port=freePort();
+  listenFor(port,true,RETIRED);               // the profile would even accept the name
+  try(var gateway=new Gateway("retired",port,false)){
+   gateway.hello("V-01");
+   assertThat(gateway.wasLetGo()).as("withdrawn, whatever name it carries").isTrue();
+   var verdict=link.send(command(AGV1));
+   assertThat(verdict.outcome()).isEqualTo(DeviceChannel.Outcome.NOT_DELIVERED);
+   assertThat(verdict.detail()).isEqualTo("VEHICLE_NOT_CONNECTED");
+  }
+ }
+
+ /**
+  * Dialling out to a controller whose certificate was withdrawn: nothing written, and nothing
+  * written in the clear instead.
+  *
+  * <p>The second half is the one that matters, as everywhere else here. A link that quietly fell
+  * back to plaintext would leave every verdict above it reading exactly like a secured one.
+  */
+ @Test void aretiredControllerGetsNothingAndNoPlaintextEither() throws Exception {
+  try(var retired=new FarSide("retired",false,true)){
+   dialOut(retired.port(),true,CONTROLLER);
+   var verdict=link.send(command(AGV1));
+   assertThat(verdict.outcome()).as("nothing was written").isEqualTo(DeviceChannel.Outcome.NOT_DELIVERED);
+   assertThat(retired.heard.poll(500,TimeUnit.MILLISECONDS))
+    .as("and nothing arrived in the clear").isNull();
+  }
+ }
+
+ /**
+  * A list that has run out refuses, and says so a week before it does.
+  *
+  * <p>This is what checking revocation from a file costs, stated plainly. A list has a date on it,
+  * and after that date it no longer says what has been withdrawn since -- so using it would be
+  * reading protection into something that has stopped protecting. The link does not open.
+  *
+  * <p>Which makes refreshing the list an operational duty, and an operator who forgets stops the
+  * floor. So the state is announced while it is still only coming: {@code TLS_CRL_EXPIRES_SOON} on
+  * the communication check, seven days out, beside the vehicles it will stop.
+  *
+  * <p>The date is given to this rather than taken from the clock, because this state arrives by
+  * waiting and a test that waits a month for it is a test nobody runs.
+  */
+ @Test void alistThatHasRunOutRefusesRatherThanPasses() throws Exception {
+  X509CRL list;
+  try(var in=Files.newInputStream(dir.resolve("revoked").resolve("ca.crl"))){
+   list=(X509CRL)java.security.cert.CertificateFactory.getInstance("X.509").generateCRL(in);
+  }
+  assertThat(list.getNextUpdate()).as("the list keytool made has a date on it").isNotNull();
+  var runsOut=list.getNextUpdate().toInstant();
+
+  assertThat(asOf(runsOut.minus(java.time.Duration.ofDays(30))).problem()).as("in date").isNull();
+  assertThat(asOf(runsOut.minus(java.time.Duration.ofDays(30))).warning()).as("nowhere near").isNull();
+  assertThat(asOf(runsOut.minus(java.time.Duration.ofDays(3))).warning()).isEqualTo("TLS_CRL_EXPIRES_SOON");
+  assertThat(asOf(runsOut.minus(java.time.Duration.ofDays(3))).problem())
+   .as("a warning is not a refusal").isNull();
+  assertThat(asOf(runsOut.plusSeconds(1)).problem()).isEqualTo("TLS_CRL_STALE");
+  assertThat(asOf(runsOut.plus(java.time.Duration.ofDays(400))).available()).isFalse();
+ }
+
+ /**
+  * A list that was asked for and is not there is not the same as one that was never asked for.
+  *
+  * <p>Three answers again, because they send somebody to three different places: nothing is being
+  * checked (a site that has not asked), the place named holds no list, and something is there that
+  * is not a list.
+  */
+ @Test void alistAskedForAndNotThereIsSaidAsSuch() throws Exception {
+  assertThat(withLists(dir.resolve("revoked").toString()).problem()).as("as configured").isNull();
+  assertThat(withLists("").problem()).as("not checked at all, which is the older behaviour").isNull();
+  assertThat(withLists(dir.resolve("nothing-here").toString()).problem()).isEqualTo("TLS_CRL_MISSING");
+  var empty=Files.createDirectories(dir.resolve("no-lists-here"));
+  assertThat(withLists(empty.toString()).problem()).as("a place with no list in it")
+   .isEqualTo("TLS_CRL_MISSING");
+  assertThat(withLists(dir.resolve("ca.crt").toString()).problem())
+   .as("a certificate is not a list").isEqualTo("TLS_CRL_UNREADABLE");
+ }
+
+ /**
+  * The screen says it, beside the vehicles it will stop.
+  *
+  * <p>A refusal that only exists in a log is a refusal nobody sees until the floor is quiet. The
+  * communication check is what somebody reads before a shift, so what it says there is part
+  * of this feature rather than a nicety: the warning while the list is still in date, and the
+  * refusal once it is not, against the vehicles wired to the secured profile.
+  */
+ @Test void thecheckScreenSaysItBeforeAndAfterTheListRunsOut() throws Exception {
+  int port=freePort();
+  listenFor(port,true,GATEWAY);               // a secured profile, with vehicles on it
+  X509CRL list;
+  try(var in=Files.newInputStream(dir.resolve("revoked").resolve("ca.crl"))){
+   list=(X509CRL)java.security.cert.CertificateFactory.getInstance("X.509").generateCRL(in);
+  }
+  var runsOut=list.getNextUpdate().toInstant();
+
+  assertThat(codesSeenBy(asOf(runsOut.minus(java.time.Duration.ofDays(30)))))
+   .as("in date: nothing to say about the list").doesNotContain("TLS_CRL_EXPIRES_SOON","TLS_CRL_STALE");
+  assertThat(codesSeenBy(asOf(runsOut.minus(java.time.Duration.ofDays(3)))))
+   .as("a week out").contains("TLS_CRL_EXPIRES_SOON");
+  assertThat(codesSeenBy(asOf(runsOut.plusSeconds(1))))
+   .as("and after: the links will not open").contains("TLS_CRL_STALE");
+  assertThat(codesSeenBy(withLists("")))
+   .as("a site that never asked for revocation checking hears nothing about it")
+   .doesNotContain("TLS_CRL_EXPIRES_SOON","TLS_CRL_STALE","TLS_CRL_MISSING");
+ }
+ /** What the check would report with that material behind it. */
+ private List<String> codesSeenBy(DeviceTls material){
+  return new com.amhs.integration.CommunicationConfigurationCheck(siteOptions,fleet,wiring,
+    connections,protocols,vdaProfiles,material)
+   .inspect(SITE).issues().stream()
+   .map(com.amhs.integration.CommunicationConfigurationCheck.Issue::code).toList();
+ }
+
+ /** This server's material, judged on a given date. */
+ private static DeviceTls asOf(java.time.Instant at){
+  return new DeviceTls(dir.resolve("server.p12").toString(),PASS,"",
+   dir.resolve("trust.p12").toString(),PASS,dir.resolve("revoked").toString(),
+   java.time.Clock.fixed(at,java.time.ZoneOffset.UTC));
+ }
+ /** This server's material, with the lists named differently. */
+ private static DeviceTls withLists(String crls){
+  return new DeviceTls(dir.resolve("server.p12").toString(),PASS,"",
+   dir.resolve("trust.p12").toString(),PASS,crls);
  }
 }

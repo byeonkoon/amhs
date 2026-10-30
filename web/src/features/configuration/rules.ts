@@ -208,6 +208,10 @@ export function explainCode(code: string): string {
     TLS_TRUSTSTORE_MISSING: '지정한 truststore 파일을 찾을 수 없습니다.',
     TLS_KEYSTORE_MISSING: '지정한 keystore 파일을 찾을 수 없습니다.',
     TLS_MATERIAL_UNREADABLE: '키 자료를 읽지 못했습니다. 비밀번호나 파일 형식을 확인해 주세요.',
+    TLS_CRL_MISSING: '폐기 목록(CRL) 파일을 찾을 수 없습니다. amhs.device.tls.crls가 가리키는 자리를 확인해 주세요.',
+    TLS_CRL_UNREADABLE: '폐기 목록을 읽지 못했습니다. CA가 발급한 CRL 파일인지 확인해 주세요.',
+    TLS_CRL_STALE: '폐기 목록의 유효 기간이 지났습니다. 지난 목록은 그 뒤에 폐기된 인증서를 말해 주지 못하므로 링크를 열지 않습니다. CA에서 새 목록을 받아 교체해 주세요.',
+    TLS_CRL_EXPIRES_SOON: '폐기 목록이 7일 안에 만료됩니다. 만료되면 TLS를 켠 링크가 열리지 않습니다. 미리 새 목록을 받아 두세요.',
     // A mapping document: the dialect one family of vehicles is spoken to in.
     MAPPING_NOT_JSON: 'JSON 형식이 아닙니다. 파일 내용을 확인해 주세요.',
     MAPPING_NOT_FOUND: '이 사이트에 그런 매핑 문서가 없습니다.',

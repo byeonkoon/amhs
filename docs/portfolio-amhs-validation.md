@@ -14,7 +14,7 @@ a plant working.
 
 | | |
 |---|---|
-| Automated | **532 tests**, failures 0, errors 0, **skipped 0**, on an isolated PostgreSQL cluster the project starts for the run (`scripts/test-postgres.ps1`) |
+| Automated | **537 tests**, failures 0, errors 0, **skipped 0**, on an isolated PostgreSQL cluster the project starts for the run (`scripts/test-postgres.ps1`) |
 | Under load | A repeatable run on a floor of its own: `scripts/load-run.ps1` makes its own database, imports a layout through the same API the screens use, drives the site, and asks the invariants afterwards (`scripts/load-invariants.sql`) |
 | By hand | Screens are opened in the running application for anything a person has to read or act on |
 
@@ -75,6 +75,20 @@ trusts and carrying the name the profile expects; **what may you speak for** is 
 vehicles wired to that profile. A certificate for another machine, a certificate nobody trusted, a
 plaintext peer on a secured profile and a missing trust store each get their own answer, and
 nothing is ever quietly sent in the clear instead. See [link security](link-security.md).
+
+**And a certificate can be withdrawn.** A gateway taken off the floor used to keep a working
+certificate until it expired — over two years with the material the document tells an operator to
+make — because the only way to stop it was to change the authority, which means reissuing to every
+other gateway as well; a procedure nobody carries out for one retired box. A revocation list is
+now read with the trust store, from a file rather than fetched: a controller that has to open a
+connection to the outside before it may open one to the floor has the order backwards, and a
+responder that cannot be reached always resolves to "assume it is fine", which is the quiet
+downgrade all of this exists to refuse. Four things are tested, including the two that cost
+something — the retired certificate does not get in and its vehicle claim is never reached; the
+gateway still on the floor is **unaffected**, because a revocation check that stops everything is
+an outage with a reason attached; the same holds dialling out, with nothing sent in the clear
+instead; and a list that has run out **refuses rather than passes**, which makes refreshing it an
+operational duty, so the communication check reports it a week before it bites.
 
 ## Under load
 
@@ -141,8 +155,8 @@ Not verified here, and not claimed:
   these runs is a test socket or an HTTP server inside the tests;
 - the real-device inbound acknowledgement path, equipment gateway integration, and plant safety
   interlocks;
-- certificate revocation (expiry and signature only), and any authentication for Modbus/MELSEC
-  equipment, which have none in the protocol — what stands in front of such a machine is the
-  answer, and it is written down rather than implemented;
+- any authentication for Modbus/MELSEC equipment, which have none in the protocol — what stands in
+  front of such a machine is the answer, and it is written down rather than implemented. Revocation
+  by OCSP is not missing but declined, for the reason above;
 - load beyond two hours, a floor larger than 321 nodes, and automated load regression. The runs
   above were started by hand, one at a time.

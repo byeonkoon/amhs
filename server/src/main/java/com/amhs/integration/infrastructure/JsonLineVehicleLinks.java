@@ -613,10 +613,10 @@ class JsonLineVehicleLinks implements DeviceChannel,com.amhs.integration.Vehicle
   *
   * <p>Read rather than remembered: opening a port is the one thing here that an operator cannot
   * undo by editing a row, so the rows are what decides, every time.
+  *
+  * <p>What calls this on a schedule is {@link VehicleListenRefresh}, which can be switched off.
   */
  @Override
- @org.springframework.scheduling.annotation.Scheduled(
-  fixedDelayString="${amhs.device.tcp.listen-refresh-ms:5000}")
  public void listen(){
   var wanted=new java.util.HashMap<Long,Listener>();
   try{

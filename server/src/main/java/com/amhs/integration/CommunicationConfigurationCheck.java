@@ -60,6 +60,13 @@ public class CommunicationConfigurationCheck {
    if(connection.tls()){
     var problem=tls.problem();
     if(problem!=null) issues.add(new Issue(id,problem));
+    // And what is not wrong yet. A revocation list runs out on a date, and the day it does every
+    // secured link stops while nothing about the site has changed -- so it is said a week early,
+    // here, rather than discovered by a shift that finds the vehicles gone quiet.
+    else{
+     var warning=tls.warning();
+     if(warning!=null) issues.add(new Issue(id,warning));
+    }
    }
    if(profile!=null){
     if(!profile.manufacturer().equals(binding.manufacturer())||!profile.interfaceName().equals(binding.interfaceName()))
