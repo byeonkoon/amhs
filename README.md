@@ -70,6 +70,6 @@ Flyway 활성 경로는 `server/src/main/resources/db/postgresql`입니다. `db/
 - [설계 결정 기록](docs/design-decisions.md): 각 구조를 왜 그렇게 정했는지와 현재 구현 상태.
 - [AMHS 공개 설계 개요](docs/portfolio-amhs-design.md): 개인 포트폴리오용으로 정리한 아키텍처와 설계 의도. [검증 시나리오](docs/portfolio-amhs-validation.md) 및 개념도 포함.
 - 계약 문서: [차량 TCP](docs/vehicle-tcp-contract.md) · [매핑 파일](docs/mapping-file.md) · [설비 OPC UA](docs/equipment-opcua-contract.md) · [상위 통보](docs/host-notice-contract.md) · [링크 보안](docs/link-security.md) · [지도 파일](docs/map-file.md).
-- 운영 요구사항 → 도메인 계약 → 구현·검증 순서로 구체화합니다. 남은 확장 범위는 실장비 Adapter와 실제 상위 시스템 연결, 더 긴 시간·더 큰 규모의 부하 자동 회귀입니다.
+- 운영 요구사항 → 도메인 계약 → 구현·검증 순서로 구체화합니다. 남은 확장 범위는 실장비 Adapter와 실제 상위 시스템 연결, 더 긴 시간·더 큰 규모의 부하와 그 정기 실행입니다.
 - 구현 완료, 설계 확정, 후속 구현을 문서에서 구분합니다. 시뮬레이션 검증은 실제 장비 통신 및 현장 검증과 별개입니다.
 - 저장소에는 애플리케이션 소스, 설계 의도, 구현 범위와 검증 결과를 제공합니다. 고객·설비 식별 정보, 운영 데이터·백업·로그, 인증정보, 로컬 도구와 빌드 결과는 포함하지 않습니다.

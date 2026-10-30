@@ -115,6 +115,30 @@ read, and it is not the one that drifted.
 | Time | median 564s, p95 827s — completion includes queue wait, which is what saturation means |
 | Afterwards | no reservation left behind, no vehicle still assigned to finished work, no command left claimed |
 
+### The run decides
+
+A reading is not a regression. The harness now ends with a verdict and an exit code — 0 when the
+floor held, 1 when it did not, and 2 when the run **cannot be judged**: the site stopped
+progressing, or the machine slept through part of it. That third code is not a failure, and the
+order matters, because a run that was not a measurement of load cannot be evidence of a defect in
+it — and what a stopped site leaves behind looks like a fault by these questions while being the
+designed answer (road ahead of a delivered move stays with that vehicle). Calling it a failure
+teaches somebody to ignore the verdict.
+
+Which checks must come back empty is taken from their own headings in the invariants file, so a
+check is enforced by having been written; a verdict that restated the questions would drift from
+them, and the copy nobody reads drifts first.
+
+Adding it found one more fault in the measuring. A second run of the same command wrote **one**
+order in its first minute against the 240 a minute asked for: the previous run's fifty open orders
+were still there, filling the open-work cap, and then finishing during this run and being counted
+as its own — with durations that started in the run before. A run on the harness's own database now
+begins with a clear order book. The first judged run (ten minutes) passed: 59 written, 9 completed,
+three counters at zero over 578 samples, every "none expected" check empty, the device-facing loops
+inside their periods. Throughput is deliberately not compared with the longer runs — this one left
+the vehicles where the last one parked them, and only the invariants and the loop periods are
+comparable between runs that start from different floors.
+
 The run also measures the control loops, because under load the first thing to go wrong is not a
 wrong answer but a late one. Each loop records how long a pass takes and, separately, the gap
 between passes: the first is that loop's own work, the second is everything it waited behind.
@@ -158,5 +182,5 @@ Not verified here, and not claimed:
 - any authentication for Modbus/MELSEC equipment, which have none in the protocol — what stands in
   front of such a machine is the answer, and it is written down rather than implemented. Revocation
   by OCSP is not missing but declined, for the reason above;
-- load beyond two hours, a floor larger than 321 nodes, and automated load regression. The runs
-  above were started by hand, one at a time.
+- load beyond two hours and a floor larger than 321 nodes, and the judged run on a schedule. The
+  harness decides for itself now; every run above was still started by hand, one at a time.

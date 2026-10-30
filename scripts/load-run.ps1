@@ -12,6 +12,11 @@
 #
 #   ./scripts/load-run.ps1 -Minutes 20 -PerMinute 240 -PerVehicle 2
 #
+# It ends with a verdict and an exit code, so the same run can be a regression rather than a
+# reading: 0 when the floor held, 1 when something was wrong with it, 2 when the run cannot be
+# judged (the site stopped progressing, or this machine slept through part of it). The last one is
+# deliberately not a failure -- a measurement that did not happen is not evidence of a defect.
+#
 # Against the isolated test cluster by default, so a run cannot disturb the development database.
 # -Database dev runs it against the development database instead, which is where a site with a
 # real-scale map usually lives.
@@ -19,6 +24,18 @@ param(
  [int]$Minutes=10,
  [double]$PerMinute=240,
  [int]$PerVehicle=2,
+ # What makes this a regression rather than a reading. The run ends with a verdict and this script
+ # exits non-zero when the floor broke, so it can be put in front of a release instead of being
+ # read by somebody who already knows what the numbers should look like.
+ #
+ # -1 decides from the length of the run: a run too short for anything to finish cannot be judged
+ # on what finished. On the shipped large-site map the median order takes minutes, so under eight
+ # minutes this asks only that nothing went wrong, not that something went right.
+ [int]$MinCompleted=-1,
+ # How far a control loop's longest gap may exceed its period before it counts as a failure. The
+ # simulation's own loops are not judged: the sweep's work grows with the traffic and the motion
+ # step shares its thread by design, and neither loop exists in an operating plant.
+ [double]$MaxGapFactor=4,
  # load: a database of this harness's own on the isolated cluster, made if it is not there and
  # migrated by the server as it starts. The default, because it is the only one nothing else writes
  # to -- the suite leaves work in `test`, and a development database has somebody's own site in it.
@@ -103,9 +120,18 @@ if($others -gt 0){
 # back -- so the previous run's work is ended first; on a layout about to be replaced it means
 # nothing anyway, and a harness that cannot be run twice is not a harness. Doing it with the
 # server already up deadlocked against its own sweep, which was working on those very rows.
-if($Map -and (Sql "SELECT to_regclass('transport.order') IS NOT NULL") -eq 't'){
+#
+# On this harness's own database it happens whether or not the layout is being replaced, because
+# the previous run's work does not just sit there: it fills the open-work cap, so the generator
+# writes almost nothing, and then the old orders finish during this run and are counted as its
+# own -- with durations that began in the run before. The second run of this measured exactly
+# that (one order written in the first minute against 240 a minute asked for), which is the
+# measuring device being wrong again rather than the floor.
+#
+# A development or suite database is left alone: the work in it is somebody's, not this run's.
+if((($Database -eq 'load') -or $Map) -and (Sql "SELECT to_regclass('transport.order') IS NOT NULL") -eq 't'){
  $ending=Sql @"
-UPDATE transport.order SET status='CANCELLED',terminal_at=now(),cancel_reason='load-run: layout replaced'
+UPDATE transport.order SET status='CANCELLED',terminal_at=now(),cancel_reason='load-run: a run starts on a clear floor'
  WHERE site_id=$Site AND status NOT IN ('COMPLETED','CANCELLED','FAILED') RETURNING id
 "@
  $null=Sql "UPDATE transport.assignment SET released_at=now(),release_reason='LOAD_RUN_RESET' WHERE released_at IS NULL"
@@ -114,7 +140,7 @@ UPDATE transport.order SET status='CANCELLED',terminal_at=now(),cancel_reason='l
  $null=Sql "UPDATE transport.relocation SET finished_at=now(),finish_reason='LOAD_RUN_RESET' WHERE site_id=$Site AND finished_at IS NULL"
  $null=Sql "UPDATE traffic.node_reservation SET released_at=now(),release_reason='LOAD_RUN_RESET' WHERE site_id=$Site AND released_at IS NULL"
  $null=Sql "DELETE FROM traffic.reservation_wait WHERE site_id=$Site"
- if($ending){ Write-Host "ended $(($ending | Measure-Object).Count) order(s) left by an earlier run" }
+ if($ending){ Write-Host "ended $(($ending | Measure-Object).Count) order(s) left by an earlier run; a run starts on a clear floor" }
 }
 
 # --- the server for this run ---------------------------------------------------------------------
@@ -283,7 +309,8 @@ UPDATE traffic.node_reservation r SET released_at=now(),release_reason='LOAD_RUN
  # first two-hour run spent an hour of it asleep, and without this line its loop figures looked
  # like the system's own (one sweep "pass" of 3,638,883ms, and a mean dragged up with it).
  $asleep=$timing | Where-Object { $_.maxGapMs -gt [Math]::Max(60000,$_.targetMs*30) }
- if(($asleep | Measure-Object).Count -ge 2){
+ $slept=($asleep | Measure-Object).Count -ge 2
+ if($slept){
   $longest=[int](($asleep | Measure-Object -Property maxGapMs -Maximum).Maximum/1000)
   $summary+="NOT AWAKE THROUGHOUT: every loop lost up to $longest s at once, so this machine was asleep or suspended."
   $summary+='  The counts and the invariants still hold; the loop timings from this run do not.'
@@ -301,6 +328,74 @@ UPDATE traffic.node_reservation r SET released_at=now(),release_reason='LOAD_RUN
   -v "site=$Site" -v 'quiet_minutes=3' -v "since=$runStarted" -f "$root/scripts/load-invariants.sql"
  $invariants | ForEach-Object { Write-Host $_ }
  Add-Content -LiteralPath $report -Value ("--- invariants ---`n"+($invariants -join "`n")) -Encoding utf8
+
+ # --- the verdict --------------------------------------------------------------------------------
+ # The reading above is only a regression if something decides. What decides is here, and it reads
+ # the same output a person reads rather than asking the database a second set of questions -- two
+ # sets drift, and the one nobody looks at drifts first.
+ #
+ # Which invariants must be empty is taken from their own headings: a check whose heading says
+ # "(none expected)" has to come back with no rows. So a check added to load-invariants.sql is
+ # enforced by having been written, and the two informational ones are left alone.
+ $violations=@(); $section=$null
+ foreach($line in $invariants){
+  if($line -match '^==\s*(.+?)\s*$'){ $section=$Matches[1]; continue }
+  if($section -and $line -match '^\((\d+) rows?\)$'){
+   if($section -like '*(none expected)*' -and [int]$Matches[1] -gt 0){
+    $violations+=("{0} -- {1} row(s)" -f ($section -replace '\s*\(none expected\)',''),$Matches[1])
+   }
+   $section=$null
+  }
+ }
+ $unjudgeable=@()
+ if(-not $load){ $unjudgeable+='the run produced no reading at all' }
+ elseif($interrupted){ $unjudgeable+='the site stopped progressing, so this is not a measurement of load' }
+ elseif($load.samples -lt 1){ $unjudgeable+='the floor was never looked at (no samples), so the three counters mean nothing' }
+ if($load){
+  if($load.sameNodeSamples -gt 0){ $violations+="two vehicles on one node, $($load.sameNodeSamples) time(s)" }
+  if($load.unheldNodeSamples -gt 0){ $violations+="a vehicle on road it does not hold, $($load.unheldNodeSamples) time(s)" }
+  if($load.deadlockSamples -gt 0){ $violations+="deadlock seen $($load.deadlockSamples) time(s)" }
+  if($load.refused -gt 0){ $violations+="$($load.refused) order(s) refused -- the generator stays within the open-work cap, so a refusal is the control saying no" }
+  if($load.failed -gt 0){ $violations+="$($load.failed) order(s) failed" }
+  if($load.recovery -gt 0){ $violations+="$($load.recovery) order(s) left awaiting recovery" }
+  # Long enough for something to finish? A short run is judged on what went wrong, not on what
+  # went right, because on a floor this size nothing has had time to go right yet.
+  $floor=$(if($MinCompleted -ge 0){$MinCompleted}elseif($Minutes -ge 8){1}else{0})
+  if($load.completed -lt $floor){ $violations+="$($load.completed) order(s) completed, fewer than the $floor this run asks for" }
+ }
+ # The loops, except the simulator's own and except a run that slept through part of itself.
+ if($timing -and -not $slept){
+  foreach($loop in $timing){
+   if($loop.name -like 'simulation*'){ continue }
+   # A floor of a second with it: the first pass of a run competes with everything else starting
+   # up, and a 600ms gap on a 200ms loop at second zero is a server booting, not a loop starved.
+   $allowed=[Math]::Max($loop.targetMs*$MaxGapFactor,1000)
+   if($loop.maxGapMs -gt $allowed){
+    $violations+=("{0} waited {1}ms between passes against a {2}ms period" -f $loop.name,$loop.maxGapMs,$loop.targetMs)
+   }
+  }
+ }
+ # Unjudged comes before failed, and the order is the point. A run that was not a measurement of
+ # load cannot be evidence of a defect in it -- and what a stopped site leaves behind looks like a
+ # fault by these questions while being exactly the designed answer: road ahead of a move that was
+ # already delivered stays with that vehicle (decision 72), and a site that stops cancels the work
+ # it was for. Calling that a failure would train somebody to ignore the verdict.
+ $verdict=@('--- verdict ---')
+ if($unjudgeable){
+  $verdict+=$unjudgeable | ForEach-Object { "UNJUDGED  $_" }
+  $verdict+=$violations | ForEach-Object { "    also seen, not judged: $_" }
+  $exitCode=2
+ }elseif($violations){
+  $verdict+=$violations | ForEach-Object { "FAIL  $_" }
+  $exitCode=1
+ }else{
+  $verdict+="PASS  nothing was left behind, and nothing was seen that should not be"
+  if($slept){ $verdict+='      the loop periods were not judged: this machine slept through part of the run' }
+  if($load.completed -lt 1){ $verdict+='      and nothing finished, which this run was too short to ask for' }
+  $exitCode=0
+ }
+ $verdict | ForEach-Object { Write-Host $_ }
+ Add-Content -LiteralPath $report -Value ($verdict -join "`n") -Encoding utf8
 
  # The site goes back the way it was found -- and a tidy-up that fails says so instead of throwing.
  # A cleanup step that throws replaces the error it was cleaning up after, which is how a run that
@@ -325,3 +420,5 @@ UPDATE traffic.node_reservation r SET released_at=now(),release_reason='LOAD_RUN
  $env:PGPASSWORD=''
  Write-Host "report: $report"
 }
+# After the tidy-up, not inside it: an exit from a finally block would leave the site half returned.
+exit $(if($null -ne $exitCode){$exitCode}else{2})
