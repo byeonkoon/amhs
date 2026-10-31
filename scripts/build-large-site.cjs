@@ -20,6 +20,28 @@ const fs = require('fs');
 const SPACING = 8000;      // how often a node is dropped on a straight, mm
 const STALL = 7000;        // how far a charging or waiting stall sits off its lane, mm
 const CHORDS = 1;          // one chord per 90 degrees: the first node past a turnout is clear of the line
+
+/**
+ * How many times over. `node build-large-site.cjs out.json 3` is the same floor with three times
+ * the bays, three times the fleet, and loops long enough to hold them.
+ *
+ * It scales the one dimension a fab scales in: a line gets longer and carries more bays. The loops
+ * do not get wider or nest, because the shape is what makes node reservation sufficient here -- two
+ * routes meeting only at nodes they both hold -- and a shape that has been proved is not worth
+ * trading for a bigger number.
+ *
+ * What does not multiply: the inspection spur, the OHT waiting spur. There is one of each on a
+ * floor however long the floor is. Charging and parking do multiply, as one bay per ten AGVs,
+ * because a stall is per vehicle -- subdividing one bay into thirty stalls would put them a
+ * vehicle's length apart and call it a floor.
+ *
+ * At 1 this writes exactly the file it wrote before it took an argument.
+ */
+const SCALE = Math.max(1, Math.round(Number(process.argv[3] ?? 1)));
+const OHT_RUN = 144000 * SCALE;   // the straight of an OHT loop, mm: what the bays are spread along
+const AGV_RUN = 140000 * SCALE;
+/** n copies of a pattern, in order: the plain bays that repeat along a longer line. */
+const repeat = (n, pattern) => Array.from({ length: n }, () => pattern).flat();
 const nodes = [], segments = [], ports = [], vehicles = [], zones = [];
 const byCode = new Map();
 
@@ -287,8 +309,8 @@ function planBays(runs, sides, prefix) {
  * distance between two of them would be set by how far apart they happen to sit on the ring rather
  * than by how far apart the tools are.
  */
-const ohtTop = oval('OHT-A', 40000, 40000, 200000, 56000);
-const ohtLow = oval('OHT-C', 40000, 168000, 200000, 56000);
+const ohtTop = oval('OHT-A', 40000, 40000, OHT_RUN + 56000, 56000);
+const ohtLow = oval('OHT-C', 40000, 168000, OHT_RUN + 56000, 56000);
 let ohtTopPath = ohtTop.path, ohtLowPath = ohtLow.path;
 
 // An oval's two straights are its upper and its lower, and a bay hangs outward from whichever it
@@ -297,16 +319,19 @@ let ohtTopPath = ohtTop.path, ohtLowPath = ohtLow.path;
 // across.
 const topPlan = planBays(ohtTop.runs, [
   { each: [
-    { span: 4, depth: 26000, laneNodes: 8 },
-    { span: 4, depth: 26000, laneNodes: 8 },
+    ...repeat(SCALE, [
+      { span: 4, depth: 26000, laneNodes: 8 },
+      { span: 4, depth: 26000, laneNodes: 8 },
+    ]),
+    // One inspection spur, at the end of the line, however long the line is.
     { span: 4, depth: 30000, label: 'OHT-INSP', laneNodes: 3 },
   ] },
   { bays: 0, span: 4, depth: 0 },
 ], 'OHT-B');
 const lowPlan = planBays(ohtLow.runs, [
-  { bays: 2, span: 4, depth: 24000, laneNodes: 8 },
+  { bays: 2 * SCALE, span: 4, depth: 24000, laneNodes: 8 },
   { each: [
-    { span: 4, depth: 26000, laneNodes: 8 },
+    ...repeat(SCALE, [{ span: 4, depth: 26000, laneNodes: 8 }]),
     { span: 4, depth: 26000, label: 'OHT-WAIT', extras: { waitFor: 'OHT' }, laneNodes: 2 },
   ] },
 ], 'OHT-D');
@@ -372,24 +397,27 @@ if (inspection.length)
 /* ================= AGV: its own loop, bays, chargers and a waiting spur ======================== */
 // Clear of the OHT ring's outermost bays: that ring now reaches further up and down than the old
 // rectangle did, and an AGV bay off this loop's near side comes back towards it.
-const agvRing = oval('AGV-M', 20000, 300000, 230000, 90000);
+const agvRing = oval('AGV-M', 20000, 300000, AGV_RUN + 90000, 90000);
 let agvPath = agvRing.path;
 // Ten AGVs: four chargers and eight places to stand, in one bay. Fewer chargers than vehicles is
 // ordinary and the controller queues for them, but a vehicle that has finished charging must have
 // somewhere to go or the charger it stands on never comes free -- hence a stall for every vehicle
 // and two over. They are in the same bay because stepping aside should cost a few metres: parking
 // on the far side of the loop would spend more charge getting there than the charge was worth.
-const stalls = i => i < 4
-  ? { code: `AGV-CHG-${i + 1}`, chargePoint: true }
-  : { code: `AGV-WAIT-${i - 3}`, waitFor: 'AGV' };
+// One such bay per ten AGVs, numbered through: a stall is per vehicle, so this is the part of the
+// floor that has to grow with the fleet rather than be subdivided more finely.
+const stalls = group => i => i < 4
+  ? { code: `AGV-CHG-${group * 4 + i + 1}`, chargePoint: true }
+  : { code: `AGV-WAIT-${group * 8 + i - 3}`, waitFor: 'AGV' };
 // An oval has two straights, so the bays are shared between them: work on the near side, the
 // charging and parking area on the far one, where a vehicle standing is out of everybody's way.
 const agvSides = [
-  { bays: 3, span: 4, depth: 22000, laneNodes: 6 },
-  { each: [
-    { span: 8, depth: 26000, label: 'AGV-PARK', extras: stalls, laneNodes: 12 },
+  { bays: 3 * SCALE, span: 4, depth: 22000, laneNodes: 6 },
+  { each: Array.from({ length: SCALE }, (_, g) => [
+    { span: 8, depth: 26000, label: g ? `AGV-PARK-${g + 1}` : 'AGV-PARK',
+      extras: stalls(g), laneNodes: 12 },
     { span: 4, depth: 22000, laneNodes: 6 },
-  ] },
+  ]).flat() },
 ];
 const agvPlan = planBays(agvRing.runs, agvSides, 'AGV-B');
 const agvLanes = new Map();
@@ -414,12 +442,14 @@ agvPlan.filter(p => p.label.startsWith('AGV-B')).forEach((p, bay) => {
 const chargeNodes = nodes.filter(n => n.chargePoint).map(n => n.code);
 const onMain = path => path.filter(c => byCode.has(c));
 const ohtMain = onMain(ohtPath), agvMain = onMain(agvPath);
-for (let i = 0; i < 15; i++)
+// The fleet grows with the line, spread evenly round it as before.
+const ohtFleet = 15 * SCALE, agvFleet = 10 * SCALE;
+for (let i = 0; i < ohtFleet; i++)
   vehicles.push({ code: `OHT-${String(11 + i).padStart(2, '0')}`, name: `OHT ${11 + i}`, vType: 'OHT',
-    initialNode: ohtMain[Math.floor(i * ohtMain.length / 15)], speedMmS: 2000, chargingPolicy: 'DISABLED' });
-for (let i = 0; i < 10; i++)
+    initialNode: ohtMain[Math.floor(i * ohtMain.length / ohtFleet)], speedMmS: 2000, chargingPolicy: 'DISABLED' });
+for (let i = 0; i < agvFleet; i++)
   vehicles.push({ code: `AGV-${String(11 + i).padStart(2, '0')}`, name: `AGV ${11 + i}`, vType: 'AGV',
-    initialNode: agvMain[Math.floor(i * agvMain.length / 10)], speedMmS: 1000,
+    initialNode: agvMain[Math.floor(i * agvMain.length / agvFleet)], speedMmS: 1000,
     chargingPolicy: 'NEAREST', charge: chargeNodes[i % chargeNodes.length] });
 
 for (const n of nodes) { delete n.lane; }

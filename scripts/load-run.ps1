@@ -111,7 +111,14 @@ SELECT count(*) FROM pg_stat_activity
  WHERE datname=current_database() AND application_name LIKE 'PostgreSQL JDBC%'
 "@)
 if($others -gt 0){
- throw "another application ($others connection(s)) is attached to $dbName; stop it first -- two servers drive the same site and the run would measure both"
+ # Unjudged, not failed, and this is not a quibble about exit codes. A scheduled run catching up a
+ # missed one lands on whatever the machine is doing at the time -- it happened, against a run
+ # started by hand -- and the one that loses the race did not measure anything. Reporting that as
+ # a failure of the floor would put a red result against a floor nobody looked at.
+ Write-Host "UNJUDGED  another application ($others connection(s)) is attached to $dbName; stop it first -- two servers drive the same site and the run would measure both"
+ if($startedCluster){ & "$PostgresBin/pg_ctl.exe" -D $dataPath -m fast -w stop | Out-Null }
+ $env:PGPASSWORD=''
+ exit 2
 }
 
 # --- the floor the previous run left ------------------------------------------------------------
@@ -347,7 +354,7 @@ UPDATE traffic.node_reservation r SET released_at=now(),release_reason='LOAD_RUN
    $section=$null
   }
  }
- $unjudgeable=@()
+ $unjudgeable=@(); $notes=@()
  if(-not $load){ $unjudgeable+='the run produced no reading at all' }
  elseif($interrupted){ $unjudgeable+='the site stopped progressing, so this is not a measurement of load' }
  elseif($load.samples -lt 1){ $unjudgeable+='the floor was never looked at (no samples), so the three counters mean nothing' }
@@ -364,15 +371,48 @@ UPDATE traffic.node_reservation r SET released_at=now(),release_reason='LOAD_RUN
   if($load.completed -lt $floor){ $violations+="$($load.completed) order(s) completed, fewer than the $floor this run asks for" }
  }
  # The loops, except the simulator's own and except a run that slept through part of itself.
+ #
+ # Two questions, and the first is the one that matters. **Did the loop hold its period**, which is
+ # the mean gap: a loop waiting behind another waits every time, and that is what the defect this
+ # instrument was built for looked like -- a 100ms device read sitting behind a sweep, every pass.
+ # A single late pass is the other question, and a weaker one.
  if($timing -and -not $slept){
+  # One stall that every loop lost at once is this machine, not a starved loop. Nothing inside the
+  # server can tell a busy machine from a slow pass, but a spike that appears in several loops
+  # simultaneously is wall-clock that went somewhere else -- the smaller cousin of NOT AWAKE
+  # THROUGHOUT. A loop starved by another loop is late *alone*, and late *on average*.
+  #
+  # Counted by thread and not by loop: the simulation's sweep and its motion step share one thread
+  # on purpose, so they always lose time together, and a spike in both of them is that thread being
+  # busy -- which is the simulator's own business. Two *independent* threads losing it at the same
+  # moment is the machine.
+  $spiked=$timing | Where-Object { $_.maxGapMs - $_.meanGapMs -ge 1000 }
+  $threads=$spiked | ForEach-Object { if($_.name -like 'simulation*'){ 'simulation' }else{ $_.name } } |
+   Select-Object -Unique
+  $machineStalled=($threads | Measure-Object).Count -ge 2
   foreach($loop in $timing){
    if($loop.name -like 'simulation*'){ continue }
+   # Half again, and at least 100ms over: a period is kept or it is not, and asking for exactness
+   # from a general-purpose machine would fail every run on rounding.
+   $period=[Math]::Max($loop.targetMs*1.5,$loop.targetMs+100)
+   if($loop.meanGapMs -gt $period){
+    $violations+=("{0} averaged {1}ms between passes against a {2}ms period -- it is waiting behind something" `
+     -f $loop.name,[int]$loop.meanGapMs,$loop.targetMs)
+   }
    # A floor of a second with it: the first pass of a run competes with everything else starting
    # up, and a 600ms gap on a 200ms loop at second zero is a server booting, not a loop starved.
    $allowed=[Math]::Max($loop.targetMs*$MaxGapFactor,1000)
-   if($loop.maxGapMs -gt $allowed){
-    $violations+=("{0} waited {1}ms between passes against a {2}ms period" -f $loop.name,$loop.maxGapMs,$loop.targetMs)
+   if($loop.maxGapMs -gt $allowed -and -not $machineStalled){
+    $violations+=("{0} waited {1}ms for one pass against a {2}ms period" -f $loop.name,$loop.maxGapMs,$loop.targetMs)
    }
+  }
+  if($machineStalled){
+   # A note, not a reason the run cannot be judged. Everything else here -- the invariants, the
+   # counters, the periods the loops held on average -- is still this system's own answer, and
+   # burying a real failure under "the machine was busy" is how an instrument stops being read.
+   $worst=[int](($spiked | Measure-Object -Property maxGapMs -Maximum).Maximum)
+   $notes+=("single-pass timings not judged: $(($threads | Measure-Object).Count) threads lost up to "+
+     "${worst}ms at the same moment, so something else on this machine had the processor")
   }
  }
  # Unjudged comes before failed, and the order is the point. A run that was not a measurement of
@@ -394,6 +434,7 @@ UPDATE traffic.node_reservation r SET released_at=now(),release_reason='LOAD_RUN
   if($load.completed -lt 1){ $verdict+='      and nothing finished, which this run was too short to ask for' }
   $exitCode=0
  }
+ $verdict+=$notes | ForEach-Object { "NOTE  $_" }
  $verdict | ForEach-Object { Write-Host $_ }
  Add-Content -LiteralPath $report -Value ($verdict -join "`n") -Encoding utf8
 

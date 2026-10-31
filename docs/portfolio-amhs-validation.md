@@ -115,6 +115,27 @@ read, and it is not the one that drifted.
 | Time | median 564s, p95 827s — completion includes queue wait, which is what saturation means |
 | Afterwards | no reservation left behind, no vehicle still assigned to finished work, no command left claimed |
 
+### Three times the floor
+
+The same load on **787 nodes, 192 handover ports and 75 vehicles** — the layout generator takes a
+multiplier, and it scales the dimension a fab scales in: the line gets longer and carries more
+bays, rather than the loops getting wider or nested. The shape is what makes node reservation
+sufficient here (two routes meeting only at nodes they both hold), and a proved shape is not worth
+trading for a larger number. At a multiplier of one it writes the committed map byte for byte, and
+at three every geometry check still comes back empty.
+
+Fifteen minutes, queue saturated at 150 open orders: 180 written, 30 completed, the three counters
+at zero over 881 samples, every "none expected" check empty. **The device-facing loops came out
+better than on the small floor** — mean gaps of 211, 1022 and 1023ms against periods of 200, 1000
+and 1000 — which is what separate threads buy: the simulator got three times busier and those
+three loops did not notice.
+
+What the bigger floor strains is the simulator, not the control. The simulation sweep's own pass
+rose to 1382ms mean against its 1500ms period (739ms at 25 vehicles), and the motion step sharing
+its thread drifted to a 301ms gap. That loop does not exist in an operating plant, which is why
+the verdict does not judge it — but it does mean 75 simulated vehicles is near what this machine
+will model, and a larger floor than this would be measuring the simulator.
+
 ### The run decides
 
 A reading is not a regression. The harness now ends with a verdict and an exit code — 0 when the
@@ -197,5 +218,6 @@ Not verified here, and not claimed:
 - any authentication for Modbus/MELSEC equipment, which have none in the protocol — what stands in
   front of such a machine is the answer, and it is written down rather than implemented. Revocation
   by OCSP is not missing but declined, for the reason above;
-- load beyond two hours and a floor larger than 321 nodes. The judged run is on a daily schedule
-  now, but every run quoted above was started by hand, one at a time.
+- load beyond two hours, and a floor larger than 787 nodes -- past which this machine is measuring
+  its own simulator rather than the control. The judged run is on a daily schedule now; every run
+  quoted above was started by hand.
