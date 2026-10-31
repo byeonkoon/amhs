@@ -145,10 +145,13 @@ also not being killed mid-run if the power goes, because the verdict of a run th
 halfway means nothing either way. On a laptop that last one means the task waits, visibly, for the
 mains.
 
-The first judged run (ten minutes) passed: 59 written, 9 completed,
-three counters at zero over 578 samples, every "none expected" check empty, the device-facing loops
-inside their periods. Throughput is deliberately not compared with the longer runs — this one left
-the vehicles where the last one parked them, and only the invariants and the loop periods are
+Two judged runs have passed so far. The first, ten minutes: 59 written, 9 completed, three
+counters at zero over 578 samples, every "none expected" check empty, the device-facing loops
+inside their periods. The second at the length the schedule will repeat, twelve minutes: 55
+written, 5 completed, the same counters at zero over 692 samples, the same checks empty, equipment
+links 209ms against a 200ms period and the notices and site sweep 1042 and 1043 against 1000.
+Throughput is deliberately not compared between them or with the longer runs — each left the
+vehicles where the last one parked them, and only the invariants and the loop periods are
 comparable between runs that start from different floors.
 
 The run also measures the control loops, because under load the first thing to go wrong is not a

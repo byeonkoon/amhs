@@ -135,7 +135,7 @@ AMHS의 Equipment Adapter는 OPC UA Client, 외부 Equipment Gateway는 OPC UA S
 
 - 사용자·토큰 기반 장비 인증. 인증서 하나로 통일했습니다. OCSP는 의도적으로 하지 않습니다(이유는 [링크 보안](link-security.md)).
 - 실장비 Vehicle Adapter와 Equipment Gateway 연결, inbound 응답 및 장비별 계약 검증.
-- 더 긴 시간·더 큰 규모의 부하. 판정은 하네스가 하고 매일 돌도록 걸어 뒀습니다(`scripts/load-regression-schedule.ps1`). 지금 기록은 15분·2시간·판정 포함 10분입니다.
+- 더 긴 시간·더 큰 규모의 부하. 판정은 하네스가 하고 매일 돌도록 걸어 뒀습니다(`scripts/load-regression-schedule.ps1`). 지금 기록은 15분·2시간·판정 포함 10분과 12분입니다.
 - 실제 장비와 현장 조건에서의 통합 시나리오 검증.
 
 [공개 설계 개요](portfolio-amhs-design.md) · [검증 시나리오](portfolio-amhs-validation.md) · [설비 OPC UA 계약](equipment-opcua-contract.md) · [차량 TCP 계약](vehicle-tcp-contract.md) · [매핑 파일](mapping-file.md) · [상위 통보 계약](host-notice-contract.md) · [링크 보안](link-security.md)
