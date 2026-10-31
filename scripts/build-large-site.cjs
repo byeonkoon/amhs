@@ -244,6 +244,19 @@ function spur(path, atIndex, span, depth, label, extras = {}, laneNodes = 1, rad
   p.turn(radius, 90);
   p.straight(depth - 2 * radius, {}, (depth - 2 * radius));
   p.turn(radius, -90);
+  // Where the bay comes back is a merge: two routes arrive at this one node, the main line and the
+  // lane. Saying so is what makes the controller keep the order they asked in -- without the mark,
+  // a contested node goes to whoever asks at the right moment, and a vehicle on the quieter branch
+  // can wait indefinitely while the node turns over to others.
+  //
+  // A two-hour run at 75 vehicles is what found it: one vehicle wanted the same rejoin for three
+  // and a half minutes while the vehicle holding it had held it for forty-five seconds. At 25
+  // vehicles nobody waited long enough to notice.
+  //
+  // The diverge is not marked. Both routes leave it from the same side, so it is a queue rather
+  // than a merge, and marking it would make every vehicle entering a bay ask for a turn it is
+  // already in line for.
+  byCode.get(path[dIndex]).mergePoint = true;
   // The pen now stands on the merge; that node is already there, so its last one is dropped.
   const last = p.path[p.path.length - 1];
   nodes.splice(nodes.findIndex(n => n.code === last), 1);
@@ -369,6 +382,10 @@ function joinLoops(upper, lower) {
   // One node apart, so the two runs are parallel rather than on top of one another.
   link(down[0].code, up[0].code);
   link(up[1].code, down[1].code);
+  // Each loop receives the other's traffic at one node, which is a merge for the same reason a
+  // bay's rejoin is: two streams, one node.
+  up[0].mergePoint = true;
+  down[1].mergePoint = true;
 }
 joinLoops(ohtTopPath, ohtLowPath);
 

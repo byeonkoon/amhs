@@ -156,6 +156,22 @@ merge points, and the generated layouts mark none, although every bay rejoin is 
 construction. At 25 vehicles nobody starved; at 75 somebody did. **This is what the larger floor
 was built to find**, and the fix belongs in the layout rather than in the control.
 
+The generator now marks them — where a bay rejoins the line, and where each loop takes the other's
+traffic; 34 nodes on this floor, 14 on the small one. The diverge is deliberately not marked: both
+routes leave it from the same side, so it is a queue rather than a merge. Thirty minutes of the
+same load afterwards passed, and the waits it ended with say why: 59 of them, **none over three
+minutes**, the longest 91 seconds against the 210 that failed the two-hour run. Twenty-five of
+those 59 point at a vehicle that does not hold the node they want but asked for it earlier — the
+rule firing, which could not have happened before.
+
+It costs something, and the figure is in the log rather than left out: at the same thirty-minute
+mark the unmarked run had completed 83 against 67 here, about a fifth fewer, because keeping the
+order at a merge leaves a free node briefly unused. Under a queue held deliberately past capacity
+that is a congestion figure and not a capacity one — and a wait that never ends is worse for a
+plant than a floor that runs a little slower, since a starved carrier becomes a late lot. The
+confirmation still owed is the two-hour version: the starvation appeared at two hours, so the
+evidence that it is gone has to be two hours as well.
+
 ### The run decides
 
 A reading is not a regression. The harness now ends with a verdict and an exit code — 0 when the
