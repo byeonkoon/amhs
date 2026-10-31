@@ -269,6 +269,26 @@ export const cfgApi = {
   mapping: (code: string) => `/api/v1/sites/${SITE_ID}/configuration/mappings/${encodeURIComponent(code)}`,
   /** Who may do what. ADMIN only; a password goes in here and never comes back out. */
   accounts: () => `/api/v1/sites/${SITE_ID}/configuration/accounts`,
+  /**
+   * What the stored contracts say about each other, compared and nothing else.
+   *
+   * <p>A read, and only a read: it opens no adapter and touches no device. It answers the question
+   * somebody has before a shift -- is this site wired the way it says it is -- rather than after a
+   * vehicle has stopped answering.
+   */
+  communicationCheck: () => `/api/v1/sites/${SITE_ID}/configuration/communication-check`,
+};
+
+/**
+ * The comparison of the stored contracts, as the server reports it.
+ *
+ * <p>Every issue is a code and the vehicle it is about. The words are this side's, in
+ * {@link explainCode}: the server names what is wrong, and naming is a contract -- a sentence is
+ * not, and the two drift the moment somebody rewords one.
+ */
+export type CommunicationCheck = {
+  scope: string; vehiclesChecked: number; consistent: boolean; activationSupported: boolean;
+  issues: { vehicleId: number; code: string }[];
 };
 
 /**

@@ -200,6 +200,12 @@ export function explainCode(code: string): string {
     INVALID_HOME_RETURN_SECONDS: '홈 복귀 대기 시간은 0~3600초여야 합니다.',
     INVALID_CHARGE_LEVELS: '충전 기준은 위험 < 요청 < 해제 ≤ 100 이어야 합니다.',
     INVALID_RUN_MODE: '운전 모드는 SIMULATION 또는 OPERATION입니다.',
+    // 통신 설정 점검이 내놓는 코드. 저장된 설정끼리의 비교이므로 "무엇이 어긋났는가"를 말합니다.
+    COMMUNICATION_REQUIRED: '사용 중인 차량인데 통신 설정이 없습니다. 이 차량은 어느 링크로도 말을 걸 수 없습니다.',
+    COMMUNICATION_AMBIGUOUS: '한 차량에 통신 설정이 둘 이상입니다. 어느 링크로 보낼지 정해지지 않습니다.',
+    SITE_COMMUNICATION_MISMATCH: '사이트의 통신 방식과 이 차량의 연결·프로토콜이 다릅니다. 사이트 설정을 바꾸거나 이 차량의 연결을 맞춰 주세요.',
+    VDA_IDENTITY_MISMATCH: 'VDA 프로파일의 제조사·인터페이스 이름이 통신 설정과 다릅니다. 토픽이 서로 어긋납니다.',
+    VDA_JSON_VERSION_MISMATCH: 'VDA 프로파일의 JSON 버전과 프로토콜 버전이 다릅니다.',
     // 링크 보안. 상세 절차는 docs/link-security.md입니다.
     INVALID_PEER_NAME: '상대 이름은 영문·숫자와 . * _ - 만 쓸 수 있습니다.',
     PEER_NAME_NEEDS_TLS: '상대 이름을 확인하려면 TLS를 켜야 합니다. 평문 링크에서는 확인할 방법이 없습니다.',

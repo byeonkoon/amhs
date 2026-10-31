@@ -1,7 +1,8 @@
 import React from 'react';
 import {
   ApiError, cfgApi, equipmentApi, get, getAs, hostApi, opsApi, send, sendText, ROLE_LABEL,
-  type Cfg, type ConnectionSettings, type EquipmentCommunicationSettings, type EquipmentSettings,
+  type Cfg, type CommunicationCheck, type ConnectionSettings, type EquipmentCommunicationSettings,
+  type EquipmentSettings,
   type HostEndpointSettings, type HostNotice, type InstalledMapping, type MapData, type MapRevision,
   type OperationOptions, type PortSettings, type ProtocolSettings,
   type Session, type VdaProfileSettings, type VehicleSettings,
@@ -22,7 +23,7 @@ import {
  * vehicle and every command rather than to one of these, so they sit behind the account menu
  * where changing them needs the authority that reach deserves.
  */
-type Tab = "revisions" | "vehicles" | "vda" | "ports" | "nodes" | "segments" | "connections" | "protocols" | "mappings" | "equipmentLinks" | "host";
+type Tab = "revisions" | "vehicles" | "vda" | "ports" | "nodes" | "segments" | "connections" | "protocols" | "mappings" | "equipmentLinks" | "host" | "check";
 const TABS: { key: Tab; label: string }[] = [
   { key: 'revisions', label: '지도 버전' },
   { key: 'vehicles', label: '차량' }, { key: 'vda', label: 'VDA 프로파일' },
@@ -32,6 +33,7 @@ const TABS: { key: Tab; label: string }[] = [
   { key: 'mappings', label: '매핑 문서' },
   { key: 'equipmentLinks', label: '설비 통신' },
   { key: 'host', label: '상위 통보' },
+  { key: 'check', label: '통신 설정 점검' },
 ];
 
 export function ConfigurationScreen({ map, session, revisions, onChanged }: {
@@ -73,8 +75,84 @@ export function ConfigurationScreen({ map, session, revisions, onChanged }: {
           {tab === 'mappings' && <MappingTab canWrite={canWrite} />}
           {tab === 'equipmentLinks' && <EquipmentLinkTab canWrite={canWrite} />}
           {tab === 'host' && <HostNoticeTab canWrite={canWrite} />}
+          {tab === 'check' && <CheckTab />}
         </div>
       </div>
+    </>
+  );
+}
+
+/**
+ * What the stored contracts say about each other, read before a shift rather than after a vehicle
+ * has stopped answering.
+ *
+ * <p>The server has compared these all along and nothing showed them. That is a gap worth closing
+ * for one reason above the rest: a secured link's key material lives on the server, so when it is
+ * missing, unreadable, or its revocation list has run out, <b>every secured link stops</b> — and
+ * until this tab there was nowhere a person could see that except the server's log, which is read
+ * after the floor has gone quiet rather than before.
+ *
+ * <p>It opens nothing and touches no device. The comparison is of rows against rows.
+ */
+function CheckTab() {
+  const [report, setReport] = React.useState<CommunicationCheck | null>(null);
+  const [codeOf, setCodeOf] = React.useState<Map<number, string>>(new Map());
+  const [error, setError] = React.useState<unknown>(null);
+  const [tick, setTick] = React.useState(0);
+  React.useEffect(() => {
+    const ac = new AbortController();
+    setError(null); setReport(null);
+    // The vehicles with it, because an issue names an id and a person reads a code.
+    Promise.all([
+      get<CommunicationCheck>(cfgApi.communicationCheck(), ac.signal),
+      get<Cfg<VehicleSettings>[]>(cfgApi.vehicles(), ac.signal),
+    ]).then(([checked, vehicles]) => {
+      setReport(checked);
+      setCodeOf(new Map(vehicles.map(v => [v.id, v.settings.code])));
+    }).catch(cause => { if ((cause as Error).name !== 'AbortError') setError(cause); });
+    return () => ac.abort();
+  }, [tick]);
+
+  if (error) return <Failed error={error} onRetry={() => setTick(t => t + 1)} />;
+  if (!report) return <Loading what="통신 설정 점검" />;
+
+  // Grouped by what is wrong, not by vehicle. One missing trust store is one thing to fix, and
+  // listing it once per vehicle on that link reads as twenty faults.
+  const groups = new Map<string, number[]>();
+  for (const issue of report.issues) groups.set(issue.code, [...(groups.get(issue.code) ?? []), issue.vehicleId]);
+  const named = (ids: number[]) => ids.map(id => codeOf.get(id) ?? `#${id}`);
+
+  return (
+    <>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
+        <Chip tone={report.consistent ? 'ok' : 'wa'}>
+          {report.consistent ? '서로 맞습니다' : `${groups.size}가지 어긋남`}
+        </Chip>
+        <Chip tone="nu" title={report.scope}>사용 중인 차량 {report.vehiclesChecked}대를 봤습니다</Chip>
+        <button type="button" style={btn} onClick={() => setTick(t => t + 1)}>다시 점검</button>
+        <span className="aux" style={{ flexBasis: '100%' }}>
+          저장된 설정끼리만 비교합니다. 어댑터를 열거나 장비에 말을 걸지 않습니다.
+        </span>
+      </div>
+      {report.issues.length === 0
+        ? <Empty title="어긋난 것이 없습니다"
+            hint={report.vehiclesChecked === 0
+              ? '사용 중인 차량이 없어 비교할 것이 없습니다. 차량 탭에서 사용 여부를 확인해 주세요.'
+              : '사용 중인 차량마다 통신 설정·연결·프로토콜이 사이트 설정과 맞고, TLS를 켠 링크는 서버에 키 자료가 있습니다.'} />
+        : <Grid cols="minmax(200px,1fr) minmax(280px,2fr) minmax(160px,1fr)"
+            head={['무엇이', '어떻게 하면 되는가', '해당 차량']}>
+            {[...groups].map(([code, ids]) => (
+              <Row key={code}>
+                <span className="mono" style={{ fontSize: 11 }}>{code}</span>
+                {/* Wrapped rather than clipped: the sentence is what the row is for, and half of
+                    "every secured link will stop" is worse than none of it. */}
+                <span style={{ whiteSpace: 'normal', lineHeight: 1.5 }}>{explainCode(code)}</span>
+                <span title={named(ids).join(', ')}>
+                  {named(ids).slice(0, 6).join(', ')}{ids.length > 6 ? ` 외 ${ids.length - 6}대` : ''}
+                </span>
+              </Row>
+            ))}
+          </Grid>}
     </>
   );
 }

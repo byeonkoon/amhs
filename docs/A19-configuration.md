@@ -66,12 +66,15 @@ A16 접근 제어가 적용되어 설정 변경에는 ADMIN 권한이 필요하�
 
 `GET /api/v1/sites/{siteId}/configuration/communication-check`는 사용 중 차량의 사이트 통신 방식·VDA 프로파일·기존 통신 바인딩을 읽기 전용으로 비교한다. 여러 조회는 같은 DB 스냅샷에서 수행한다. 응답의 `scope`는 `ENABLED_VEHICLE_COMMUNICATION`, `vehiclesChecked`는 대상 대수이며, `issues`는 `{vehicleId, code}` 목록이다.
 
+화면은 `자원 구성 → 통신 설정 점검`이다. 코드를 **무엇이 어긋났는지로 묶어** 해당 차량과 함께 보여준다 — 키 자료 하나가 없는 것은 고칠 것 하나이지 그 링크에 걸린 차량 수만큼의 결함이 아니기 때문이다. 서버는 코드를 내고 문구는 화면이 가진다: 코드가 계약이고 문장은 계약이 아니다.
+
 - `VDA_PROFILE_REQUIRED`, `VDA_PROFILE_NOT_APPLICABLE`: 사이트 옵션과 차량 프로파일 지정의 불일치.
 - `COMMUNICATION_REQUIRED`, `COMMUNICATION_AMBIGUOUS`: 통신 바인딩 누락 또는 단일 바인딩을 결정할 수 없음.
 - `SITE_COMMUNICATION_MISMATCH`: 사이트 PC/PLC/MQTT와 바인딩의 연결·프로토콜 조합 불일치.
 - `VDA_IDENTITY_MISMATCH`, `VDA_JSON_VERSION_MISMATCH`: 프로파일과 바인딩의 제조사/interface 또는 JSON 버전 불일치. 토픽 버전과 JSON 버전을 서로 비교하지 않는다.
+- `TLS_*`: TLS를 켠 연결이 있을 때의 서버 키 자료 상태. 쓸 수 없으면 그 링크는 열리지 않으므로 어긋남이고(`TLS_NOT_CONFIGURED`·`TLS_TRUSTSTORE_REQUIRED`·`TLS_KEYSTORE_MISSING`·`TLS_TRUSTSTORE_MISSING`·`TLS_MATERIAL_UNREADABLE`·`TLS_CRL_MISSING`·`TLS_CRL_UNREADABLE`·`TLS_CRL_STALE`), `TLS_CRL_EXPIRES_SOON`은 아직 아니지만 7일 뒤 그렇게 되는 것에 대한 예고다. 상세는 [링크 보안](link-security.md).
 
-`consistent=true`는 위 비교에서 불일치가 없다는 뜻이며 운전 허가는 아니다. 어댑터 미구현으로 `activationSupported`는 항상 false다. 비활성 차량은 제외한다. 이 API는 설정을 자동 보정하거나 장비에 접속하지 않으며, 어느 설정을 실제 송신에 우선할지도 결정하지 않는다. 전체 운전 준비 검증·통신 어댑터 해석·UI 연결은 후속이다.
+`consistent=true`는 위 비교에서 불일치가 없다는 뜻이며 운전 허가는 아니다. 어댑터 미구현으로 `activationSupported`는 항상 false다. 비활성 차량은 제외한다. 이 API는 설정을 자동 보정하거나 장비에 접속하지 않으며, 어느 설정을 실제 송신에 우선할지도 결정하지 않는다. 전체 운전 준비 검증과 통신 어댑터 해석은 후속이다.
 
 - `scripts/server.ps1 -Test`: DB 없이 계약, 모듈 경계, 요청 차단, 그래프 검증 후 패키징.
 - 별도 PostgreSQL DB `amhs_test`를 준비한 뒤 `scripts/server.ps1 -SqlTest`: 현재 Flyway migration과 실제 SQL 테스트. 기존 업무 DB를 테스트 대상으로 사용하지 않는다.
