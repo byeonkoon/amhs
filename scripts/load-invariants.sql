@@ -23,6 +23,16 @@
 \else
  \set since '-infinity'
 \endif
+-- The moment the run ended, which is not the moment this is asked.
+--
+-- Three of the questions below are "has this been still for a while", and the rows they read were
+-- frozen when the server stopped. Measured against the clock as it runs, the answer grows while
+-- this file is being executed: the same floor shows two vehicles waiting too long if asked at once
+-- and thirty if asked ten minutes later. So they are asked as of the end of the run.
+\if :{?until}
+\else
+ \set until 'now'
+\endif
 
 \echo '== two vehicles standing on one node (none expected)'
 SELECT node_id,count(*) AS vehicles,string_agg(vehicle_id::text,',' ORDER BY vehicle_id) AS which
@@ -71,7 +81,7 @@ SELECT a.vehicle_id,a.order_id,o.status,a.assigned_at
 SELECT command_id,vehicle_id,status,attempt,last_outcome,created_at
  FROM integration.command_outbox
  WHERE site_id=:site AND status='DISPATCHING' AND created_at >= :'since'
-   AND created_at < clock_timestamp()-make_interval(mins=>:quiet_minutes);
+   AND created_at < :'until'::timestamptz-make_interval(mins=>:quiet_minutes);
 
 -- QUEUED is not here: waiting is what a queue is for, and under a saturated load most of the work
 -- is waiting by design. A long leg can also outlast this quietly and legitimately -- on the sample
@@ -85,13 +95,13 @@ SELECT o.id,o.status,o.vehicle_type,o.created_at,
    AND o.status NOT IN ('QUEUED','COMPLETED','CANCELLED','FAILED','RECOVERY_REQUIRED')
    AND o.created_at >= :'since'
    AND COALESCE((SELECT max(e.occurred_at) FROM transport.order_event e WHERE e.order_id=o.id),o.created_at)
-       < clock_timestamp()-make_interval(mins=>:quiet_minutes)
+       < :'until'::timestamptz-make_interval(mins=>:quiet_minutes)
  ORDER BY o.id;
 
 \echo '== a vehicle waiting on road for longer than it should (none expected)'
 SELECT w.vehicle_id,w.wanted_node_id,w.blocked_by_vehicle_id,w.since
  FROM traffic.reservation_wait w
- WHERE w.site_id=:site AND w.since < clock_timestamp()-make_interval(mins=>:quiet_minutes);
+ WHERE w.site_id=:site AND w.since < :'until'::timestamptz-make_interval(mins=>:quiet_minutes);
 
 \echo '== how the run ended, by outcome (not an invariant: the shape of the work)'
 SELECT status,count(*) AS orders,

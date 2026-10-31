@@ -136,6 +136,26 @@ its thread drifted to a 301ms gap. That loop does not exist in an operating plan
 the verdict does not judge it — but it does mean 75 simulated vehicles is near what this machine
 will model, and a larger floor than this would be measuring the simulator.
 
+### Two hours of it, and the first real failure
+
+The same floor for two hours: 494 written, **344 completed**, nothing refused, cancelled, failed or
+left awaiting recovery, and the three counters at zero over **7051 samples**. The device-facing
+loops held throughout — equipment links averaged 210ms against a 200ms period and never once
+exceeded 238ms, with notices and the site sweep at 1021 against 1000.
+
+And it **failed**, on the floor rather than on the instrument: two vehicles had been waiting for
+road for over three minutes. Sixty-eight of the seventy-five were in waiting chains when the run
+ended, which is a jam rather than a cycle — no deadlock was detected in any sample, and nearly all
+of those waits were seconds old. Two were not. Following one: it had wanted the same node for three
+and a half minutes, while the vehicle holding that node had held it for forty-five seconds. The
+node kept turning over to others and its turn never came.
+
+The rule that would have prevented this exists — first to ask is first served, which is why a wait
+keeps its original timestamp across repeated refusals — but it applies only at nodes marked as
+merge points, and the generated layouts mark none, although every bay rejoin is a merge by
+construction. At 25 vehicles nobody starved; at 75 somebody did. **This is what the larger floor
+was built to find**, and the fix belongs in the layout rather than in the control.
+
 ### The run decides
 
 A reading is not a regression. The harness now ends with a verdict and an exit code — 0 when the

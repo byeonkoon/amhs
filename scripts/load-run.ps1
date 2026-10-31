@@ -331,8 +331,14 @@ UPDATE traffic.node_reservation r SET released_at=now(),release_reason='LOAD_RUN
  # leftover rather than a vehicle mid-stride.
  Start-Sleep -Seconds 2
  Write-Host '--- invariants ---'
+ # As of when the floor stopped, not as of when the question is asked. The rows froze when the
+ # server did, and "has this been still for three minutes" measured against a running clock keeps
+ # finding more of them the longer the asking takes -- the same floor showed 2 vehicles waiting too
+ # long at the end of a run and 31 of them half an hour later, without a thing having moved.
+ $runEnded=(Sql 'SELECT clock_timestamp()').Trim()
  $invariants=& "$PostgresBin/psql.exe" -X -w -h 127.0.0.1 -p $pgPort -U $dbUser -d $dbName `
-  -v "site=$Site" -v 'quiet_minutes=3' -v "since=$runStarted" -f "$root/scripts/load-invariants.sql"
+  -v "site=$Site" -v 'quiet_minutes=3' -v "since=$runStarted" -v "until=$runEnded" `
+  -f "$root/scripts/load-invariants.sql"
  $invariants | ForEach-Object { Write-Host $_ }
  Add-Content -LiteralPath $report -Value ("--- invariants ---`n"+($invariants -join "`n")) -Encoding utf8
 
