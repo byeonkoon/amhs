@@ -168,23 +168,65 @@ $arguments=@(
  "-Damhs.device.mappings=$root/docs/sample-mappings",
  '-jar',"$root/server/target/amhs-server-0.1.0.jar")
 # --- stay awake for the measurement ---------------------------------------------------------------
-# A measurement a sleeping machine can ruin should ask the machine to stay up. The first two-hour
-# run spent an hour of it suspended, and every loop in the report carried that hour.
+# A measurement a sleeping machine can ruin should ask the machine to stay up, and it has to ask in
+# the way this machine listens to.
 #
-# This is a request for the life of this script, not a setting: it is released in the `finally`
-# below and the machine's own power configuration is left exactly as it was. It holds off idle
-# sleep only -- a closed lid or somebody choosing Sleep still sleeps, and the report says so when
-# it happens.
+# `SetThreadExecutionState` was the first attempt and it is not enough. On a laptop with S0 low
+# power idle -- Modern Standby, which is most of them now -- that call holds off the old S3 sleep
+# that such a machine no longer has, and the system goes to standby underneath it anyway. Two of
+# three two-hour runs proved it: one lost an hour, the next lost two hours and fifteen minutes,
+# and the report said NOT AWAKE THROUGHOUT both times.
+#
+# What such a machine listens to is a power request. `PowerRequestExecutionRequired` is the
+# documented way to say "there is work running here". Whether it was granted is said in the line
+# this prints, and `powercfg /requests` lists it by name for anybody with an administrator prompt.
+#
+# Both are asked for: the request for machines that have Modern Standby, the old call for machines
+# that do not. Both are requests for the life of this script -- released in the `finally` below,
+# with the machine's own power configuration untouched. Neither stops a closed lid or somebody
+# choosing Sleep, and the report says so when that happens.
 Add-Type -Namespace Amhs -Name Power -MemberDefinition @'
 [DllImport("kernel32.dll", SetLastError = true)]
 public static extern uint SetThreadExecutionState(uint esFlags);
+
+[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+public struct ReasonContext { public uint Version; public uint Flags; public IntPtr Reason; }
+
+[DllImport("kernel32.dll", SetLastError = true)]
+public static extern IntPtr PowerCreateRequest(ref ReasonContext context);
+[DllImport("kernel32.dll", SetLastError = true)]
+public static extern bool PowerSetRequest(IntPtr request, int type);
+[DllImport("kernel32.dll", SetLastError = true)]
+public static extern bool PowerClearRequest(IntPtr request, int type);
+[DllImport("kernel32.dll", SetLastError = true)]
+public static extern bool CloseHandle(IntPtr handle);
+
+/** POWER_REQUEST_CONTEXT_VERSION 0, _SIMPLE_STRING 1, PowerRequestExecutionRequired 3. */
+public static IntPtr KeepRunning(string why) {
+ var context = new ReasonContext { Version = 0, Flags = 1, Reason = Marshal.StringToHGlobalUni(why) };
+ var request = PowerCreateRequest(ref context);
+ if (request == IntPtr.Zero || request == new IntPtr(-1)) return IntPtr.Zero;
+ if (!PowerSetRequest(request, 3)) { CloseHandle(request); return IntPtr.Zero; }
+ return request;
+}
+public static void LetGo(IntPtr request) {
+ if (request == IntPtr.Zero) return;
+ PowerClearRequest(request, 3);
+ CloseHandle(request);
+}
 '@
 # 0x80000000 and 0x00000001 written as numbers: PowerShell reads a literal 0x80000000 as a
 # negative Int32, and the call refuses it.
 $ES_CONTINUOUS=[uint32]2147483648; $ES_SYSTEM_REQUIRED=[uint32]1
 $awake=[Amhs.Power]::SetThreadExecutionState($ES_CONTINUOUS -bor $ES_SYSTEM_REQUIRED)
-if($awake -eq 0){ Write-Host 'could not ask this machine to stay awake; it may sleep mid-run' }
-else{ Write-Host 'asked this machine to stay awake until the run ends' }
+$running=[Amhs.Power]::KeepRunning("AMHS load run: $Minutes minute(s) of measurement")
+if($running -eq [IntPtr]::Zero -and $awake -eq 0){
+ Write-Host 'could not ask this machine to stay awake; it may sleep mid-run'
+}elseif($running -eq [IntPtr]::Zero){
+ Write-Host 'asked this machine to stay awake (old call only; a Modern Standby machine may sleep anyway)'
+}else{
+ Write-Host 'asked this machine to keep running until the run ends (an execution power request)'
+}
 
 $runStarted=(Sql 'SELECT clock_timestamp()').Trim()
 $changedVehicles=@()
@@ -320,7 +362,12 @@ UPDATE traffic.node_reservation r SET released_at=now(),release_reason='LOAD_RUN
  if($slept){
   $longest=[int](($asleep | Measure-Object -Property maxGapMs -Maximum).Maximum/1000)
   $summary+="NOT AWAKE THROUGHOUT: every loop lost up to $longest s at once, so this machine was asleep or suspended."
-  $summary+='  The counts and the invariants still hold; the loop timings from this run do not.'
+  # It used to say the counts and the invariants still held, and that was wrong. The floor froze
+  # and the clock did not: every question of the form "has this been still for a while" then reads
+  # the frozen rows as hours old, and a run that slept for two hours reported sixty-five vehicles
+  # waiting too long for road when not one of them had been given the chance to move. The work
+  # written is wall-clock paced too, so even the counts are not of the run that was asked for.
+  $summary+='  Nothing here is a measurement of this system: the floor stopped and the clock did not.'
  }
  $summary | ForEach-Object { Write-Host $_ }
  Add-Content -LiteralPath $report -Value ($summary -join "`n") -Encoding utf8
@@ -360,9 +407,41 @@ UPDATE traffic.node_reservation r SET released_at=now(),release_reason='LOAD_RUN
    $section=$null
   }
  }
+ # Two of those questions ask how long something has been still, in wall-clock minutes, and a
+ # simulated floor only moves as fast as the simulator steps it. When the simulation sweep cannot
+ # finish a pass inside its own period, the floor is running slower than it is modelled to -- a
+ # vehicle "waiting three minutes" then means the simulator took three minutes to give anybody a
+ # turn, not that the control starved it.
+ #
+ # One run measured exactly this: the sweep took 11.1s per pass against a 1500ms period (1.4s in
+ # every run before it), the motion step drifted to a 2.2s gap against 100ms, and the report came
+ # back with seventeen vehicles waiting too long. The device-facing loops were on their periods
+ # throughout, so there was nothing wrong with the control -- the machine could not run the model.
+ #
+ # In OPERATION there is no such loop and the clock on the wall is the floor's own, so this only
+ # applies where the simulation loops are in the report at all.
+ $sweep=$timing | Where-Object { $_.name -eq 'simulation-sweep' } | Select-Object -First 1
+ # Twice its period, not merely over it: a sweep a quarter behind still steps the floor at close to
+ # the modelled speed, and a three-minute threshold has room for that. Measured across the runs so
+ # far, 1405ms and 1882ms are floors that moved; 11133ms is a floor that did not.
+ $simulatorBehind=$sweep -and $sweep.meanMs -gt $sweep.targetMs*2
+ $byTheClock='*waiting on road*','*claimed and never settled*'
  $unjudgeable=@(); $notes=@()
+ if($simulatorBehind){
+  $held=$violations | Where-Object { $v=$_; -not ($byTheClock | Where-Object { $v -like $_ }) }
+  $setAside=$violations | Where-Object { $v=$_; $byTheClock | Where-Object { $v -like $_ } }
+  $violations=$held
+  $notes+=("the simulator could not keep up ({0}ms a pass against a {1}ms period), so the floor ran " `
+    -f [int]$sweep.meanMs,$sweep.targetMs)+'slower than it is modelled to; questions about how long something stood still are not judged'
+  $notes+=$setAside | ForEach-Object { "  set aside: $_" }
+ }
  if(-not $load){ $unjudgeable+='the run produced no reading at all' }
  elseif($interrupted){ $unjudgeable+='the site stopped progressing, so this is not a measurement of load' }
+ # A machine that slept takes the whole run with it, not only the loop timings. The floor froze
+ # and the clock carried on, so every "has this been still for a while" question answers about the
+ # sleep rather than about the floor -- one such run reported sixty-five vehicles waiting too long
+ # for road, none of which had been given a chance to move.
+ elseif($slept){ $unjudgeable+='this machine slept through part of the run, so the floor stopped while the clock did not' }
  elseif($load.samples -lt 1){ $unjudgeable+='the floor was never looked at (no samples), so the three counters mean nothing' }
  if($load){
   if($load.sameNodeSamples -gt 0){ $violations+="two vehicles on one node, $($load.sameNodeSamples) time(s)" }
@@ -436,7 +515,6 @@ UPDATE traffic.node_reservation r SET released_at=now(),release_reason='LOAD_RUN
   $exitCode=1
  }else{
   $verdict+="PASS  nothing was left behind, and nothing was seen that should not be"
-  if($slept){ $verdict+='      the loop periods were not judged: this machine slept through part of the run' }
   if($load.completed -lt 1){ $verdict+='      and nothing finished, which this run was too short to ask for' }
   $exitCode=0
  }
@@ -464,6 +542,7 @@ UPDATE traffic.node_reservation r SET released_at=now(),release_reason='LOAD_RUN
  if($startedCluster){ & "$PostgresBin/pg_ctl.exe" -D $dataPath -m fast -w stop | Out-Null }
  # The machine may go back to sleeping on its own schedule; nothing of its configuration was changed.
  try{ $null=[Amhs.Power]::SetThreadExecutionState([uint32]2147483648) }catch{ }
+ try{ [Amhs.Power]::LetGo($running) }catch{ }
  $env:PGPASSWORD=''
  Write-Host "report: $report"
 }
