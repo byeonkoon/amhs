@@ -228,6 +228,20 @@ if($running -eq [IntPtr]::Zero -and $awake -eq 0){
  Write-Host 'asked this machine to keep running until the run ends (an execution power request)'
 }
 
+# On battery is worth saying out loud, because it is not a detail of the machine -- it is the
+# measurement. A laptop on battery runs its processor at base clock with no turbo, and what that
+# costs is the simulator: the same floor and the same code took 1.9s a sweep pass on mains and
+# 19.9s on battery, which is a floor stepped thirteen times slower than it is modelled to be.
+# Nothing above it is wrong, and nothing above it can be measured either.
+#
+# Said rather than refused: somebody may want a short run on battery, and the scheduled task
+# already declines to start one by itself.
+$onBattery=$null -ne (Get-CimInstance Win32_Battery -ErrorAction SilentlyContinue |
+ Where-Object { $_.BatteryStatus -eq 1 } | Select-Object -First 1)
+if($onBattery){
+ Write-Host "this machine is on battery; the simulator will run well behind its period, so a run of $Minutes minute(s) is unlikely to measure anything -- plug it in"
+}
+
 $runStarted=(Sql 'SELECT clock_timestamp()').Trim()
 $changedVehicles=@()
 $server=Start-Process -FilePath "$($jdk.FullName)/bin/java.exe" -ArgumentList $arguments -PassThru `
@@ -347,6 +361,9 @@ UPDATE traffic.node_reservation r SET released_at=now(),release_reason='LOAD_RUN
  $summary=@()
  $summary+="load run $stamp  database=$Database  site=$Site  $scale"
  $summary+="asked for $PerMinute/min, up to $PerVehicle open per vehicle, for $Minutes minute(s)"
+ # In the report as well as on the screen: somebody reading this file a week later cannot see what
+ # the machine was plugged into, and it is the first thing that explains a slow simulator.
+ if($onBattery){ $summary+='ON BATTERY: the processor ran at base clock, so the simulator ran behind its period.' }
  if($interrupted){ $summary+="INTERRUPTED: $interrupted" }
  $summary+=($load | Format-List | Out-String).Trim()
  $summary+='--- control loops (ms) ---'
@@ -425,7 +442,11 @@ UPDATE traffic.node_reservation r SET released_at=now(),release_reason='LOAD_RUN
  # the modelled speed, and a three-minute threshold has room for that. Measured across the runs so
  # far, 1405ms and 1882ms are floors that moved; 11133ms is a floor that did not.
  $simulatorBehind=$sweep -and $sweep.meanMs -gt $sweep.targetMs*2
- $byTheClock='*waiting on road*','*claimed and never settled*'
+ # "Fewer than the N this run asks for" belongs on this list too, and the A/B that proved the merge
+ # marking costs nothing is what showed it: both twelve-minute runs finished no orders at all and
+ # both were called a failure for it, when the floor was simply being stepped thirteen times slower
+ # than modelled. How much got through is a question about the simulator's speed in such a run.
+ $byTheClock='*waiting on road*','*claimed and never settled*','*completed, fewer than*'
  $unjudgeable=@(); $notes=@()
  if($simulatorBehind){
   $held=$violations | Where-Object { $v=$_; -not ($byTheClock | Where-Object { $v -like $_ }) }
