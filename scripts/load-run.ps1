@@ -82,6 +82,22 @@ if($Database -ne 'dev'){
  $env:PGPASSWORD=$dbPassword
  $exists=& "$PostgresBin/psql.exe" -X -w -h 127.0.0.1 -p $pgPort -U $dbUser -d postgres -At `
   -c "SELECT 1 FROM pg_database WHERE datname='$dbName'"
+ # A run that brings its own layout starts on an empty database, not merely a clear floor.
+ #
+ # Importing a map makes a revision and a fleet to go with it, and nothing ever removed the old
+ # ones. After twenty runs this database held twenty revisions, 9,844 nodes and 906 vehicle
+ # profiles where 75 were in use -- and the simulation sweep reads every profile of the site on
+ # every pass, so a pass went from 1.5s to 19.6s and five long runs in a row measured nothing but
+ # that. Dropping costs a migration at startup, which is seconds.
+ #
+ # Only with -Map: a run without one uses the layout already in place, and dropping would take it.
+ if($exists -eq '1' -and $Map){
+  & "$PostgresBin/psql.exe" -X -w -h 127.0.0.1 -p $pgPort -U $dbUser -d postgres `
+   -c "DROP DATABASE $dbName" | Out-Null
+  if($LASTEXITCODE -ne 0){ throw "could not drop $dbName; something is still attached to it" }
+  Write-Host "dropped $dbName so this run starts on an empty database"
+  $exists=$null
+ }
  if($exists -ne '1'){
   & "$PostgresBin/createdb.exe" -w -h 127.0.0.1 -p $pgPort -U $dbUser $dbName
   Write-Host "made $dbName; the server will migrate it as it starts"

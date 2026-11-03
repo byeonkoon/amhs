@@ -164,13 +164,20 @@ minutes**, the longest 91 seconds against the 210 that failed the two-hour run. 
 those 59 point at a vehicle that does not hold the node they want but asked for it earlier — the
 rule firing, which could not have happened before.
 
+**Two hours confirm it.** The same floor and fleet for two hours: 381 written, 231 completed,
+nothing refused or failed, the three counters at zero over 6908 samples, and the waits it ended
+with were 66 — **none of them over three minutes**, the longest 136 seconds against the 210 that
+failed the unmarked run, with seventeen of them pointing at an earlier asker. The device-facing
+loops averaged 211, 1042 and 1042ms against periods of 200, 1000 and 1000 for the whole two hours.
+
 It costs something, and the figure is in the log rather than left out: at the same thirty-minute
 mark the unmarked run had completed 83 against 67 here, about a fifth fewer, because keeping the
 order at a merge leaves a free node briefly unused. Under a queue held deliberately past capacity
 that is a congestion figure and not a capacity one — and a wait that never ends is worse for a
 plant than a floor that runs a little slower, since a starved carrier becomes a late lot. The
-confirmation still owed is the two-hour version: the starvation appeared at two hours, so the
-evidence that it is gone has to be two hours as well.
+two-hour totals (344 unmarked against 231 marked) are deliberately not subtracted: the simulator
+itself ran 1.7 times slower in the later run and that difference is mixed into them. The
+checkpoint figure is the one that compares like with like.
 
 ### The run decides
 
